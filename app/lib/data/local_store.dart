@@ -1,0 +1,347 @@
+import 'dart:convert';
+
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+
+import '../core/models.dart';
+
+class EpisodeListInfo {
+  const EpisodeListInfo(this.version, this.etag);
+
+  final String version;
+  final String? etag;
+}
+
+class LocalSnapshot {
+  LocalSnapshot({
+    required this.podcasts,
+    required this.episodes,
+    required this.states,
+    required this.pendingStates,
+    required this.queue,
+    required this.queuePending,
+    required this.episodeLists,
+    required this.meta,
+  });
+
+  final List<Podcast> podcasts;
+
+  /// In server order (newest first) within each podcast.
+  final List<Episode> episodes;
+  final List<EpisodeState> states;
+  final Set<int> pendingStates;
+  final QueueState? queue;
+  final bool queuePending;
+  final Map<int, EpisodeListInfo> episodeLists;
+  final Map<String, String> meta;
+}
+
+abstract final class MetaKey {
+  static const token = 'token';
+  static const serverUrl = 'server_url';
+  static const deviceId = 'device_id';
+  static const deviceName = 'device_name';
+  static const podcastsEtag = 'podcasts_etag';
+  static const lastSync = 'last_sync';
+}
+
+class LocalStore {
+  LocalStore(this.db);
+
+  final Database db;
+  final Map<String, String> _meta = {};
+
+  static const schemaVersion = 1;
+
+  static Future<Database> open(DatabaseFactory factory, String path) =>
+      factory.openDatabase(
+        path,
+        options: OpenDatabaseOptions(
+          version: schemaVersion,
+          onCreate: (db, _) => createSchema(db),
+          singleInstance: false,
+        ),
+      );
+
+  static Future<void> createSchema(Database db) async {
+    final batch = db.batch()
+      ..execute('''CREATE TABLE IF NOT EXISTS podcasts (
+        id INTEGER PRIMARY KEY, feed_url TEXT NOT NULL, title TEXT NOT NULL,
+        author TEXT NOT NULL, description TEXT NOT NULL, image_url TEXT, link TEXT,
+        subscribed INTEGER NOT NULL, episode_count INTEGER NOT NULL,
+        played_count INTEGER NOT NULL, episodes_version TEXT NOT NULL,
+        last_success_at INTEGER, last_error TEXT)''')
+      ..execute('''CREATE TABLE IF NOT EXISTS episodes (
+        id INTEGER PRIMARY KEY, podcast_id INTEGER NOT NULL, sort INTEGER NOT NULL,
+        guid TEXT NOT NULL, title TEXT NOT NULL, enclosure_url TEXT NOT NULL,
+        published_at INTEGER, duration_s INTEGER, enclosure_type TEXT,
+        enclosure_length INTEGER, link TEXT, image_url TEXT,
+        removed_from_feed INTEGER NOT NULL)''')
+      ..execute(
+        'CREATE INDEX IF NOT EXISTS episodes_podcast ON episodes (podcast_id, sort)',
+      )
+      ..execute(
+        '''CREATE TABLE IF NOT EXISTS episode_states (
+        episode_id INTEGER PRIMARY KEY, position_ms INTEGER NOT NULL,
+        status TEXT NOT NULL, updated_at INTEGER NOT NULL, pending INTEGER NOT NULL)''',
+      )
+      ..execute('''CREATE TABLE IF NOT EXISTS queue (
+        id INTEGER PRIMARY KEY CHECK (id = 1), episode_ids TEXT NOT NULL,
+        updated_at INTEGER NOT NULL, pending INTEGER NOT NULL)''')
+      ..execute('''CREATE TABLE IF NOT EXISTS descriptions (
+        episode_id INTEGER PRIMARY KEY, text TEXT NOT NULL)''')
+      ..execute(
+        '''CREATE TABLE IF NOT EXISTS episode_lists (
+        podcast_id INTEGER PRIMARY KEY, episodes_version TEXT NOT NULL, etag TEXT)''',
+      )
+      ..execute(
+        'CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)',
+      );
+    await batch.commit(noResult: true);
+  }
+
+  Future<LocalSnapshot> load() async {
+    final podcastRows = await db.query('podcasts');
+    final episodeRows = await db.query('episodes', orderBy: 'podcast_id, sort');
+    final stateRows = await db.query('episode_states');
+    final queueRows = await db.query('queue');
+    final listRows = await db.query('episode_lists');
+    final metaRows = await db.query('meta');
+
+    _meta
+      ..clear()
+      ..addAll({
+        for (final row in metaRows)
+          row['key'] as String: row['value'] as String,
+      });
+    final pending = <int>{};
+    final states = <EpisodeState>[];
+    for (final row in stateRows) {
+      final id = row['episode_id'] as int;
+      states.add(
+        EpisodeState(
+          episodeId: id,
+          positionMs: row['position_ms'] as int,
+          status: EpisodeStatus.fromJson(row['status'] as String),
+          updatedAt: _fromMs(row['updated_at'] as int),
+        ),
+      );
+      if (row['pending'] == 1) pending.add(id);
+    }
+    final queueRow = queueRows.isEmpty ? null : queueRows.first;
+    return LocalSnapshot(
+      podcasts: [for (final row in podcastRows) _podcast(row)],
+      episodes: [for (final row in episodeRows) _episode(row)],
+      states: states,
+      pendingStates: pending,
+      queue: queueRow == null
+          ? null
+          : QueueState(
+              episodeIds: [
+                for (final id
+                    in jsonDecode(queueRow['episode_ids'] as String) as List)
+                  id as int,
+              ],
+              updatedAt: _fromMs(queueRow['updated_at'] as int),
+            ),
+      queuePending: queueRow?['pending'] == 1,
+      episodeLists: {
+        for (final row in listRows)
+          row['podcast_id'] as int: EpisodeListInfo(
+            row['episodes_version'] as String,
+            row['etag'] as String?,
+          ),
+      },
+      meta: Map.of(_meta),
+    );
+  }
+
+  String? meta(String key) => _meta[key];
+
+  Future<void> setMeta(String key, String? value) async {
+    if (value == null) {
+      _meta.remove(key);
+      await db.delete('meta', where: 'key = ?', whereArgs: [key]);
+    } else {
+      _meta[key] = value;
+      await db.insert('meta', {
+        'key': key,
+        'value': value,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+  }
+
+  Future<void> replacePodcasts(List<Podcast> podcasts) =>
+      db.transaction((txn) async {
+        final batch = txn.batch()..delete('podcasts');
+        for (final p in podcasts) {
+          batch.insert('podcasts', _podcastRow(p));
+        }
+        final ids = podcasts.map((p) => p.id).join(',');
+        batch
+          ..delete('episodes', where: 'podcast_id NOT IN ($ids)')
+          ..delete('episode_lists', where: 'podcast_id NOT IN ($ids)');
+        await batch.commit(noResult: true);
+      });
+
+  Future<void> upsertPodcast(Podcast podcast) => db.insert(
+    'podcasts',
+    _podcastRow(podcast),
+    conflictAlgorithm: ConflictAlgorithm.replace,
+  );
+
+  Future<void> replaceEpisodes(
+    int podcastId,
+    List<Episode> episodes,
+    EpisodeListInfo info,
+  ) => db.transaction((txn) async {
+    final batch = txn.batch()
+      ..delete('episodes', where: 'podcast_id = ?', whereArgs: [podcastId]);
+    for (var i = 0; i < episodes.length; i++) {
+      batch.insert(
+        'episodes',
+        _episodeRow(episodes[i], i),
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
+    batch.insert('episode_lists', {
+      'podcast_id': podcastId,
+      'episodes_version': info.version,
+      'etag': info.etag,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+    await batch.commit(noResult: true);
+  });
+
+  Future<void> setEpisodeListInfo(int podcastId, EpisodeListInfo info) =>
+      db.insert('episode_lists', {
+        'podcast_id': podcastId,
+        'episodes_version': info.version,
+        'etag': info.etag,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+
+  Future<void> writeStates(
+    Iterable<(EpisodeState, bool)> states, {
+    (QueueState, bool)? queue,
+  }) => db.transaction((txn) async {
+    final batch = txn.batch();
+    for (final (state, pending) in states) {
+      batch.insert('episode_states', {
+        'episode_id': state.episodeId,
+        'position_ms': state.positionMs,
+        'status': state.status.json,
+        'updated_at': state.updatedAt.millisecondsSinceEpoch,
+        'pending': pending ? 1 : 0,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+    if (queue != null) {
+      final (q, pending) = queue;
+      batch.insert('queue', {
+        'id': 1,
+        'episode_ids': jsonEncode(q.episodeIds),
+        'updated_at': q.updatedAt.millisecondsSinceEpoch,
+        'pending': pending ? 1 : 0,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+    await batch.commit(noResult: true);
+  });
+
+  Future<String?> description(int episodeId) async {
+    final rows = await db.query(
+      'descriptions',
+      where: 'episode_id = ?',
+      whereArgs: [episodeId],
+    );
+    return rows.isEmpty ? null : rows.first['text'] as String;
+  }
+
+  Future<void> setDescription(int episodeId, String text) => db.insert(
+    'descriptions',
+    {'episode_id': episodeId, 'text': text},
+    conflictAlgorithm: ConflictAlgorithm.replace,
+  );
+
+  Future<void> clearLibrary() => db.transaction((txn) async {
+    final batch = txn.batch();
+    for (final table in const [
+      'podcasts',
+      'episodes',
+      'episode_states',
+      'queue',
+      'descriptions',
+      'episode_lists',
+    ]) {
+      batch.delete(table);
+    }
+    batch.delete('meta', where: 'key = ?', whereArgs: [MetaKey.podcastsEtag]);
+    await batch.commit(noResult: true);
+    _meta.remove(MetaKey.podcastsEtag);
+  });
+
+  static DateTime _fromMs(int ms) =>
+      DateTime.fromMillisecondsSinceEpoch(ms, isUtc: true);
+
+  static DateTime? _fromMsOrNull(Object? ms) =>
+      ms == null ? null : _fromMs(ms as int);
+
+  static Podcast _podcast(Map<String, Object?> row) => Podcast(
+    id: row['id'] as int,
+    feedUrl: row['feed_url'] as String,
+    title: row['title'] as String,
+    author: row['author'] as String,
+    description: row['description'] as String,
+    imageUrl: row['image_url'] as String?,
+    link: row['link'] as String?,
+    subscribed: row['subscribed'] == 1,
+    episodeCount: row['episode_count'] as int,
+    playedCount: row['played_count'] as int,
+    episodesVersion: row['episodes_version'] as String,
+    lastSuccessAt: _fromMsOrNull(row['last_success_at']),
+    lastError: row['last_error'] as String?,
+  );
+
+  static Map<String, Object?> _podcastRow(Podcast p) => {
+    'id': p.id,
+    'feed_url': p.feedUrl,
+    'title': p.title,
+    'author': p.author,
+    'description': p.description,
+    'image_url': p.imageUrl,
+    'link': p.link,
+    'subscribed': p.subscribed ? 1 : 0,
+    'episode_count': p.episodeCount,
+    'played_count': p.playedCount,
+    'episodes_version': p.episodesVersion,
+    'last_success_at': p.lastSuccessAt?.millisecondsSinceEpoch,
+    'last_error': p.lastError,
+  };
+
+  static Episode _episode(Map<String, Object?> row) => Episode(
+    id: row['id'] as int,
+    podcastId: row['podcast_id'] as int,
+    guid: row['guid'] as String,
+    title: row['title'] as String,
+    enclosureUrl: row['enclosure_url'] as String,
+    publishedAt: _fromMsOrNull(row['published_at']),
+    durationS: row['duration_s'] as int?,
+    enclosureType: row['enclosure_type'] as String?,
+    enclosureLength: row['enclosure_length'] as int?,
+    link: row['link'] as String?,
+    imageUrl: row['image_url'] as String?,
+    removedFromFeed: row['removed_from_feed'] == 1,
+  );
+
+  static Map<String, Object?> _episodeRow(Episode e, int sort) => {
+    'id': e.id,
+    'podcast_id': e.podcastId,
+    'sort': sort,
+    'guid': e.guid,
+    'title': e.title,
+    'enclosure_url': e.enclosureUrl,
+    'published_at': e.publishedAt?.millisecondsSinceEpoch,
+    'duration_s': e.durationS,
+    'enclosure_type': e.enclosureType,
+    'enclosure_length': e.enclosureLength,
+    'link': e.link,
+    'image_url': e.imageUrl,
+    'removed_from_feed': e.removedFromFeed ? 1 : 0,
+  };
+}

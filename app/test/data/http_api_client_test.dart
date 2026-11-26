@@ -1,0 +1,305 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:easypodcast/core/api.dart';
+import 'package:easypodcast/core/models.dart';
+import 'package:easypodcast/data/http_api_client.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+
+void main() {
+  late List<http.Request> requests;
+  late Future<http.Response> Function(http.Request) handler;
+  late HttpApiClient api;
+
+  setUp(() {
+    requests = [];
+    handler = (_) async => http.Response('{}', 200);
+    api = HttpApiClient(
+      serverUrl: 'https://podcasts.example.test/',
+      token: 'abc',
+      client: MockClient((request) {
+        requests.add(request);
+        return handler(request);
+      }),
+      timeout: const Duration(milliseconds: 200),
+    );
+  });
+
+  http.Response json(
+    Object body, {
+    int status = 200,
+    Map<String, String>? headers,
+  }) => http.Response.bytes(
+    utf8.encode(jsonEncode(body)),
+    status,
+    headers: {'content-type': 'application/json; charset=utf-8', ...?headers},
+  );
+
+  const podcastJson = {
+    'id': 3,
+    'feed_url': 'https://feeds.example.test/3.xml',
+    'title': 'Kaktusy a lidé',
+    'author': 'Nobody',
+    'description': 'Plain text',
+    'image_url': null,
+    'link': null,
+    'subscribed': true,
+    'episode_count': 12,
+    'played_count': 4,
+    'episodes_version': 'abc123',
+    'last_success_at': '2026-11-26T14:03:07.120Z',
+    'last_error': null,
+  };
+
+  test(
+    'podcasts send the token and parse the server JSON with its ETag',
+    () async {
+      handler = (_) async => json([podcastJson], headers: {'etag': '"t1"'});
+      final fetched = await api.podcasts();
+      final request = requests.single;
+      expect(request.method, 'GET');
+      expect(
+        request.url.toString(),
+        'https://podcasts.example.test/api/podcasts',
+      );
+      expect(request.headers['Authorization'], 'Bearer abc');
+      expect(request.headers.containsKey('If-None-Match'), isFalse);
+      expect(fetched!.etag, '"t1"');
+      final p = fetched.value.single;
+      expect(p.title, 'Kaktusy a lidé');
+      expect(p.playedCount, 4);
+      expect(p.lastSuccessAt, DateTime.utc(2026, 11, 26, 14, 3, 7, 120));
+    },
+  );
+
+  test('304 returns null and If-None-Match is sent', () async {
+    handler = (_) async => http.Response('', 304);
+    expect(await api.podcasts(ifNoneMatch: '"t1"'), isNull);
+    expect(await api.episodes(3, ifNoneMatch: '"e1"'), isNull);
+    expect(requests[0].headers['If-None-Match'], '"t1"');
+    expect(requests[1].url.path, '/api/podcasts/3/episodes');
+    expect(requests[1].headers['If-None-Match'], '"e1"');
+  });
+
+  test('episode detail carries the description', () async {
+    handler = (_) async => json({
+      'id': 7,
+      'podcast_id': 3,
+      'guid': 'g7',
+      'title': 'Seven',
+      'published_at': null,
+      'duration_s': 1800,
+      'enclosure_url': 'https://media.example.test/7.mp3',
+      'enclosure_type': 'audio/mpeg',
+      'enclosure_length': null,
+      'link': null,
+      'image_url': null,
+      'removed_from_feed': false,
+      'description': 'Links stay as https://example.test',
+    });
+    final detail = await api.episode(7);
+    expect(detail.episode.durationS, 1800);
+    expect(detail.description, 'Links stay as https://example.test');
+  });
+
+  test('state parses a missing queue and the server time', () async {
+    handler = (_) async => json({
+      'episodes': [
+        {
+          'episode_id': 7,
+          'position_ms': 61000,
+          'status': '',
+          'updated_at': '2026-11-26T14:03:07.120Z',
+        },
+      ],
+      'queue': null,
+      'server_time': '2026-11-26T14:05:00.000Z',
+    });
+    final snapshot = await api.state();
+    expect(snapshot.queue, isNull);
+    expect(snapshot.episodes.single.isInProgress, isTrue);
+    expect(snapshot.serverTime, DateTime.utc(2026, 11, 26, 14, 5));
+  });
+
+  test(
+    'pushState sends states and queue in one body and parses unknown ids',
+    () async {
+      handler = (_) async => json({
+        'episodes': [
+          {
+            'episode_id': 7,
+            'position_ms': 0,
+            'status': 'played',
+            'updated_at': '2026-11-26T14:03:07.120Z',
+          },
+        ],
+        'queue': {
+          'episode_ids': [8],
+          'updated_at': '2026-11-26T14:03:07.121Z',
+        },
+        'unknown': [9],
+      });
+      final at = DateTime.utc(2026, 11, 26, 14, 3, 7, 120);
+      final result = await api.pushState(
+        episodes: [
+          EpisodeState(
+            episodeId: 7,
+            positionMs: 0,
+            status: EpisodeStatus.played,
+            updatedAt: at,
+          ),
+        ],
+        queue: QueueState(episodeIds: [8, 9], updatedAt: at),
+      );
+      final request = requests.single;
+      expect(request.method, 'POST');
+      expect(request.url.path, '/api/state');
+      expect(request.headers['Content-Type'], startsWith('application/json'));
+      expect(jsonDecode(request.body), {
+        'episodes': [
+          {
+            'episode_id': 7,
+            'position_ms': 0,
+            'status': 'played',
+            'updated_at': '2026-11-26T14:03:07.120Z',
+          },
+        ],
+        'queue': {
+          'episode_ids': [8, 9],
+          'updated_at': '2026-11-26T14:03:07.120Z',
+        },
+      });
+      expect(result.unknown, [9]);
+      expect(result.queue!.episodeIds, [8]);
+      expect(result.episodes.single.isPlayed, isTrue);
+
+      await api.pushState();
+      expect(jsonDecode(requests.last.body), {'episodes': <Object>[]});
+    },
+  );
+
+  test('episodeState returns null for no state', () async {
+    handler = (_) async => json({'state': null});
+    expect(await api.episodeState(7), isNull);
+    expect(requests.single.url.path, '/api/episodes/7/state');
+  });
+
+  test('errors carry the server message', () async {
+    handler = (_) async => json({'error': 'not a usable feed'}, status: 422);
+    await expectLater(
+      api.subscribe('https://feeds.example.test/broken.xml'),
+      throwsA(
+        isA<ApiException>()
+            .having((e) => e.statusCode, 'status', 422)
+            .having((e) => e.message, 'message', 'not a usable feed'),
+      ),
+    );
+    handler = (_) async => http.Response(
+      '<html>Bad gateway</html>',
+      502,
+      reasonPhrase: 'Bad Gateway',
+    );
+    await expectLater(
+      api.refresh(),
+      throwsA(
+        isA<ApiException>().having((e) => e.message, 'message', 'Bad Gateway'),
+      ),
+    );
+  });
+
+  test('401 forgets the token and reports the logged-out session', () async {
+    var called = 0;
+    api.onUnauthorized = () => called++;
+    handler = (_) async =>
+        json({'error': 'valid bearer token required'}, status: 401);
+    await expectLater(api.state(), throwsA(isA<ApiException>()));
+    expect(called, 1);
+    expect(api.token, isNull);
+  });
+
+  test('wrong credentials at login are not a lost session', () async {
+    var called = 0;
+    api.onUnauthorized = () => called++;
+    handler = (_) async => json({'error': 'wrong credentials'}, status: 401);
+    await expectLater(
+      api.login(
+        serverUrl: 'https://other.example.test',
+        username: 'listener',
+        password: 'nope',
+        deviceName: 'phone',
+      ),
+      throwsA(isA<ApiException>().having((e) => e.statusCode, 'status', 401)),
+    );
+    expect(called, 0);
+    expect(api.token, 'abc');
+    expect(api.serverUrl, 'https://podcasts.example.test');
+  });
+
+  test('login switches server and token', () async {
+    handler = (_) async => json({'token': 'new-token', 'device_id': 4});
+    final result = await api.login(
+      serverUrl: 'https://other.example.test/api/',
+      username: 'listener',
+      password: 'secret',
+      deviceName: 'phone',
+    );
+    final request = requests.single;
+    expect(request.url.toString(), 'https://other.example.test/api/login');
+    expect(request.headers.containsKey('Authorization'), isFalse);
+    expect(jsonDecode(request.body), {
+      'username': 'listener',
+      'password': 'secret',
+      'device_name': 'phone',
+    });
+    expect(result.deviceId, 4);
+    expect(api.token, 'new-token');
+    expect(api.serverUrl, 'https://other.example.test');
+  });
+
+  test(
+    'logout forgets the token even when the server is unreachable',
+    () async {
+      handler = (_) async => throw const SocketException('unreachable');
+      await expectLater(api.logout(), throwsA(isA<OfflineException>()));
+      expect(api.token, isNull);
+    },
+  );
+
+  test('network failures and timeouts become OfflineException', () async {
+    handler = (_) async => throw http.ClientException('connection refused');
+    await expectLater(api.state(), throwsA(isA<OfflineException>()));
+
+    handler = (_) async => throw const SocketException('no route');
+    await expectLater(api.state(), throwsA(isA<OfflineException>()));
+
+    handler = (_) => Completer<http.Response>().future;
+    await expectLater(api.state(), throwsA(isA<OfflineException>()));
+
+    final watch = Stopwatch()..start();
+    await expectLater(
+      api.episodeState(7, timeout: const Duration(milliseconds: 20)),
+      throwsA(isA<OfflineException>()),
+    );
+    expect(watch.elapsed, lessThan(const Duration(milliseconds: 150)));
+  });
+
+  test('OPML import sends the document and parses failures', () async {
+    handler = (_) async => json({
+      'added': 2,
+      'existing': 1,
+      'failed': [
+        {
+          'feed_url': 'https://feeds.example.test/gone.xml',
+          'error': 'HTTP 404',
+        },
+      ],
+    });
+    final result = await api.importOpml('<opml version="2.0"><body/></opml>');
+    expect(requests.single.body, '<opml version="2.0"><body/></opml>');
+    expect(result.added, 2);
+    expect(result.failed.single.error, 'HTTP 404');
+  });
+}
