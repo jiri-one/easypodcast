@@ -133,10 +133,13 @@ func TestHTTPAPI(t *testing.T) {
 	call("GET", "/api/podcasts/999999/episodes", "", "", "", 404)
 	call("GET", "/api/episodes/abc", "", "", "", 400)
 
-	send := func(when time.Time, position int64, status string, ids []int64, code int) *httptest.ResponseRecorder {
+	send := func(when time.Time, position int64, status string, duration *int64, ids []int64, code int) *httptest.ResponseRecorder {
 		body, err := json.Marshal(stateChange{
-			Episodes: []episodeState{{copper.ID, position, status, timestamp{when}}, {999999, 0, "", timestamp{when}}},
-			Queue:    &queue{ids, timestamp{when}},
+			Episodes: []episodeState{
+				{EpisodeID: copper.ID, PositionMS: position, Status: status, DurationMS: duration, UpdatedAt: timestamp{when}},
+				{EpisodeID: 999999, UpdatedAt: timestamp{when}},
+			},
+			Queue: &queue{ids, timestamp{when}},
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -144,33 +147,46 @@ func TestHTTPAPI(t *testing.T) {
 		return call("POST", "/api/state", string(body), "", "", code)
 	}
 	at := now.Add(-time.Minute)
-	result := response[stateResult](t, send(at, 120000, "", []int64{paper.ID, 999999, copper.ID}, 200))
+	measured, remeasured := int64(243210), int64(250123)
+	result := response[stateResult](t, send(at, 120000, "", &measured, []int64{paper.ID, 999999, copper.ID}, 200))
 	if len(result.Episodes) != 1 || result.Episodes[0].PositionMS != 120000 ||
+		result.Episodes[0].DurationMS == nil || *result.Episodes[0].DurationMS != measured ||
 		!slices.Equal(result.Unknown, []int64{999999}) || !slices.Equal(result.Queue.EpisodeIDs, []int64{paper.ID, copper.ID}) {
 		t.Fatalf("initial state: %+v", result)
 	}
 	for _, stale := range []time.Time{at, at.Add(-time.Second)} {
-		result = response[stateResult](t, send(stale, 1, "played", []int64{}, 200))
-		if result.Episodes[0].PositionMS != 120000 || len(result.Queue.EpisodeIDs) != 2 {
+		result = response[stateResult](t, send(stale, 1, "played", &remeasured, []int64{}, 200))
+		if result.Episodes[0].PositionMS != 120000 || result.Episodes[0].Status != "" ||
+			result.Episodes[0].DurationMS == nil || *result.Episodes[0].DurationMS != measured || len(result.Queue.EpisodeIDs) != 2 {
 			t.Fatalf("stale state replaced newer state: %+v", result)
 		}
 	}
-	send(now.Add(24*time.Hour+time.Millisecond), 10, "dismissed", []int64{}, 400)
+	send(now.Add(24*time.Hour+time.Millisecond), 10, "dismissed", nil, []int64{}, 400)
+	badDuration := fmt.Sprintf(`{"episodes":[{"episode_id":%d,"position_ms":0,"status":"","duration_ms":1.5,"updated_at":"2026-11-26T12:00:00.000Z"}]}`, copper.ID)
+	call("POST", "/api/state", badDuration, "", "", 400)
 	invalidQueue := fmt.Sprintf(`{"episodes":[{"episode_id":%d,"position_ms":39000,"status":"","updated_at":"2026-11-26T12:00:00.000Z"}],"queue":{"episode_ids":[],"updated_at":"2026-11-28T12:00:00.000Z"}}`, copper.ID)
 	call("POST", "/api/state", invalidQueue, "", "", 400)
 	snapshot := response[stateChange](t, call("GET", "/api/state", "", "", "", 200))
-	if snapshot.Episodes[0].PositionMS != 120000 {
+	if snapshot.Episodes[0].PositionMS != 120000 || snapshot.Episodes[0].DurationMS == nil ||
+		*snapshot.Episodes[0].DurationMS != measured {
 		t.Fatal("invalid queue request applied episode update")
 	}
-	result = response[stateResult](t, send(now, 60000, "", []int64{copper.ID}, 200))
-	if result.Episodes[0].PositionMS != 60000 {
+	result = response[stateResult](t, send(now, 60000, "", &remeasured, []int64{copper.ID}, 200))
+	if result.Episodes[0].PositionMS != 60000 || result.Episodes[0].DurationMS == nil || *result.Episodes[0].DurationMS != remeasured {
 		t.Fatal("newer rewind did not win")
 	}
-	result = response[stateResult](t, send(now.Add(24*time.Hour), 0, "played", []int64{}, 200))
-	if result.Episodes[0].Status != "played" || result.Queue.EpisodeIDs == nil || len(result.Queue.EpisodeIDs) != 0 {
+	episodeReply := response[struct {
+		State *episodeState `json:"state"`
+	}](t, call("GET", copperPath+"/state", "", "", "", 200))
+	if episodeReply.State == nil || episodeReply.State.DurationMS == nil || *episodeReply.State.DurationMS != remeasured {
+		t.Fatal("single episode state did not return the stored duration")
+	}
+	result = response[stateResult](t, send(now.Add(24*time.Hour), 0, "played", nil, []int64{}, 200))
+	if result.Episodes[0].Status != "played" || result.Episodes[0].DurationMS != nil ||
+		result.Queue.EpisodeIDs == nil || len(result.Queue.EpisodeIDs) != 0 {
 		t.Fatal("newer completion did not win")
 	}
-	if got := call("GET", copperPath+"/state", "", "", "", 200).Body.String(); !strings.Contains(got, `"status":"played"`) {
+	if got := call("GET", copperPath+"/state", "", "", "", 200).Body.String(); !strings.Contains(got, `"status":"played","duration_ms":null`) {
 		t.Fatal(got)
 	}
 	list = call("GET", "/api/podcasts", "", "", "", 200)
@@ -239,6 +255,36 @@ func TestHTTPAPI(t *testing.T) {
 	call("GET", "/api/state", "", "", "", 401)
 	s.db.Close()
 	call("GET", "/health", "", "", "", 503)
+}
+
+func TestLoginTrustedProxy(t *testing.T) {
+	s := integrationStore(t)
+	if err := s.setPassword(t.Context(), "listener", "fixture password"); err != nil {
+		t.Fatal(err)
+	}
+	a := newAPI(s, nil)
+	a.logins.trustedProxies = parseTrustedProxies("malformed, 192.0.2.0/24")
+	handler := a.routes()
+	login := func(peer, forwarded, password string, want int) {
+		t.Helper()
+		req := httptest.NewRequest("POST", "/api/login",
+			strings.NewReader(fmt.Sprintf(`{"username":"listener","password":%q,"device_name":"Test"}`, password)))
+		req.RemoteAddr = peer
+		req.Header.Set("X-Forwarded-For", forwarded)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != want {
+			t.Fatalf("peer %s with X-Forwarded-For %s: HTTP %d, want %d", peer, forwarded, rec.Code, want)
+		}
+	}
+	for i := range 5 {
+		spoof := fmt.Sprintf("203.0.113.%d", i+10)
+		login("192.0.2.2:41000", spoof+", 198.51.100.2", "wrong", 401)
+		login(fmt.Sprintf("203.0.113.2:%d", 42000+i), spoof, "wrong", 401)
+	}
+	login("192.0.2.2:41001", "203.0.113.90, 198.51.100.2", "fixture password", 429)
+	login("203.0.113.2:42005", "203.0.113.91", "fixture password", 429)
+	login("192.0.2.2:41002", "198.51.100.3", "fixture password", 200)
 }
 
 func response[T any](t *testing.T, w *httptest.ResponseRecorder) T {

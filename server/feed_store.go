@@ -104,13 +104,17 @@ type episodeIdentity struct {
 	EnclosureURL string
 }
 
-func saveEpisodes(ctx context.Context, tx pgx.Tx, podcastID int64, incoming []episodeDetail) error {
+func episodeIdentities(ctx context.Context, tx pgx.Tx, podcastID int64) ([]episodeIdentity, error) {
 	rows, err := tx.Query(ctx, `SELECT id, guid, enclosure_url FROM episodes WHERE podcast_id = $1
 		ORDER BY removed_from_feed, id`, podcastID)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	existing, err := pgx.CollectRows(rows, pgx.RowToStructByPos[episodeIdentity])
+	return pgx.CollectRows(rows, pgx.RowToStructByPos[episodeIdentity])
+}
+
+func saveEpisodes(ctx context.Context, tx pgx.Tx, podcastID int64, incoming []episodeDetail) error {
+	existing, err := episodeIdentities(ctx, tx, podcastID)
 	if err != nil {
 		return err
 	}

@@ -24,6 +24,9 @@ type pineEpisode struct {
 	FeedID        *int64
 	GUID          string
 	EnclosureURL  string
+	Title         string
+	PublishedAt   *time.Time
+	Duration      *int64
 	ListenSeconds *int32
 	ListenDate    *time.Time
 	Completed     bool
@@ -37,15 +40,16 @@ type pineSnapshot struct {
 }
 
 type pineSummary struct {
-	added               int
-	existing            int
-	failedFeeds         int
-	matchedPositions    int
-	matchedCompletions  int
-	queueEntries        int
-	unmatchedEpisodes   int
-	missingCompletionAt int
-	skippedStates       int
+	added                int
+	existing             int
+	failedFeeds          int
+	matchedPositions     int
+	matchedCompletions   int
+	queueEntries         int
+	removedEpisodesAdded int
+	unmatchedEpisodes    int
+	missingCompletionAt  int
+	skippedStates        int
 }
 
 func importPinepodsCommand(ctx context.Context, s store, args []string) error {
@@ -70,8 +74,8 @@ func importPinepodsCommand(ctx context.Context, s store, args []string) error {
 		return err
 	}
 	fmt.Printf("Subscriptions added %d, existing %d, feed failures %d\n", summary.added, summary.existing, summary.failedFeeds)
-	fmt.Printf("Matched positions %d, completions %d, queue entries %d, unmatched episodes %d\n",
-		summary.matchedPositions, summary.matchedCompletions, summary.queueEntries, summary.unmatchedEpisodes)
+	fmt.Printf("Matched positions %d, completions %d, queue entries imported %d, removed episodes added %d, unmatched episodes %d\n",
+		summary.matchedPositions, summary.matchedCompletions, summary.queueEntries, summary.removedEpisodesAdded, summary.unmatchedEpisodes)
 	fmt.Printf("Completions without a completion time %d, states skipped for missing or future timestamps %d\n",
 		summary.missingCompletionAt, summary.skippedStates)
 	if summary.failedFeeds > 0 {
@@ -114,15 +118,19 @@ func readPinepods(ctx context.Context, db *pgx.Conn, username string) (pineSnaps
 			return err
 		}
 
-		rows, err = tx.Query(ctx, `WITH touched AS (
-				SELECT episodeid FROM "UserEpisodeHistory" WHERE userid = $1
+		rows, err = tx.Query(ctx, `WITH candidates AS (
+				SELECT e.episodeid FROM "Episodes" e JOIN "Podcasts" p
+					ON (p.feedid = e.feedid OR p.podcastid = e.podcastid)
+				WHERE p.userid = $1 AND NOT COALESCE(p.isyoutubechannel, false)
+				UNION SELECT episodeid FROM "UserEpisodeHistory" WHERE userid = $1
 				UNION SELECT episodeid FROM "UserEpisodeState" WHERE userid = $1 AND completed
 				UNION SELECT unnest($2::int[])
 			)
 			SELECT t.episodeid, e.podcastid, e.feedid, COALESCE(e.episodeguid, ''), COALESCE(e.episodeurl, ''),
+				COALESCE(e.episodetitle, ''), e.episodepubdate AT TIME ZONE 'UTC', e.episodeduration,
 				h.listenduration, h.listendate AT TIME ZONE 'UTC', COALESCE(s.completed, false),
 				s.completedat AT TIME ZONE 'UTC'
-			FROM touched t
+			FROM candidates t
 			LEFT JOIN "Episodes" e ON e.episodeid = t.episodeid
 			LEFT JOIN "UserEpisodeHistory" h ON h.episodeid = t.episodeid AND h.userid = $1
 			LEFT JOIN "UserEpisodeState" s ON s.episodeid = t.episodeid AND s.userid = $1
@@ -136,11 +144,6 @@ func readPinepods(ctx context.Context, db *pgx.Conn, username string) (pineSnaps
 	return data, err
 }
 
-type pineMatcher struct {
-	byGUID map[string]int64
-	byURL  map[string]int64
-}
-
 func (r *refresher) importPinepods(ctx context.Context, db *pgx.Conn, username string) (pineSummary, error) {
 	data, err := readPinepods(ctx, db, username)
 	if errors.Is(err, errPineUserMissing) {
@@ -150,9 +153,9 @@ func (r *refresher) importPinepods(ctx context.Context, db *pgx.Conn, username s
 		return pineSummary{}, databaseError("could not read PinePods 0.9.2 data", err)
 	}
 	var summary pineSummary
-	byFeed := make(map[int64]*pineMatcher)
-	byPodcast := make(map[int64]*pineMatcher)
-	matchers := make(map[int64]*pineMatcher)
+	byFeed := make(map[int64]int64)
+	byPodcast := make(map[int64]int64)
+	seen := make(map[int64]bool)
 	for _, sub := range data.subscriptions {
 		p, added, err := r.subscribe(ctx, sub.URL)
 		if err != nil {
@@ -168,63 +171,65 @@ func (r *refresher) importPinepods(ctx context.Context, db *pgx.Conn, username s
 		} else {
 			summary.existing++
 		}
-		matcher := matchers[p.ID]
-		if matcher == nil {
-			if !added {
-				target, err := r.store.feedTarget(ctx, p.ID)
-				if err != nil {
-					return summary, databaseError("could not look up imported subscription", err)
-				}
-				if err := r.refresh(ctx, target); err != nil {
-					summary.failedFeeds++
-				}
-			}
-			matcher, err = r.store.pineMatcher(ctx, p.ID)
+		if !added && !seen[p.ID] {
+			target, err := r.store.feedTarget(ctx, p.ID)
 			if err != nil {
-				return summary, databaseError("could not load episodes for matching", err)
+				return summary, databaseError("could not look up imported subscription", err)
 			}
-			matchers[p.ID] = matcher
+			if err := r.refresh(ctx, target); err != nil {
+				summary.failedFeeds++
+			}
 		}
+		seen[p.ID] = true
 		if sub.FeedID != nil {
-			byFeed[*sub.FeedID] = matcher
+			byFeed[*sub.FeedID] = p.ID
 		}
-		byPodcast[sub.PodcastID] = matcher
+		byPodcast[sub.PodcastID] = p.ID
 	}
-	now := time.Now()
-	change := stateChange{Queue: &queue{EpisodeIDs: []int64{}, UpdatedAt: timestamp{now}}}
-	destinations := make(map[int64]int64)
+	episodesByPodcast := make(map[int64][]pineEpisode)
 	for _, source := range data.episodes {
-		var matcher *pineMatcher
+		var podcastID int64
 		if source.FeedID != nil {
-			matcher = byFeed[*source.FeedID]
-		} else if source.PodcastID != nil {
-			matcher = byPodcast[*source.PodcastID]
+			podcastID = byFeed[*source.FeedID]
 		}
-		var id int64
-		if matcher != nil {
-			id = matcher.byGUID[strings.TrimSpace(source.GUID)]
-			if id == 0 {
-				id = matcher.byURL[source.EnclosureURL]
-			}
+		if podcastID == 0 && source.PodcastID != nil {
+			podcastID = byPodcast[*source.PodcastID]
 		}
+		if podcastID != 0 {
+			episodesByPodcast[podcastID] = append(episodesByPodcast[podcastID], source)
+		}
+	}
+	destinations, removedAdded, err := r.store.matchPineEpisodes(ctx, episodesByPodcast)
+	if err != nil {
+		return summary, databaseError("could not reconcile PinePods episodes", err)
+	}
+	summary.removedEpisodesAdded = removedAdded
+	now := time.Now()
+	change := stateChange{queueOnlyIfEmpty: true}
+	for _, source := range data.episodes {
+		id := destinations[source.ID]
 		if id == 0 {
 			summary.unmatchedEpisodes++
 			continue
 		}
-		destinations[source.ID] = id
 		if e, ok := source.toState(id, now, &summary); ok {
 			change.Episodes = append(change.Episodes, e)
 		}
 	}
+	var queued []int64
 	for _, id := range data.queue {
 		if episodeID := destinations[id]; episodeID != 0 {
-			change.Queue.EpisodeIDs = append(change.Queue.EpisodeIDs, episodeID)
+			queued = append(queued, episodeID)
 		}
 	}
-	summary.queueEntries = len(change.Queue.EpisodeIDs)
-	if _, err := r.store.updateState(ctx, change, now); err != nil {
+	if len(queued) > 0 {
+		change.Queue = &queue{EpisodeIDs: queued, UpdatedAt: timestamp{now}}
+	}
+	result, err := r.store.updateState(ctx, change, now)
+	if err != nil {
 		return summary, databaseError("could not apply PinePods listening state", err)
 	}
+	summary.queueEntries = result.queueEntriesWritten
 	return summary, nil
 }
 
@@ -260,24 +265,73 @@ func (e pineEpisode) toState(id int64, now time.Time, summary *pineSummary) (epi
 	return state, true
 }
 
-func (s store) pineMatcher(ctx context.Context, podcastID int64) (*pineMatcher, error) {
-	rows, err := s.db.Query(ctx, `SELECT id, guid, enclosure_url FROM episodes WHERE podcast_id = $1
-		ORDER BY removed_from_feed, id`, podcastID)
+func (s store) matchPineEpisodes(ctx context.Context, groups map[int64][]pineEpisode) (map[int64]int64, int, error) {
+	matched := make(map[int64]int64)
+	added := 0
+	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", feedLock); err != nil {
+			return err
+		}
+		for podcastID, episodes := range groups {
+			count, err := matchPinePodcast(ctx, tx, podcastID, episodes, matched)
+			if err != nil {
+				return err
+			}
+			added += count
+		}
+		return nil
+	})
+	return matched, added, err
+}
+
+func matchPinePodcast(ctx context.Context, tx pgx.Tx, podcastID int64, sources []pineEpisode, matched map[int64]int64) (int, error) {
+	identities, err := episodeIdentities(ctx, tx, podcastID)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
-	identities, err := pgx.CollectRows(rows, pgx.RowToStructByPos[episodeIdentity])
-	if err != nil {
-		return nil, err
-	}
-	matcher := &pineMatcher{byGUID: make(map[string]int64), byURL: make(map[string]int64)}
+	byGUID := make(map[string]int64, len(identities))
+	byURL := make(map[string]int64, len(identities))
 	for _, e := range identities {
 		if e.GUID != "" {
-			matcher.byGUID[e.GUID] = e.ID
+			byGUID[e.GUID] = e.ID
 		}
-		if matcher.byURL[e.EnclosureURL] == 0 {
-			matcher.byURL[e.EnclosureURL] = e.ID
+		if e.EnclosureURL != "" && byURL[e.EnclosureURL] == 0 {
+			byURL[e.EnclosureURL] = e.ID
 		}
 	}
-	return matcher, nil
+	added := 0
+	for _, source := range sources {
+		guid := strings.TrimSpace(source.GUID)
+		enclosure := strings.TrimSpace(source.EnclosureURL)
+		id := byGUID[guid]
+		if id == 0 {
+			id = byURL[enclosure]
+		}
+		if id != 0 {
+			matched[source.ID] = id
+			continue
+		}
+		if guid == "" && enclosure == "" {
+			continue
+		}
+		err := tx.QueryRow(ctx, `INSERT INTO episodes
+			(podcast_id, guid, enclosure_url, title, published_at, duration_s, description, removed_from_feed)
+			VALUES ($1,$2,$3,$4,$5,$6,'',true) RETURNING id`,
+			podcastID, guid, enclosure, source.Title, source.PublishedAt, source.Duration).Scan(&id)
+		if err != nil {
+			return 0, err
+		}
+		if guid != "" {
+			byGUID[guid] = id
+		}
+		if enclosure != "" {
+			byURL[enclosure] = id
+		}
+		matched[source.ID] = id
+		added++
+	}
+	if added > 0 {
+		_, err = tx.Exec(ctx, "UPDATE podcasts SET episodes_version = episodes_version + 1 WHERE id = $1", podcastID)
+	}
+	return added, err
 }

@@ -13,5 +13,6 @@ COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certifica
 COPY --from=build /easypodcast /easypodcast
 USER 65532:65532
 EXPOSE 8080
+HEALTHCHECK CMD ["/easypodcast", "healthcheck"]
 ENTRYPOINT ["/easypodcast"]
 CMD ["serve"]

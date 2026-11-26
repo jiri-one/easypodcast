@@ -9,8 +9,10 @@ type timestamp struct {
 	time.Time
 }
 
+const timestampLayout = "2006-01-02T15:04:05.000Z"
+
 func (t timestamp) MarshalJSON() ([]byte, error) {
-	return t.UTC().AppendFormat(nil, `"2006-01-02T15:04:05.000Z"`), nil
+	return t.UTC().AppendFormat(nil, `"`+timestampLayout+`"`), nil
 }
 
 type podcast struct {
@@ -53,6 +55,7 @@ type episodeState struct {
 	EpisodeID  int64     `json:"episode_id"`
 	PositionMS int64     `json:"position_ms"`
 	Status     string    `json:"status"`
+	DurationMS *int64    `json:"duration_ms"`
 	UpdatedAt  timestamp `json:"updated_at"`
 }
 
@@ -61,6 +64,7 @@ func (e *episodeState) UnmarshalJSON(data []byte) error {
 		EpisodeID  *int64     `json:"episode_id"`
 		PositionMS *int64     `json:"position_ms"`
 		Status     *string    `json:"status"`
+		DurationMS *int64     `json:"duration_ms"`
 		UpdatedAt  *timestamp `json:"updated_at"`
 	}
 	if err := json.Unmarshal(data, &fields); err != nil {
@@ -69,7 +73,10 @@ func (e *episodeState) UnmarshalJSON(data []byte) error {
 	if fields.EpisodeID == nil || fields.PositionMS == nil || fields.Status == nil || fields.UpdatedAt == nil {
 		return errInvalidState
 	}
-	*e = episodeState{*fields.EpisodeID, *fields.PositionMS, *fields.Status, *fields.UpdatedAt}
+	*e = episodeState{
+		EpisodeID: *fields.EpisodeID, PositionMS: *fields.PositionMS, Status: *fields.Status,
+		DurationMS: fields.DurationMS, UpdatedAt: *fields.UpdatedAt,
+	}
 	return nil
 }
 
@@ -79,11 +86,13 @@ type queue struct {
 }
 
 type stateChange struct {
-	Episodes []episodeState `json:"episodes"`
-	Queue    *queue         `json:"queue"`
+	Episodes         []episodeState `json:"episodes"`
+	Queue            *queue         `json:"queue"`
+	queueOnlyIfEmpty bool
 }
 
 type stateResult struct {
 	stateChange
-	Unknown []int64 `json:"unknown"`
+	Unknown             []int64 `json:"unknown"`
+	queueEntriesWritten int
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -29,7 +30,7 @@ func main() {
 	}
 }
 
-const usage = "usage: easypodcast serve | migrate | user set-password <name> [--password-stdin] | import-opml <file> | import-pinepods --pinepods-dsn <dsn> --pinepods-user <name>"
+const usage = "usage: easypodcast serve | healthcheck | migrate | user set-password <name> [--password-stdin] | devices list | devices revoke <id> | import-opml <file> | import-pinepods --pinepods-dsn <dsn> --pinepods-user <name>"
 
 func run(ctx context.Context, args []string) error {
 	if len(args) == 0 {
@@ -38,6 +39,12 @@ func run(ctx context.Context, args []string) error {
 	if args[0] == "--help" || args[0] == "-h" {
 		fmt.Println(usage)
 		return nil
+	}
+	if args[0] == "healthcheck" {
+		if len(args) != 1 {
+			return errors.New(usage)
+		}
+		return healthcheck(ctx)
 	}
 	dsn := os.Getenv("EASYPODCAST_DATABASE_URL")
 	if dsn == "" {
@@ -85,6 +92,8 @@ func run(ctx context.Context, args []string) error {
 			return err
 		}
 		return s.setPassword(ctx, name, password)
+	case "devices":
+		return devicesCommand(ctx, s, args[1:], os.Stdout)
 	case "import-opml":
 		if len(args) != 2 {
 			return errors.New(usage)
@@ -134,13 +143,48 @@ func configureRefresher(s store) (*refresher, error) {
 	return newRefresher(s, agent, interval), nil
 }
 
-func serve(ctx context.Context, s store, r *refresher) error {
-	address := os.Getenv("EASYPODCAST_LISTEN")
-	if address == "" {
-		address = ":8080"
+func listenAddress() string {
+	if address := os.Getenv("EASYPODCAST_LISTEN"); address != "" {
+		return address
 	}
+	return ":8080"
+}
+
+func healthcheck(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	_, service, err := net.SplitHostPort(listenAddress())
+	if err != nil {
+		return errors.New("invalid EASYPODCAST_LISTEN")
+	}
+	port, err := net.DefaultResolver.LookupPort(ctx, "tcp", service)
+	if err != nil || port == 0 {
+		return errors.New("invalid port in EASYPODCAST_LISTEN")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/health", port), nil)
+	if err != nil {
+		return err
+	}
+	client := http.Client{
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("healthcheck request failed: %w", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("healthcheck returned HTTP %d", resp.StatusCode)
+	}
+	return nil
+}
+
+func serve(ctx context.Context, s store, r *refresher) error {
+	address := listenAddress()
+	a := newAPI(s, r)
+	a.logins.trustedProxies = parseTrustedProxies(os.Getenv("EASYPODCAST_TRUSTED_PROXIES"))
 	server := &http.Server{
-		Addr: address, Handler: newAPI(s, r).routes(),
+		Addr: address, Handler: a.routes(),
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, IdleTimeout: time.Minute,
 		ErrorLog: slog.NewLogLogger(slog.Default().Handler(), slog.LevelError),
 	}

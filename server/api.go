@@ -182,7 +182,7 @@ func (a *api) login(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadRequest, "invalid username or device name")
 		return
 	}
-	finish, ok := a.logins.start(r.RemoteAddr)
+	finish, ok := a.logins.start(r)
 	if !ok {
 		w.Header().Set("Retry-After", "60")
 		apiError(w, http.StatusTooManyRequests, "too many login attempts")
@@ -219,7 +219,7 @@ func (a *api) login(w http.ResponseWriter, r *http.Request) {
 
 func (a *api) logout(w http.ResponseWriter, r *http.Request) {
 	id := r.Context().Value(deviceContextKey{}).(int64)
-	if _, err := a.store.db.Exec(r.Context(), "DELETE FROM devices WHERE id = $1", id); err != nil {
+	if _, err := a.store.revokeDevice(r.Context(), id); err != nil {
 		storeError(w, err)
 		return
 	}

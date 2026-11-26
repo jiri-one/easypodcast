@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -106,7 +107,77 @@ func TestMigrateAsDatabaseOwner(t *testing.T) {
 		}
 	}
 	var migrations int
-	if err := pool.QueryRow(t.Context(), "SELECT count(*) FROM schema_migrations").Scan(&migrations); err != nil || migrations != 1 {
+	if err := pool.QueryRow(t.Context(), "SELECT count(*) FROM schema_migrations").Scan(&migrations); err != nil || migrations != 3 {
 		t.Fatalf("migration count: %d, %v", migrations, err)
+	}
+}
+
+func TestUpgradeInitialSchema(t *testing.T) {
+	s := store{isolatedSchema(t)}
+	const initial = "migrations/001_initial.sql"
+	sql, err := migrations.ReadFile(initial)
+	if err != nil {
+		t.Fatal(err)
+	}
+	testExec(t, s.db, string(sql))
+	testExec(t, s.db, `
+		CREATE TABLE schema_migrations (version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now());
+		INSERT INTO schema_migrations (version) VALUES ('migrations/001_initial.sql');
+		INSERT INTO users (username, password_hash) VALUES ('listener', decode('00', 'hex'));
+		INSERT INTO podcasts (feed_url) VALUES ('https://example.invalid/feed');
+		INSERT INTO episodes (podcast_id, guid, title, enclosure_url, description)
+			SELECT id, 'archive', 'Quiet Archive', 'https://example.invalid/archive.mp3', '' FROM podcasts;
+		INSERT INTO episode_state (episode_id, position_ms, status, updated_at)
+			SELECT id, 120000, '', '2025-10-01T08:10:00.123Z' FROM episodes;
+	`)
+	token, id, err := s.createDevice(t.Context(), "listener", "Legacy reader")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.migrate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	states, err := s.state(t.Context())
+	if err != nil || len(states.Episodes) != 1 || states.Episodes[0].PositionMS != 120000 ||
+		states.Episodes[0].DurationMS != nil || states.Episodes[0].UpdatedAt.UTC().Format(timestampLayout) != "2025-10-01T08:10:00.123Z" {
+		t.Fatalf("existing state changed after upgrade: %+v, %v", states, err)
+	}
+	devices, err := s.devices(t.Context())
+	if err != nil || len(devices) != 1 || devices[0].CreatedAt != nil || devices[0].LastSeenAt != nil {
+		t.Fatal("legacy device dates should be unknown")
+	}
+	if got, err := s.deviceID(t.Context(), token); err != nil || got != id {
+		t.Fatal("legacy device token stopped working")
+	}
+	devices, err = s.devices(t.Context())
+	if err != nil || len(devices) != 1 || devices[0].CreatedAt != nil || devices[0].LastSeenAt == nil {
+		t.Fatal("legacy device did not record last seen")
+	}
+}
+
+func TestPasswordlessDatabaseURL(t *testing.T) {
+	pool := isolatedSchema(t)
+	original := pool.Config()
+	u, err := url.Parse(original.ConnString())
+	if err != nil || (u.Scheme != "postgres" && u.Scheme != "postgresql") || original.ConnConfig.Password == "" {
+		t.Skip("requires a PostgreSQL test URL with a test password")
+	}
+	u.User = url.User(original.ConnConfig.User)
+	params := u.Query()
+	params.Del("password")
+	params.Set("search_path", original.ConnConfig.RuntimeParams["search_path"])
+	u.RawQuery = params.Encode()
+	t.Setenv("PGPASSWORD", original.ConnConfig.Password)
+	t.Setenv("EASYPODCAST_DATABASE_URL", u.String())
+	cfg, err := pgxpool.ParseConfig(u.String())
+	if err != nil || cfg.ConnConfig.Password != original.ConnConfig.Password {
+		t.Fatal("pgx did not use PGPASSWORD for the passwordless URL")
+	}
+	if err := run(t.Context(), []string{"migrate"}); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := pool.QueryRow(t.Context(), "SELECT count(*) FROM schema_migrations").Scan(&count); err != nil || count != 3 {
+		t.Fatalf("migration via PGPASSWORD: %d, %v", count, err)
 	}
 }

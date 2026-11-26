@@ -8,6 +8,9 @@ import (
 	"encoding/base64"
 	"errors"
 	"net"
+	"net/http"
+	"net/netip"
+	"strings"
 	"sync"
 	"time"
 
@@ -75,7 +78,8 @@ func (s store) deviceID(ctx context.Context, token string) (int64, error) {
 	}
 	hash := sha256.Sum256(raw)
 	var id int64
-	err = s.db.QueryRow(ctx, "SELECT id FROM devices WHERE token_hash = $1", hash[:]).Scan(&id)
+	err = s.db.QueryRow(ctx, `UPDATE devices SET last_seen_at = GREATEST(last_seen_at, now())
+		WHERE token_hash = $1 RETURNING id`, hash[:]).Scan(&id)
 	return id, err
 }
 
@@ -85,16 +89,50 @@ type loginWindow struct {
 }
 
 type loginLimiter struct {
-	mu          sync.Mutex
-	addresses   map[string]*loginWindow
-	lastCleanup time.Time
+	trustedProxies []*net.IPNet
+	mu             sync.Mutex
+	addresses      map[string]*loginWindow
+	lastCleanup    time.Time
 }
 
-func (l *loginLimiter) start(remote string) (func(bool), bool) {
-	address, _, err := net.SplitHostPort(remote)
-	if err != nil {
-		address = remote
+func parseTrustedProxies(value string) []*net.IPNet {
+	var networks []*net.IPNet
+	for part := range strings.SplitSeq(value, ",") {
+		if _, network, err := net.ParseCIDR(strings.TrimSpace(part)); err == nil {
+			networks = append(networks, network)
+		}
 	}
+	return networks
+}
+
+func (l *loginLimiter) clientAddress(r *http.Request) string {
+	address, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		address = r.RemoteAddr
+	}
+	peer, err := netip.ParseAddr(address)
+	if err != nil {
+		return address
+	}
+	for _, network := range l.trustedProxies {
+		if !network.Contains(peer.AsSlice()) {
+			continue
+		}
+		values := r.Header.Values("X-Forwarded-For")
+		if len(values) > 0 {
+			last := values[len(values)-1]
+			last = strings.TrimSpace(last[strings.LastIndexByte(last, ',')+1:])
+			if client, err := netip.ParseAddr(last); err == nil && client.Zone() == "" {
+				return client.Unmap().String()
+			}
+		}
+		break
+	}
+	return peer.Unmap().String()
+}
+
+func (l *loginLimiter) start(r *http.Request) (func(bool), bool) {
+	address := l.clientAddress(r)
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := time.Now()

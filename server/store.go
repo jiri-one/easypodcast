@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -161,13 +162,23 @@ func (s store) episode(ctx context.Context, id int64) (episodeDetail, error) {
 func (s store) episodeState(ctx context.Context, id int64) (*episodeState, error) {
 	var position *int64
 	var status *string
+	var duration *int64
 	var updatedAt *time.Time
-	err := s.db.QueryRow(ctx, `SELECT es.position_ms, es.status, es.updated_at FROM episodes e
-		LEFT JOIN episode_state es ON es.episode_id = e.id WHERE e.id = $1`, id).Scan(&position, &status, &updatedAt)
+	err := s.db.QueryRow(ctx, `SELECT es.position_ms, es.status, es.duration_ms, es.updated_at FROM episodes e
+		LEFT JOIN episode_state es ON es.episode_id = e.id WHERE e.id = $1`, id).
+		Scan(&position, &status, &duration, &updatedAt)
 	if err != nil || position == nil {
 		return nil, err
 	}
-	return &episodeState{id, *position, *status, timestamp{*updatedAt}}, nil
+	return &episodeState{
+		EpisodeID: id, PositionMS: *position, Status: *status, DurationMS: duration, UpdatedAt: timestamp{*updatedAt},
+	}, nil
+}
+
+func scanEpisodeState(row pgx.CollectableRow) (episodeState, error) {
+	var e episodeState
+	err := row.Scan(&e.EpisodeID, &e.PositionMS, &e.Status, &e.DurationMS, &e.UpdatedAt.Time)
+	return e, err
 }
 
 func readQueue(ctx context.Context, tx pgx.Tx) (*queue, error) {
@@ -182,15 +193,11 @@ func readQueue(ctx context.Context, tx pgx.Tx) (*queue, error) {
 func (s store) state(ctx context.Context) (stateChange, error) {
 	var result stateChange
 	err := pgx.BeginTxFunc(ctx, s.db, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}, func(tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, "SELECT episode_id, position_ms, status, updated_at FROM episode_state ORDER BY episode_id")
+		rows, err := tx.Query(ctx, "SELECT episode_id, position_ms, status, duration_ms, updated_at FROM episode_state ORDER BY episode_id")
 		if err != nil {
 			return err
 		}
-		result.Episodes, err = pgx.CollectRows(rows, func(row pgx.CollectableRow) (episodeState, error) {
-			var e episodeState
-			err := row.Scan(&e.EpisodeID, &e.PositionMS, &e.Status, &e.UpdatedAt.Time)
-			return e, err
-		})
+		result.Episodes, err = pgx.CollectRows(rows, scanEpisodeState)
 		if err != nil {
 			return err
 		}
@@ -232,7 +239,7 @@ func (s store) updateState(ctx context.Context, change stateChange, now time.Tim
 	}
 	result := stateResult{stateChange: stateChange{Episodes: []episodeState{}}, Unknown: []int64{}}
 	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
-		err := applyStates(ctx, tx, ids, latest, change.Queue, &result)
+		err := applyStates(ctx, tx, ids, latest, change.Queue, change.queueOnlyIfEmpty, &result)
 		if err != nil {
 			return err
 		}
@@ -242,7 +249,7 @@ func (s store) updateState(ctx context.Context, change stateChange, now time.Tim
 	return result, err
 }
 
-func applyStates(ctx context.Context, tx pgx.Tx, ids []int64, latest map[int64]episodeState, q *queue, result *stateResult) error {
+func applyStates(ctx context.Context, tx pgx.Tx, ids []int64, latest map[int64]episodeState, q *queue, queueOnlyIfEmpty bool, result *stateResult) error {
 	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", stateLock); err != nil {
 		return err
 	}
@@ -276,10 +283,10 @@ func applyStates(ctx context.Context, tx pgx.Tx, ids []int64, latest map[int64]e
 			continue
 		}
 		e := latest[id]
-		batch.Queue(`INSERT INTO episode_state (episode_id, position_ms, status, updated_at) VALUES ($1,$2,$3,$4)
+		batch.Queue(`INSERT INTO episode_state (episode_id, position_ms, status, duration_ms, updated_at) VALUES ($1,$2,$3,$4,$5)
 			ON CONFLICT (episode_id) DO UPDATE SET position_ms = EXCLUDED.position_ms,
-			status = EXCLUDED.status, updated_at = EXCLUDED.updated_at
-			WHERE EXCLUDED.updated_at > episode_state.updated_at`, id, e.PositionMS, e.Status, e.UpdatedAt.Time)
+			status = EXCLUDED.status, duration_ms = EXCLUDED.duration_ms, updated_at = EXCLUDED.updated_at
+			WHERE EXCLUDED.updated_at > episode_state.updated_at`, id, e.PositionMS, e.Status, e.DurationMS, e.UpdatedAt.Time)
 	}
 	if q != nil {
 		filtered := make([]int64, 0, len(q.EpisodeIDs))
@@ -290,21 +297,23 @@ func applyStates(ctx context.Context, tx pgx.Tx, ids []int64, latest map[int64]e
 		}
 		batch.Queue(`INSERT INTO queue (episode_ids, updated_at) VALUES ($1,$2)
 			ON CONFLICT (singleton) DO UPDATE SET episode_ids = EXCLUDED.episode_ids, updated_at = EXCLUDED.updated_at
-			WHERE EXCLUDED.updated_at > queue.updated_at`, filtered, q.UpdatedAt.Time)
+			WHERE EXCLUDED.updated_at > queue.updated_at AND (NOT $3 OR cardinality(queue.episode_ids) = 0)`,
+			filtered, q.UpdatedAt.Time, queueOnlyIfEmpty).Exec(func(tag pgconn.CommandTag) error {
+			if tag.RowsAffected() != 0 {
+				result.queueEntriesWritten = len(filtered)
+			}
+			return nil
+		})
 	}
 	if err := tx.SendBatch(ctx, batch).Close(); err != nil {
 		return err
 	}
-	rows, err = tx.Query(ctx, `SELECT es.episode_id, es.position_ms, es.status, es.updated_at
+	rows, err = tx.Query(ctx, `SELECT es.episode_id, es.position_ms, es.status, es.duration_ms, es.updated_at
 		FROM unnest($1::bigint[]) WITH ORDINALITY AS input(id, position)
 		JOIN episode_state es ON es.episode_id = input.id ORDER BY input.position`, ids)
 	if err != nil {
 		return err
 	}
-	result.Episodes, err = pgx.CollectRows(rows, func(row pgx.CollectableRow) (episodeState, error) {
-		var e episodeState
-		err := row.Scan(&e.EpisodeID, &e.PositionMS, &e.Status, &e.UpdatedAt.Time)
-		return e, err
-	})
+	result.Episodes, err = pgx.CollectRows(rows, scanEpisodeState)
 	return err
 }
