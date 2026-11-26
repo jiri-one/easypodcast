@@ -74,9 +74,6 @@ const buttonLabelStyle = TextStyle(
 );
 const underlineStyle = TextStyle(decoration: TextDecoration.underline);
 
-double headerIconSize(BuildContext context) =>
-    MediaQuery.textScalerOf(context).scale(24);
-
 class EinkHeader extends StatelessWidget {
   const EinkHeader(
     this.title, {
@@ -128,43 +125,46 @@ class EinkHeader extends StatelessWidget {
       decoration: const BoxDecoration(border: Border(bottom: BorderSide())),
       child: ConstrainedBox(
         constraints: const BoxConstraints(minHeight: 52),
-        child: Row(
-          children: [
-            if (onBack != null)
-              IconButton(
-                onPressed: onBack,
-                iconSize: headerIconSize(context),
-                tooltip: MaterialLocalizations.of(context).backButtonTooltip,
-                icon: const Icon(Icons.arrow_back),
-              )
-            else if (menu == null)
-              const SizedBox(width: 12),
-            Expanded(
-              child: menu == null
-                  ? Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 6),
-                      child: content,
-                    )
-                  : Semantics(
-                      expanded: expanded,
-                      label: context.strings.changeList,
-                      child: TextButton(
-                        onPressed: menu,
-                        style: const ButtonStyle(
-                          minimumSize: WidgetStatePropertyAll(Size(0, 52)),
-                          padding: WidgetStatePropertyAll(
-                            EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                          ),
-                        ),
+        // Header icons grow with the title; the menu's chevron keeps its button's own size.
+        child: IconTheme.merge(
+          data: IconThemeData(size: MediaQuery.textScalerOf(context).scale(24)),
+          child: Row(
+            children: [
+              if (onBack != null)
+                IconButton(
+                  onPressed: onBack,
+                  tooltip: MaterialLocalizations.of(context).backButtonTooltip,
+                  icon: const Icon(Icons.arrow_back),
+                )
+              else if (menu == null)
+                const SizedBox(width: 12),
+              Expanded(
+                child: menu == null
+                    ? Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 6),
                         child: content,
+                      )
+                    : Semantics(
+                        expanded: expanded,
+                        label: context.strings.changeList,
+                        child: TextButton(
+                          onPressed: menu,
+                          style: const ButtonStyle(
+                            minimumSize: WidgetStatePropertyAll(Size(0, 52)),
+                            padding: WidgetStatePropertyAll(
+                              EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                            ),
+                          ),
+                          child: content,
+                        ),
                       ),
-                    ),
-            ),
-            if (actions.isNotEmpty)
-              Column(mainAxisSize: MainAxisSize.min, children: actions)
-            else if (menu == null)
-              const SizedBox(width: 12),
-          ],
+              ),
+              if (actions.isNotEmpty)
+                Column(mainAxisSize: MainAxisSize.min, children: actions)
+              else if (menu == null)
+                const SizedBox(width: 12),
+            ],
+          ),
         ),
       ),
     );

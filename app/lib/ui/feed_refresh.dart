@@ -19,7 +19,10 @@ class FeedRefresh extends ChangeNotifier {
   Timer? _poll;
   Completer<void>? _waiting;
 
-  DateTime? get lastLoaded {
+  DateTime? lastLoadedFor(int? podcastId) {
+    if (podcastId != null) {
+      return services.library.podcast(podcastId)?.lastSuccessAt;
+    }
     DateTime? latest;
     for (final podcast in services.library.podcasts) {
       final time = podcast.lastSuccessAt;
@@ -35,8 +38,10 @@ class FeedRefresh extends ChangeNotifier {
 
   bool runningFor(int? podcastId) => running && podcastId == _podcastId;
   bool failedFor(int? podcastId) => failed && podcastId == _podcastId;
-  bool requestedFor(int? podcastId, DateTime? lastLoaded) =>
-      _noNewLoad && podcastId == _podcastId && lastLoaded == _previousLoad;
+  bool requestedFor(int? podcastId) =>
+      _noNewLoad &&
+      podcastId == _podcastId &&
+      lastLoadedFor(podcastId) == _previousLoad;
 
   Future<void> request({int? podcastId}) async {
     if (running || _disposed) return;
@@ -49,9 +54,7 @@ class FeedRefresh extends ChangeNotifier {
     failed = false;
     _noNewLoad = false;
     _podcastId = podcastId;
-    _previousLoad = podcastId == null
-        ? lastLoaded
-        : services.library.podcast(podcastId)?.lastSuccessAt;
+    _previousLoad = lastLoadedFor(podcastId);
     notifyListeners();
 
     try {

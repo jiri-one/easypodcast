@@ -567,7 +567,6 @@ class _LibraryHomeState extends State<_LibraryHome> {
     final canRefresh =
         podcast?.subscribed == true ||
         (page == null && _section == LibrarySection.newEpisodes);
-    final iconSize = headerIconSize(context);
     return EinkHeader(
       page == null ? _section.label(context) : _title(context, page),
       onBack: onBack,
@@ -578,14 +577,12 @@ class _LibraryHomeState extends State<_LibraryHome> {
         if (canRefresh)
           IconButton(
             icon: const Icon(Icons.refresh),
-            iconSize: iconSize,
             tooltip: strings.refresh,
             onPressed: () => _refresh.request(podcastId: podcast?.id),
           ),
         if (podcast != null)
           IconButton(
             icon: const Icon(Icons.info_outline),
-            iconSize: iconSize,
             tooltip: strings.aboutPodcast,
             onPressed: () => _open(_Screen.about, podcast.id),
           ),
@@ -597,9 +594,9 @@ class _LibraryHomeState extends State<_LibraryHome> {
     final strings = context.strings;
     final id = podcast?.id;
     if (_refresh.runningFor(id)) return strings.refreshing;
-    final last = podcast == null ? _refresh.lastLoaded : podcast.lastSuccessAt;
+    final last = _refresh.lastLoadedFor(id);
     // A failing feed's error box already explains the wait; keep its date.
-    if (_refresh.requestedFor(id, last) &&
+    if (_refresh.requestedFor(id) &&
         !(podcast?.lastError?.isNotEmpty ?? false)) {
       return strings.refreshRequested;
     }

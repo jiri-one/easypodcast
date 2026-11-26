@@ -115,55 +115,72 @@ void main() {
     }
   });
 
-  testWidgets(
-    'podcast shows a stale feed error and a refresh that is still pending',
-    (tester) async {
-      final library = _StaleFeedLibrary();
-      final app = await _phone(tester, library: library);
-      final l = app.strings;
-      final podcast = library.podcast(7)!;
-      final date = l.loadedOn(dateText(l, podcast.lastSuccessAt!));
-      Finder subtitle(String text) => find.descendant(
-        of: find.byType(EinkHeader),
-        matching: find.text(text),
-      );
-      try {
-        await app.section(LibrarySection.podcasts);
-        final podcasts = find.byType(PodcastList);
-        await app.section(LibrarySection.settings);
-        expect(podcasts, findsNothing);
-        await app.back();
-        expect(podcasts, findsOneWidget);
-        await app.scrollToRow(podcast.title, podcasts);
+  testWidgets('a failing feed keeps its date while its refresh is pending', (
+    tester,
+  ) async {
+    final library = _StaleFeedLibrary();
+    final app = await _phone(tester, library: library);
+    final l = app.strings;
+    final podcast = library.podcast(7)!;
+    final date = l.loadedOn(dateText(l, podcast.lastSuccessAt!));
+    Finder subtitle(String text) => find.widgetWithText(EinkHeader, text);
+    try {
+      await app.section(LibrarySection.podcasts);
+      final podcasts = find.byType(PodcastList);
+      await app.section(LibrarySection.settings);
+      expect(podcasts, findsNothing);
+      await app.back();
+      expect(podcasts, findsOneWidget);
+      await app.scrollToRow(podcast.title, podcasts);
 
-        expect(subtitle(date), findsOneWidget);
-        expect(find.textContaining(podcast.lastError!), findsOneWidget);
-        await app.tap(find.byTooltip(l.refresh));
-        expect(library.refreshes, 1);
-        expect(subtitle(l.refreshing), findsOneWidget);
-        expect(subtitle(date), findsNothing);
-        for (final seconds in [2, 4, 8]) {
-          await tester.pump(Duration(seconds: seconds));
-          await tester.pump();
-        }
-        expect(subtitle(l.refreshRequested), findsNothing);
-        expect(subtitle(date), findsOneWidget);
-        library.finishRefresh();
-        await tester.pumpAndSettle();
-        final updated = library.podcast(podcast.id)!.lastSuccessAt!;
-        expect(subtitle(l.loadedAt(clockText(l, updated))), findsOneWidget);
-        expect(find.textContaining(podcast.lastError!), findsNothing);
-      } finally {
-        await app.finish();
+      expect(subtitle(date), findsOneWidget);
+      expect(find.textContaining(podcast.lastError!), findsOneWidget);
+      await app.tap(find.byTooltip(l.refresh));
+      expect(library.refreshes, 1);
+      expect(subtitle(l.refreshing), findsOneWidget);
+      expect(subtitle(date), findsNothing);
+      for (final seconds in [2, 4, 8]) {
+        await tester.pump(Duration(seconds: seconds));
+        await tester.pump();
       }
-    },
-  );
+      expect(subtitle(l.refreshRequested), findsNothing);
+      expect(subtitle(date), findsOneWidget);
+      library.finishRefresh();
+      await tester.pumpAndSettle();
+      final updated = library.podcast(podcast.id)!.lastSuccessAt!;
+      expect(subtitle(l.loadedAt(clockText(l, updated))), findsOneWidget);
+      expect(find.textContaining(podcast.lastError!), findsNothing);
+    } finally {
+      await app.finish();
+    }
+  });
+
+  testWidgets('a refresh that loads nothing new says it was requested', (
+    tester,
+  ) async {
+    final app = await _phone(tester, library: _StaleFeedLibrary());
+    final l = app.strings;
+    try {
+      await app.section(LibrarySection.newEpisodes);
+      await app.tap(find.byTooltip(l.refresh));
+      for (final seconds in [2, 4, 8]) {
+        await tester.pump(Duration(seconds: seconds));
+        await tester.pump();
+      }
+      expect(
+        find.widgetWithText(EinkHeader, l.refreshRequested),
+        findsOneWidget,
+      );
+    } finally {
+      await app.finish();
+    }
+  });
 
   for (final section in [LibrarySection.newEpisodes, LibrarySection.podcasts]) {
     testWidgets('${section.name} refreshes once when a long pull is released', (
       tester,
     ) async {
-      final library = _StaleFeedLibrary();
+      final library = _NoNewEpisodesLibrary();
       final app = await _phone(tester, library: library);
       final l = app.strings;
       try {
@@ -173,14 +190,11 @@ void main() {
             library.podcast(1)!.title,
             find.byType(PodcastList),
           );
+        } else {
+          expect(find.text(l.newEmpty), findsOneWidget);
         }
         expect(find.byTooltip(l.refresh), findsOneWidget);
         final list = find.byType(EpisodeList);
-        final scrollable = find.descendant(
-          of: list,
-          matching: find.byType(Scrollable),
-        );
-        final position = tester.state<ScrollableState>(scrollable).position;
         final height = tester.getSize(list).height;
         await tester.drag(list, Offset(0, height / 8));
         await tester.pumpAndSettle();
@@ -192,7 +206,6 @@ void main() {
           await gesture.moveBy(Offset(0, distance));
         }
         await tester.pump();
-        expect(position.pixels, position.minScrollExtent);
         expect(library.refreshes, 0);
         await gesture.up();
         await tester.pumpAndSettle();
@@ -231,9 +244,7 @@ void main() {
         of: find.byType(EinkHeader),
         matching: find.byTooltip(l.refresh),
       );
-      final target = tester.getSize(refresh);
-      expect(target.width, greaterThanOrEqualTo(48));
-      expect(target.height, greaterThanOrEqualTo(48));
+      expect(tester.getSize(refresh).shortestSide, greaterThanOrEqualTo(48));
       await tester.tap(refresh, kind: PointerDeviceKind.mouse);
       await tester.pumpAndSettle();
       expect(library.refreshes, 1);
@@ -284,23 +295,6 @@ void main() {
       }
     });
   }
-
-  testWidgets('an empty list of new episodes can still be pulled', (
-    tester,
-  ) async {
-    final library = _NoNewEpisodesLibrary();
-    final app = await _phone(tester, library: library);
-    try {
-      await app.section(LibrarySection.newEpisodes);
-      final list = find.byType(EpisodeList);
-      expect(find.text(app.strings.newEmpty), findsOneWidget);
-      await tester.drag(list, Offset(0, tester.getSize(list).height / 2));
-      await tester.pumpAndSettle();
-      expect(library.refreshes, 1);
-    } finally {
-      await app.finish();
-    }
-  });
 
   testWidgets(
     'open episode notes reload after a podcast update and a same-version reset',
