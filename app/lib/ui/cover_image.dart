@@ -47,9 +47,25 @@ class CoverImage extends ImageProvider<CoverImage> {
   const CoverImage(this.url);
 
   static const _maxCacheBytes = 64 * 1024 * 1024;
+  static final _prefetches = <String, Future<Uint8List?>>{};
   static Future<void> _cacheWrites = Future.value();
 
   final String url;
+
+  static Future<void> prefetch(String? url) async {
+    final valid = validCoverUrl(url);
+    if (valid == null) return;
+    try {
+      await _prefetches.putIfAbsent(
+        valid,
+        () => CoverImage(valid)._prefetch().whenComplete(() {
+          _prefetches.remove(valid);
+        }),
+      );
+    } on Exception {
+      // Artwork is optional.
+    }
+  }
 
   ResizeImage resized(double side, double devicePixelRatio) {
     final pixels = math.max(1, (side * devicePixelRatio).round());
@@ -78,12 +94,28 @@ class CoverImage extends ImageProvider<CoverImage> {
         // The cache can be cleared while an image is loading.
       }
     }
+    if (_prefetches[url] case final pending?) {
+      final bytes = await pending;
+      if (bytes != null) return _decode(bytes, decode);
+    }
     final bytes = await _download();
     final image = await _decode(bytes, decode);
+    await _cache(file, bytes);
+    return image;
+  }
+
+  Future<Uint8List?> _prefetch() async {
+    final file = await _cacheFile();
+    if (file == null || await file.exists()) return null;
+    final bytes = await _download();
+    await _cache(file, bytes);
+    return bytes;
+  }
+
+  Future<void> _cache(File? file, Uint8List bytes) async {
     if (file != null && bytes.length <= _maxCacheBytes) {
       await (_cacheWrites = _cacheWrites.then((_) => _save(file, bytes)));
     }
-    return image;
   }
 
   Future<ImageInfo> _decode(

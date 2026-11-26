@@ -14,6 +14,60 @@ void main() {
   final binding = TestWidgetsFlutterBinding.ensureInitialized();
 
   test(
+    'prefetch stores raw bytes once and skips cached or invalid URLs',
+    () async {
+      final cache = await _coverCache(binding);
+      const url = 'https://podcast.example/episode.png';
+      const bytes = [1, 2, 3];
+      final requests = <Uri>[];
+      await http.runWithClient(
+        () async {
+          await Future.wait([
+            CoverImage.prefetch(url),
+            CoverImage.prefetch(' $url '),
+          ]);
+          final file = await cache.list().single as File;
+          expect(await file.readAsBytes(), bytes);
+          await file.setLastModified(DateTime.utc(2025));
+          final modified = await file.lastModified();
+
+          for (final candidate in [
+            url,
+            null,
+            '',
+            'cover.png',
+            'file:///cover.png',
+          ]) {
+            await CoverImage.prefetch(candidate);
+          }
+          expect(await file.lastModified(), modified);
+        },
+        () => MockClient((request) async {
+          requests.add(request.url);
+          return http.Response.bytes(bytes, 200);
+        }),
+      );
+      expect(requests, [Uri.parse(url)]);
+      expect(await cache.list().length, 1);
+    },
+  );
+
+  test('a prefetched cover can be displayed offline', () async {
+    await _coverCache(binding);
+    final bytes = await _coverBytes();
+    const cover = CoverImage('https://podcast.example/offline-episode.png');
+    addTearDown(cover.evict);
+    await http.runWithClient(
+      () => CoverImage.prefetch(cover.url),
+      () => MockClient((_) async => http.Response.bytes(bytes, 200)),
+    );
+    await http.runWithClient(
+      () async => expect(await _imageSize(cover), const ui.Size.square(192)),
+      () => MockClient((_) async => throw const SocketException('Offline')),
+    );
+  });
+
+  test(
     'each cover decodes at the requested size and can load again offline',
     () async {
       final cache = await _coverCache(binding);
