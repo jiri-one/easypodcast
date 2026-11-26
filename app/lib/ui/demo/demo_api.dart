@@ -8,6 +8,7 @@ class DemoApiClient implements ApiClient {
   DemoApiClient(this._library);
 
   final DemoLibrary _library;
+  int? loginErrorCode;
 
   @override
   Future<LoginResult> login({
@@ -15,7 +16,12 @@ class DemoApiClient implements ApiClient {
     required String username,
     required String password,
     required String deviceName,
-  }) async => const LoginResult(token: 'demo', deviceId: 1);
+  }) async {
+    if (loginErrorCode case final int code) {
+      throw ApiException(code, 'Demo login error');
+    }
+    return const LoginResult(token: 'demo', deviceId: 1);
+  }
 
   @override
   Future<void> logout() async {}
@@ -88,7 +94,7 @@ class DemoApiClient implements ApiClient {
   }
 
   @override
-  Future<void> refresh() async {}
+  Future<void> refresh() async => _library.refreshFeeds();
 
   @override
   Future<String> exportOpml() async {

@@ -8,17 +8,17 @@ import 'demo_library.dart';
 import 'demo_player.dart';
 import 'demo_sync.dart';
 
-Future<AppServices> createDemoServices() async {
+Future<AppServices> createDemoServices({bool loggedIn = true}) async {
   // The demo shares the Settings API while keeping preferences in memory.
   // ignore: invalid_use_of_visible_for_testing_member
   SharedPreferences.setMockInitialValues({
-    'serverUrl': 'https://podcast.example',
-    'deviceName': 'Demo',
+    if (loggedIn) 'serverUrl': 'https://podcast.example',
+    if (loggedIn) 'deviceName': 'Demo',
   });
   final settings = await Settings.load();
   final library = DemoLibrary();
   final api = DemoApiClient(library);
-  final sync = DemoSyncService(api, library, settings);
+  final sync = DemoSyncService(api, library, settings, loggedIn: loggedIn);
   return AppServices(
     settings: settings,
     api: api,

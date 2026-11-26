@@ -47,7 +47,11 @@ class DemoLibrary extends Library {
     return show == null ? null : _podcastWith(show);
   }
 
-  Podcast _podcastWith(Podcast podcast, {bool? subscribed}) => Podcast(
+  Podcast _podcastWith(
+    Podcast podcast, {
+    bool? subscribed,
+    DateTime? refreshedAt,
+  }) => Podcast(
     id: podcast.id,
     feedUrl: podcast.feedUrl,
     title: podcast.title,
@@ -61,8 +65,8 @@ class DemoLibrary extends Library {
         .where((e) => stateOf(e.id).isPlayed)
         .length,
     episodesVersion: podcast.episodesVersion,
-    lastSuccessAt: podcast.lastSuccessAt,
-    lastError: podcast.lastError,
+    lastSuccessAt: refreshedAt ?? podcast.lastSuccessAt,
+    lastError: refreshedAt == null ? podcast.lastError : null,
   );
 
   @override
@@ -117,7 +121,21 @@ class DemoLibrary extends Library {
   Future<String> description(int episodeId) async {
     final episode = _episodes[episodeId];
     if (episode == null) throw ApiException(404, 'Episode not found');
-    return '${episode.title}\n\n${_podcasts[episode.podcastId]!.description}';
+    if (episodeId == 204) {
+      return 'Promítač otevírá prázdný sál a ukazuje, jak se dřív měnily kotouče. '
+          'Fotografie sálu jsou na https://podcast.example/kino.';
+    }
+    return _podcasts[episode.podcastId]!.description;
+  }
+
+  void refreshFeeds() {
+    final now = nowUtc();
+    for (final podcast in _podcasts.values.toList()) {
+      if (podcast.subscribed) {
+        _podcasts[podcast.id] = _podcastWith(podcast, refreshedAt: now);
+      }
+    }
+    notifyListeners();
   }
 
   @override

@@ -9,6 +9,8 @@ typedef DemoContent = ({
 
 DemoContent createDemoContent() {
   final now = nowUtc();
+  final local = now.toLocal();
+  final today = DateTime(local.year, local.month, local.day);
   final podcasts = <int, Podcast>{};
   final episodes = <int, Episode>{};
   for (final (index, show) in _shows.indexed) {
@@ -23,7 +25,10 @@ DemoContent createDemoContent() {
       description: show.description,
       episodeCount: count,
       episodesVersion: '1',
-      lastSuccessAt: now.subtract(Duration(minutes: 10 + index)),
+      lastSuccessAt: now.subtract(
+        id == 7 ? const Duration(days: 2) : Duration(minutes: 10 + index),
+      ),
+      lastError: id == 7 ? 'Server feedu neodpovídá.' : null,
     );
     for (var number = 1; number <= count; number++) {
       final episodeId = id * 100 + number;
@@ -33,10 +38,19 @@ DemoContent createDemoContent() {
         podcastId: id,
         guid: 'demo-$episodeId',
         title: number <= show.topics.length ? topic : '$topic · $number. díl',
-        publishedAt: now.subtract(
-          Duration(days: (number - 1) * 7, hours: 4 * id),
-        ),
-        durationS: 14 * 60 + (episodeId * 97) % (61 * 60),
+        publishedAt: today
+            .subtract(Duration(days: (number - 1) * 3 + (id - 1) ~/ 2))
+            .toUtc(),
+        durationS: switch (episodeId) {
+          101 => 55 * 60,
+          204 => 60 * 60,
+          _ => 14 * 60 + (episodeId * 97) % (61 * 60),
+        },
+        enclosureLength: switch (episodeId) {
+          101 => 58000000,
+          204 => 61000000,
+          _ => null,
+        },
         enclosureUrl: '$url/$number.mp3',
         enclosureType: 'audio/mpeg',
       );
@@ -48,14 +62,14 @@ DemoContent createDemoContent() {
     states[id] = EpisodeState(
       episodeId: id,
       positionMs: Duration(minutes: minutes).inMilliseconds,
-      durationMs: (episodes[id]!.durationS! + 18) * 1000,
+      durationMs: episodes[id]!.durationS! * 1000,
       status: status,
       updatedAt: now.subtract(Duration(hours: hoursAgo)),
     );
   }
 
-  seedState(101, EpisodeStatus.none, 15, 1);
-  seedState(204, EpisodeStatus.none, 21, 6);
+  seedState(101, EpisodeStatus.none, 32, 1);
+  seedState(204, EpisodeStatus.none, 41, 6);
   seedState(704, EpisodeStatus.none, 6, 24);
   seedState(303, EpisodeStatus.dismissed, 0, 2);
   for (final podcastId in podcasts.keys) {

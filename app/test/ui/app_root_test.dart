@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:easypodcast/core/services.dart';
 import 'package:easypodcast/ui/app_root.dart';
 import 'package:easypodcast/ui/demo/demo_services.dart';
-import 'package:easypodcast/ui/home_placeholder.dart';
+import 'package:easypodcast/ui/podcast_home.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -22,14 +22,9 @@ Future<AppServices> _demoServices() async {
 
 void main() {
   for (final (locale, language, message, backLabel) in const [
-    (Locale('cs', 'CZ'), 'cs', 'Přehled podcastů se připravuje.', 'Zpět'),
-    (
-      Locale('en', 'GB'),
-      'en',
-      'The podcast library is in development.',
-      'Back',
-    ),
-    (Locale('de', 'DE'), 'cs', 'Přehled podcastů se připravuje.', 'Zpět'),
+    (Locale('cs', 'CZ'), 'cs', 'Rozposlouchané', 'Zpět'),
+    (Locale('en', 'GB'), 'en', 'In progress', 'Back'),
+    (Locale('de', 'DE'), 'cs', 'Rozposlouchané', 'Zpět'),
   ]) {
     testWidgets('uses $language for the system locale $locale', (tester) async {
       final services = await _demoServices();
@@ -39,9 +34,8 @@ void main() {
       await tester.pumpWidget(EasyPodcastApp(services: services));
       await tester.pumpAndSettle();
 
-      expect(find.text('EasyPodcast'), findsOneWidget);
       expect(find.text(message), findsOneWidget);
-      final context = tester.element(find.byType(HomePlaceholder));
+      final context = tester.element(find.byType(PodcastHome));
       expect(Localizations.localeOf(context).languageCode, language);
       expect(MaterialLocalizations.of(context).backButtonTooltip, backLabel);
       expect(ServicesScope.of(context), same(services));
@@ -64,7 +58,7 @@ void main() {
     await tester.pumpWidget(EasyPodcastApp(services: services));
     await tester.pumpAndSettle();
 
-    final message = find.text('Přehled podcastů se připravuje.');
+    final message = find.text('Rozposlouchané');
     final paragraph = find.descendant(
       of: message,
       matching: find.byType(RichText),
@@ -88,12 +82,12 @@ void main() {
     addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
 
     await tester.pumpWidget(EasyPodcastApp(services: services));
-    expect(find.byType(HomePlaceholder), findsNothing);
+    expect(find.byType(PodcastHome), findsNothing);
 
     response.complete({'family': 'Liberation Sans', 'pointSize': 18});
     await tester.pumpAndSettle();
 
-    final context = tester.element(find.byType(HomePlaceholder));
+    final context = tester.element(find.byType(PodcastHome));
     expect(
       Theme.of(context).textTheme.bodyMedium?.fontFamily,
       'Liberation Sans',

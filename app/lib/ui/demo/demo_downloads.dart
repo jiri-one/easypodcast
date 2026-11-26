@@ -15,10 +15,20 @@ class DemoDownloadService extends DownloadService {
 
   final Library _library;
   late final StreamSubscription<int> _finished;
-  final _completed = {503, 101};
+  final _completed = {204, 101};
+  final _queued = <int>{};
+
+  void queueDownload(int episodeId) {
+    if (!_completed.contains(episodeId) && _queued.add(episodeId)) {
+      notifyListeners();
+    }
+  }
 
   @override
   DownloadInfo statusOf(int episodeId) {
+    if (_queued.contains(episodeId)) {
+      return const DownloadInfo(DownloadStatus.queued);
+    }
     final file = localFileOf(episodeId);
     return file == null
         ? DownloadInfo.none
@@ -39,12 +49,14 @@ class DemoDownloadService extends DownloadService {
         _library.stateOf(episodeId).isDismissed) {
       return;
     }
+    _queued.remove(episodeId);
     if (_completed.add(episodeId)) notifyListeners();
   }
 
   @override
   Future<void> delete(int episodeId) async {
-    if (_completed.remove(episodeId)) notifyListeners();
+    final queued = _queued.remove(episodeId);
+    if (_completed.remove(episodeId) || queued) notifyListeners();
   }
 
   @override

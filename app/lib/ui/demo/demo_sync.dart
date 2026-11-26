@@ -7,14 +7,31 @@ import '../../core/sync.dart';
 import 'demo_library.dart';
 
 class DemoSyncService implements SyncService {
-  DemoSyncService(this._api, this._library, this._settings);
+  DemoSyncService(
+    this._api,
+    this._library,
+    this._settings, {
+    required bool loggedIn,
+  }) : _status = ValueNotifier(
+         SyncStatus(
+           phase: loggedIn ? SyncPhase.idle : SyncPhase.loggedOut,
+           lastSuccess: loggedIn ? nowUtc() : null,
+         ),
+       );
 
   final ApiClient _api;
   final DemoLibrary _library;
   final Settings _settings;
-  final _status = ValueNotifier(
-    SyncStatus(phase: SyncPhase.idle, lastSuccess: nowUtc()),
-  );
+  final ValueNotifier<SyncStatus> _status;
+  Future<void> Function(int id)? beforePlay;
+
+  void setOffline() {
+    _status.value = SyncStatus(
+      phase: SyncPhase.offline,
+      lastSuccess: _status.value.lastSuccess,
+      pending: 1,
+    );
+  }
 
   @override
   ValueListenable<SyncStatus> get status => _status;
@@ -62,7 +79,9 @@ class DemoSyncService implements SyncService {
   }
 
   @override
-  Future<void> freshStateBeforePlay(int episodeId) async {}
+  Future<void> freshStateBeforePlay(int episodeId) async {
+    await beforePlay?.call(episodeId);
+  }
 
   @override
   void setPlayingEpisode(int? episodeId) {

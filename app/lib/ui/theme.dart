@@ -15,7 +15,7 @@ const einkSystemOverlayStyle = SystemUiOverlayStyle(
 const _border = BorderSide(width: 1.5);
 const _errorBorder = BorderSide(width: 2);
 const _buttonShape = RoundedRectangleBorder(
-  borderRadius: BorderRadius.all(Radius.circular(6)),
+  borderRadius: BorderRadius.all(Radius.circular(8)),
 );
 const _panelShape = RoundedRectangleBorder(
   side: BorderSide(),
@@ -35,7 +35,7 @@ const _buttons = ButtonStyle(
   splashFactory: NoSplash.splashFactory,
 );
 const _inputBorder = OutlineInputBorder(
-  borderRadius: BorderRadius.all(Radius.circular(6)),
+  borderRadius: BorderRadius.all(Radius.circular(8)),
 );
 
 ButtonStyle choiceButtonStyle({required bool selected}) =>
@@ -63,8 +63,9 @@ ThemeData einkTheme({String? fontFamily}) {
   final textButton = _buttons.copyWith(
     foregroundColor: const WidgetStatePropertyAll(Colors.black),
     side: WidgetStateProperty.resolveWith(
-      (states) =>
-          states.contains(WidgetState.focused) ? _errorBorder : BorderSide.none,
+      (states) => states.contains(WidgetState.focused)
+          ? const BorderSide(width: 3)
+          : BorderSide.none,
     ),
   );
   final filledButton = _choiceStyle(

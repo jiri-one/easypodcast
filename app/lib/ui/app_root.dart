@@ -5,7 +5,7 @@ import 'package:material_ui/material_ui.dart';
 import '../core/services.dart';
 import '../l10n/app_localizations.dart';
 import '../platform/desktop_font.dart';
-import 'home_placeholder.dart';
+import 'podcast_home.dart';
 import 'theme.dart';
 
 class EasyPodcastApp extends StatelessWidget {
@@ -102,12 +102,19 @@ class _App extends StatelessWidget {
         ),
       );
     },
-    home: const HomePlaceholder(),
+    home: const PodcastHome(),
   );
 }
 
 class _EinkScrollBehavior extends MaterialScrollBehavior {
   const _EinkScrollBehavior();
+
+  @override
+  Widget buildScrollbar(
+    BuildContext context,
+    Widget child,
+    ScrollableDetails details,
+  ) => child;
 
   @override
   Widget buildOverscrollIndicator(

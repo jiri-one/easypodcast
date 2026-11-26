@@ -80,6 +80,7 @@ class DemoPlayerController extends PlayerController {
       _stopTicking();
       await _recordPosition();
     }
+    await _sync.freshStateBeforePlay(episodeId);
     final start = await _library.prepareForPlayback(episodeId);
     if (_disposed) return;
     _current = episode;

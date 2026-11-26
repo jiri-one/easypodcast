@@ -1,5 +1,436 @@
 {
   "@@locale": "en",
   "appTitle": "EasyPodcast",
-  "homePlaceholder": "The podcast library is in development."
+  "inProgress": "In progress",
+  "queue": "Queue",
+  "newEpisodes": "New episodes",
+  "podcasts": "Podcasts",
+  "downloads": "Downloads",
+  "settings": "Settings",
+  "changeList": "Switch list",
+  "player": "Player",
+  "play": "Play",
+  "pause": "Pause",
+  "checkingPosition": "Checking position…",
+  "loadingPlayback": "Loading…",
+  "playbackFailed": "Couldn't play the episode. Try again.",
+  "noPlayback": "Nothing is playing yet.",
+  "stateNew": "new",
+  "statePlaying": "playing",
+  "stateInProgress": "in progress",
+  "statePlayed": "played",
+  "stateDismissed": "dismissed",
+  "stateDownloaded": "downloaded",
+  "stateInQueue": "queued",
+  "stateDownloading": "Downloading…",
+  "stateWaitingForWifi": "waiting for Wi-Fi",
+  "stateWaitingForDownload": "waiting to download",
+  "stateDownloadFailed": "Couldn't download the episode.",
+  "offline": "Offline. Positions will sync when the server is reachable.",
+  "syncError": "Sync failed. Try refreshing the list.",
+  "inProgressEmpty": "You have no episodes in progress.",
+  "queueEmpty": "The queue is empty.",
+  "newEmpty": "You have no new episodes.",
+  "podcastsEmpty": "You haven't subscribed to any podcasts yet.",
+  "downloadsEmpty": "There are no downloads on this phone yet.",
+  "podcastEmpty": "This podcast has no episodes yet.",
+  "episodeMissing": "This episode is no longer available.",
+  "podcastMissing": "This podcast is no longer available.",
+  "selectEpisode": "Select an episode from the list.",
+  "queueEdit": "Edit order",
+  "queueOrder": "Queue order",
+  "queueSelect": "Select the episode you want to move.",
+  "queueLoading": "Loading queue…",
+  "moveUp": "Move up",
+  "moveDown": "Move down",
+  "moveToTop": "Move to top",
+  "addToQueue": "Add to queue",
+  "removeFromQueue": "Remove from queue",
+  "download": "Download",
+  "deleteFile": "Delete file",
+  "cancelDownload": "Cancel download",
+  "retryDownload": "Retry download",
+  "markPlayed": "Mark as played",
+  "markNew": "Mark as new",
+  "dismiss": "Dismiss",
+  "dismissTitle": "Dismiss episode?",
+  "dismissFile": "The downloaded file will be deleted.",
+  "dismissOlder": "Dismiss older too",
+  "dismissOlderKept": "Episodes in progress, played episodes, and queued episodes will be kept.",
+  "dismissOlderDownloads": "Downloads of these episodes will be deleted.",
+  "cancel": "Cancel",
+  "close": "Close",
+  "actionFailed": "Couldn't finish the change. Try again.",
+  "descriptionFailed": "Couldn't load the description.",
+  "retry": "Try again",
+  "linkFailed": "Couldn't open the link.",
+  "speed": "Speed",
+  "speedHelp": "Applies to all podcasts.",
+  "sleep": "Sleep timer",
+  "sleepOff": "Off",
+  "sleepOffHelp": "Choose when playback should stop.",
+  "sleepEndOfEpisode": "End of episode",
+  "sleepEndHelp": "Playback will stop at the end of the episode.",
+  "refresh": "Refresh",
+  "refreshing": "Refreshing…",
+  "refreshFailed": "Couldn't refresh the feeds. Try again.",
+  "today": "Today",
+  "yesterday": "Yesterday",
+  "noDate": "No date",
+  "addPodcast": "Add podcast",
+  "addingPodcast": "Adding…",
+  "feedAddress": "Feed address",
+  "addPodcastHelp": "Paste the RSS feed address. The server will fetch the podcast and subscribe to it.",
+  "invalidFeedUrl": "Enter the full feed address starting with http:// or https://.",
+  "invalidFeed": "The server couldn't find a usable feed at that address. Check the address.",
+  "subscribeFailed": "Couldn't add the podcast. Try again.",
+  "feedUnavailable": "Couldn't fetch the feed.",
+  "feedStatus": "Feed status",
+  "aboutPodcast": "About podcast",
+  "unsubscribe": "Unsubscribe",
+  "unsubscribing": "Unsubscribing…",
+  "unsubscribeHelp": "The server will stop fetching new episodes. Existing episodes and their listening status will be kept.",
+  "notSubscribed": "This podcast is unsubscribed.",
+  "feedNeverLoaded": "The feed hasn't been fetched yet.",
+  "server": "Server",
+  "serverAddress": "Server address",
+  "serverConnected": "Connected",
+  "serverChangeHelp": "To use a different server address, sign out and enter it when you sign in.",
+  "deviceName": "Device name",
+  "defaultAndroidDevice": "Android phone",
+  "defaultLinuxDevice": "Linux computer",
+  "defaultDevice": "My device",
+  "logout": "Sign out",
+  "loggingOut": "Signing out…",
+  "continueQueue": "Continue with queue",
+  "continueQueueOn": "The next episode plays when this one ends.",
+  "continueQueueOff": "Playback stops when the episode ends.",
+  "skipBack": "Skip back",
+  "skipForward": "Skip forward",
+  "alphabeticalPodcasts": "Sort podcasts alphabetically",
+  "downloadWifi": "Download on Wi-Fi only",
+  "deletePlayedDownloads": "Delete files after playback",
+  "opml": "Import and export OPML",
+  "opmlHelp": "Paste the contents of an OPML file, or copy your subscriptions as OPML.",
+  "opmlContent": "OPML contents",
+  "opmlImport": "Import",
+  "opmlImporting": "Importing…",
+  "opmlExport": "Copy OPML",
+  "opmlExporting": "Copying…",
+  "opmlCopied": "Subscriptions were copied to the clipboard.",
+  "opmlInvalid": "Check that you pasted the whole OPML document.",
+  "opmlFailed": "Couldn't process the OPML document. Try again.",
+  "signIn": "Sign in",
+  "signInTitle": "Sign in to EasyPodcast",
+  "signingIn": "Signing in…",
+  "loginHelp": "Sign in to your server to share subscriptions, your queue, and listening positions across devices.",
+  "deviceNameHelp": "This name identifies the device on the server.",
+  "username": "Username",
+  "password": "Password",
+  "loginMissing": "Enter your username, password, and device name.",
+  "invalidServerUrl": "Enter the full server address starting with http:// or https://.",
+  "loginRejected": "The username or password is incorrect. Check both and try again.",
+  "loginRateLimit": "There have been too many sign-in attempts. Wait a moment and try again.",
+  "loginOffline": "Couldn't reach the server. Check the address and your connection.",
+  "loginFailed": "Couldn't sign in. Try again.",
+  "numberedTitle": "{number}. {title}",
+  "@numberedTitle": {
+    "placeholders": {
+      "number": {
+        "type": "int"
+      },
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "minutes": "{count} min",
+  "@minutes": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "hoursMinutes": "{hours} h {minutes} min",
+  "@hoursMinutes": {
+    "placeholders": {
+      "hours": {
+        "type": "int"
+      },
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "hours": "{count} h",
+  "@hours": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "seconds": "{count} s",
+  "@seconds": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "skipBackValue": "−{count} s",
+  "@skipBackValue": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "skipForwardValue": "+{count} s",
+  "@skipForwardValue": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "speedValue": "{value}×",
+  "@speedValue": {
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  },
+  "desktopSpeed": "Speed {value}",
+  "@desktopSpeed": {
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  },
+  "remaining": "{length} left",
+  "@remaining": {
+    "placeholders": {
+      "length": {
+        "type": "String"
+      }
+    }
+  },
+  "remainingOfTotal": "{left} left of {total}",
+  "@remainingOfTotal": {
+    "placeholders": {
+      "left": {
+        "type": "String"
+      },
+      "total": {
+        "type": "String"
+      }
+    }
+  },
+  "elapsed": "{length} played",
+  "@elapsed": {
+    "placeholders": {
+      "length": {
+        "type": "String"
+      }
+    }
+  },
+  "playFrom": "Play from {position}",
+  "@playFrom": {
+    "placeholders": {
+      "position": {
+        "type": "String"
+      }
+    }
+  },
+  "published": "Published {date}",
+  "@published": {
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "shortDate": "{month}/{day}",
+  "@shortDate": {
+    "placeholders": {
+      "day": {
+        "type": "int"
+      },
+      "month": {
+        "type": "int"
+      }
+    }
+  },
+  "olderDay": "{weekday}, {date}",
+  "@olderDay": {
+    "placeholders": {
+      "weekday": {
+        "type": "String"
+      },
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "playedCount": "{count, plural, =1{1 played} other{{count} played}}",
+  "@playedCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "dismissPosition": "The position at {position} will be lost.",
+  "@dismissPosition": {
+    "placeholders": {
+      "position": {
+        "type": "String"
+      }
+    }
+  },
+  "dismissPositionAndFile": "The position at {position} will be lost and the downloaded file will be deleted.",
+  "@dismissPositionAndFile": {
+    "placeholders": {
+      "position": {
+        "type": "String"
+      }
+    }
+  },
+  "dismissCountTitle": "{count, plural, =1{Dismiss one episode?} other{Dismiss {count} episodes?}}",
+  "@dismissCountTitle": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "dismissCount": "{count, plural, =1{Dismiss episode} other{Dismiss {count} episodes}}",
+  "@dismissCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "dismissOlderCount": "{count, plural, =1{This episode and one older new episode.} other{This episode and {count} older new episodes.}}",
+  "@dismissOlderCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "sleepUntil": "until {time}",
+  "@sleepUntil": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "sleepUntilHelp": "Playback will stop at {time}.",
+  "@sleepUntilHelp": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "sleepEndEstimate": "Playback will stop at the end of the episode, at about {time}.",
+  "@sleepEndEstimate": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "loadedAt": "fetched at {time}",
+  "@loadedAt": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "feedLastLoaded": "Last fetched on {date} at {time}.",
+  "@feedLastLoaded": {
+    "placeholders": {
+      "date": {
+        "type": "String"
+      },
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "kilobytes": "{value} kB",
+  "@kilobytes": {
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  },
+  "megabytes": "{value} MB",
+  "@megabytes": {
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  },
+  "gigabytes": "{value} GB",
+  "@gigabytes": {
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  },
+  "storageUsed": "{used} used",
+  "@storageUsed": {
+    "placeholders": {
+      "used": {
+        "type": "String"
+      }
+    }
+  },
+  "storageUsedAndFree": "{used} used, {free} free",
+  "@storageUsedAndFree": {
+    "placeholders": {
+      "used": {
+        "type": "String"
+      },
+      "free": {
+        "type": "String"
+      }
+    }
+  },
+  "storageUnknown": "The size of downloaded files is unavailable.",
+  "opmlSummary": "Added {added}, already present {existing}, failed {failed}.",
+  "@opmlSummary": {
+    "placeholders": {
+      "added": {
+        "type": "int"
+      },
+      "existing": {
+        "type": "int"
+      },
+      "failed": {
+        "type": "int"
+      }
+    }
+  },
+  "version": "Version {value}",
+  "@version": {
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  }
 }
