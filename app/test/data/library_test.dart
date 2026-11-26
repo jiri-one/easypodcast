@@ -237,15 +237,57 @@ void main() {
   );
 
   test('the in-progress threshold is 60 s', () async {
-    final id = episodes[0];
-    await lib().recordPosition(id, const Duration(milliseconds: 59999));
+    final id = episodes[1];
+    await lib().recordPosition(
+      episodes[0],
+      const Duration(milliseconds: 59999),
+    );
     expect(lib().inProgress, isEmpty);
-    expect(lib().newEpisodes().map((e) => e.id), contains(id));
+    expect(lib().newEpisodes().map((e) => e.id), contains(episodes[0]));
 
     await tick();
     await lib().recordPosition(id, const Duration(milliseconds: 60000));
     expect(lib().inProgress.map((e) => e.id), [id]);
     expect(lib().newEpisodes().map((e) => e.id), isNot(contains(id)));
+  });
+
+  test('a stalled position keeps its timestamp through pauses and small decoder corrections', () async {
+    final id = episodes.first;
+    const position = Duration(minutes: 20);
+    await lib().recordPosition(
+      id,
+      position,
+      duration: const Duration(hours: 1),
+    );
+    await device.sync.whenIdle();
+    final original = lib().stateOf(id);
+    final sends = device.api.pushCalls;
+    clock.advance(const Duration(hours: 1));
+    for (final delta in [0, -900, 1000]) {
+      await lib().recordPositionAt(
+        id,
+        position + Duration(milliseconds: delta),
+        updatedAt: clock.now,
+      );
+      expect(lib().stateOf(id), same(original));
+    }
+    await lib().recordPosition(
+      id,
+      position,
+      duration: const Duration(minutes: 59),
+    );
+    await device.sync.whenIdle();
+    expect(device.api.pushCalls, sends);
+    expect(lib().pendingCount, 0);
+    expect(
+      (await device.store.load()).states.single.toJson(),
+      original.toJson(),
+    );
+    await lib().recordPosition(
+      id,
+      position + const Duration(milliseconds: 1001),
+    );
+    expect(lib().stateOf(id).updatedAt, clock.now);
   });
 
   test('in progress is sorted by the last change, newest first', () async {
@@ -294,6 +336,35 @@ void main() {
     expect(lib().episodesOf(1).map((e) => e.id), episodes.reversed);
     expect(lib().episode(episodes[0])!.title, 'Episode ${episodes[0]}');
   });
+
+  test(
+    'dismiss older starts at the selected row among tied and undated episodes',
+    () async {
+      final list = server.listEpisodes(1)!;
+      final date = clock.now;
+      for (var i = 0; i < list.length; i++) {
+        list[i] = Episode.fromJson({
+          ...list[i].toJson(),
+          'published_at': i < 3 ? formatTime(date) : null,
+        });
+      }
+      server.addEpisodes(1, 0);
+      await device.sync.syncNow();
+      final ids = list.map((e) => e.id).toList();
+      for (final index in [3, 1]) {
+        final expected = index == 1 ? ids.sublist(1, 3) : ids.sublist(3);
+        expect(
+          lib().dismissOlderCandidates(ids[index]).map((e) => e.id),
+          expected,
+        );
+        await lib().dismissOlder(ids[index]);
+        expect([
+          for (final id in ids)
+            if (lib().stateOf(id).isDismissed) id,
+        ], ids.sublist(index));
+      }
+    },
+  );
 
   group('queue', () {
     test('every change replaces the whole queue with a newer time', () async {
@@ -591,6 +662,38 @@ void main() {
     expect(await lib().description(id), 'About episode $id');
     device.api.online = false;
     expect(await lib().description(id), 'About episode $id');
+  });
+
+  test('show notes revalidate on demand after their own podcast changes and survive offline', () async {
+    final id = episodes.first;
+    var reads = 0;
+    device.api.beforeEpisode = (_) async {
+      reads++;
+    };
+    final original = await lib().description(id);
+    expect(reads, 1);
+    server.addPodcast(2, 'Night Trains');
+    server.addEpisodes(2, 1);
+    server.descriptions[id] = 'Corrected show notes';
+    await device.sync.syncNow();
+    expect(await lib().description(id), original);
+    expect(reads, 1);
+
+    server.addEpisodes(1, 0);
+    await device.sync.syncNow();
+    expect(device.api.episodesNotModified[1], 1);
+    expect(reads, 1);
+    final reopened = await SqfliteLibrary.open(
+      LocalStore(device.db),
+      device.api,
+    );
+    addTearDown(reopened.dispose);
+    device.api.online = false;
+    expect(await reopened.description(id), original);
+    device.api.online = true;
+    expect(await reopened.description(id), 'Corrected show notes');
+    expect(await reopened.description(id), 'Corrected show notes');
+    expect(reads, 2);
   });
 
   test('subscribe and unsubscribe go to the server', () async {

@@ -460,14 +460,12 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
 
   Future<void> _pause({bool keepFocus = false}) async {
     try {
-      if (!_loaded || _pausedAt != null) {
-        _library.requestPendingSend();
-        return;
-      }
+      if (!_loaded || _pausedAt != null) return;
       _pausedAt = _clock();
       await _engine.pause().timeout(const Duration(seconds: 5));
       await _report();
     } finally {
+      _library.requestPendingSend();
       _setSyncEpisode(null);
       _publish();
       if (!keepFocus) await _engine.releaseFocus();
@@ -510,6 +508,7 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
       final issuedAt = _playbackEventTime();
       await _seekEngine(target);
       await _report(position: target, updatedAt: issuedAt);
+      _library.requestPendingSend();
       _publish();
     } on Object {
       if (_endObservedAt == null && _failureAttempt == null) {
@@ -699,6 +698,7 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
         updatedAt: observedAt!,
       );
     }
+    _library.requestPendingSend();
     _publish(updatePosition: false);
     try {
       await _engine.stop();
@@ -731,7 +731,11 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
     _setSyncEpisode(null);
     _publish();
     try {
-      if (shouldMark) await _library.markCompletedAt(id, updatedAt);
+      if (shouldMark) {
+        await _library.markCompletedAt(id, updatedAt);
+      } else {
+        _library.requestPendingSend();
+      }
       await _engine.stop();
       if (_advancing && await _playQueue(autoplay: true)) {
         _advancing = false;
@@ -778,9 +782,8 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
   Future<void> reportBeforeBackground() => _run(() async {
     if (isPlaying && _pausedAt == null) {
       await _report();
-    } else {
-      _library.requestPendingSend();
     }
+    _library.requestPendingSend();
   });
 
   @override

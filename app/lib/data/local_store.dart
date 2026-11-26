@@ -17,6 +17,7 @@ class LocalSnapshot {
     required this.episodes,
     required this.states,
     required this.pendingStates,
+    required this.clockRejections,
     required this.queue,
     required this.queuePending,
     required this.episodeLists,
@@ -29,6 +30,7 @@ class LocalSnapshot {
   final List<Episode> episodes;
   final List<EpisodeState> states;
   final Set<int> pendingStates;
+  final Map<int?, DateTime> clockRejections;
   final QueueState? queue;
   final bool queuePending;
   final Map<int, EpisodeListInfo> episodeLists;
@@ -50,24 +52,36 @@ class LocalStore {
   final Database db;
   final Map<String, String> _meta = {};
 
-  static const schemaVersion = 2;
+  static const schemaVersion = 3;
 
-  static Future<Database> open(DatabaseFactory factory, String path) =>
-      factory.openDatabase(
-        path,
-        options: OpenDatabaseOptions(
-          version: schemaVersion,
-          onCreate: (db, _) => createSchema(db),
-          onUpgrade: (db, oldVersion, _) async {
-            if (oldVersion < 2) {
-              await db.execute(
-                'ALTER TABLE episode_states ADD COLUMN duration_ms INTEGER',
-              );
-            }
-          },
-          singleInstance: false,
-        ),
-      );
+  static Future<Database> open(
+    DatabaseFactory factory,
+    String path,
+  ) => factory.openDatabase(
+    path,
+    options: OpenDatabaseOptions(
+      version: schemaVersion,
+      onCreate: (db, _) => createSchema(db),
+      onUpgrade: (db, oldVersion, _) async {
+        if (oldVersion < 2) {
+          await db.execute(
+            'ALTER TABLE episode_states ADD COLUMN duration_ms INTEGER',
+          );
+        }
+        if (oldVersion < 3) {
+          await db.execute(
+            'ALTER TABLE descriptions ADD COLUMN episodes_version TEXT',
+          );
+          for (final table in ['episode_states', 'queue']) {
+            await db.execute(
+              'ALTER TABLE $table ADD COLUMN clock_rejected INTEGER NOT NULL DEFAULT 0',
+            );
+          }
+        }
+      },
+      singleInstance: false,
+    ),
+  );
 
   static Future<void> createSchema(Database db) async {
     final batch = db.batch()
@@ -89,12 +103,15 @@ class LocalStore {
       ..execute('''CREATE TABLE IF NOT EXISTS episode_states (
         episode_id INTEGER PRIMARY KEY, position_ms INTEGER NOT NULL,
         status TEXT NOT NULL, duration_ms INTEGER, updated_at INTEGER NOT NULL,
-        pending INTEGER NOT NULL)''')
+        pending INTEGER NOT NULL, clock_rejected INTEGER NOT NULL DEFAULT 0)''')
       ..execute('''CREATE TABLE IF NOT EXISTS queue (
         id INTEGER PRIMARY KEY CHECK (id = 1), episode_ids TEXT NOT NULL,
-        updated_at INTEGER NOT NULL, pending INTEGER NOT NULL)''')
-      ..execute('''CREATE TABLE IF NOT EXISTS descriptions (
-        episode_id INTEGER PRIMARY KEY, text TEXT NOT NULL)''')
+        updated_at INTEGER NOT NULL, pending INTEGER NOT NULL,
+        clock_rejected INTEGER NOT NULL DEFAULT 0)''')
+      ..execute(
+        '''CREATE TABLE IF NOT EXISTS descriptions (
+        episode_id INTEGER PRIMARY KEY, text TEXT NOT NULL, episodes_version TEXT)''',
+      )
       ..execute(
         '''CREATE TABLE IF NOT EXISTS episode_lists (
         podcast_id INTEGER PRIMARY KEY, episodes_version TEXT NOT NULL, etag TEXT)''',
@@ -120,26 +137,37 @@ class LocalStore {
           row['key'] as String: row['value'] as String,
       });
     final pending = <int>{};
+    final clockRejections = <int?, DateTime>{};
     final states = <EpisodeState>[];
     for (final row in stateRows) {
       final id = row['episode_id'] as int;
+      final updatedAt = _fromMs(row['updated_at'] as int);
       states.add(
         EpisodeState(
           episodeId: id,
           positionMs: row['position_ms'] as int,
           status: EpisodeStatus.fromJson(row['status'] as String),
           durationMs: row['duration_ms'] as int?,
-          updatedAt: _fromMs(row['updated_at'] as int),
+          updatedAt: updatedAt,
         ),
       );
-      if (row['pending'] == 1) pending.add(id);
+      if (row['pending'] == 1) {
+        pending.add(id);
+        if (row['clock_rejected'] == 1) clockRejections[id] = updatedAt;
+      }
     }
     final queueRow = queueRows.isEmpty ? null : queueRows.first;
+    if (queueRow != null &&
+        queueRow['pending'] == 1 &&
+        queueRow['clock_rejected'] == 1) {
+      clockRejections[null] = _fromMs(queueRow['updated_at'] as int);
+    }
     return LocalSnapshot(
       podcasts: [for (final row in podcastRows) _podcast(row)],
       episodes: [for (final row in episodeRows) _episode(row)],
       states: states,
       pendingStates: pending,
+      clockRejections: clockRejections,
       queue: queueRow == null
           ? null
           : QueueState(
@@ -228,6 +256,7 @@ class LocalStore {
   Future<void> writeStates(
     Iterable<(EpisodeState, bool)> states, {
     (QueueState, bool)? queue,
+    Map<int?, DateTime> clockRejections = const {},
     Map<int, EpisodeState> acknowledgedStates = const {},
     QueueState? acknowledgedQueue,
   }) => db.transaction((txn) async {
@@ -240,6 +269,10 @@ class LocalStore {
         'duration_ms': state.durationMs,
         'updated_at': state.updatedAt.millisecondsSinceEpoch,
         'pending': pending ? 1 : 0,
+        'clock_rejected':
+            pending && clockRejections[state.episodeId] == state.updatedAt
+            ? 1
+            : 0,
       };
       final sent = acknowledgedStates[state.episodeId];
       if (pending) {
@@ -261,21 +294,12 @@ class LocalStore {
           conflictAlgorithm: ConflictAlgorithm.ignore,
         );
       } else {
-        final duration = sent.durationMs;
+        final match = _pendingState(sent);
         batch.update(
           'episode_states',
           row,
-          where:
-              'pending = 1 AND episode_id = ? AND updated_at = ? '
-              'AND position_ms = ? AND status = ? AND duration_ms '
-              '${duration == null ? 'IS NULL' : '= ?'}',
-          whereArgs: [
-            sent.episodeId,
-            sent.updatedAt.millisecondsSinceEpoch,
-            sent.positionMs,
-            sent.status.json,
-            ?duration,
-          ],
+          where: match.where,
+          whereArgs: match.args,
         );
       }
     }
@@ -286,6 +310,9 @@ class LocalStore {
         'episode_ids': jsonEncode(q.episodeIds),
         'updated_at': q.updatedAt.millisecondsSinceEpoch,
         'pending': pending ? 1 : 0,
+        'clock_rejected': pending && clockRejections[null] == q.updatedAt
+            ? 1
+            : 0,
       };
       if (pending) {
         batch.insert(
@@ -302,34 +329,82 @@ class LocalStore {
         );
         batch.insert('queue', row, conflictAlgorithm: ConflictAlgorithm.ignore);
       } else {
-        batch.update(
-          'queue',
-          row,
-          where:
-              'id = 1 AND pending = 1 AND updated_at = ? AND episode_ids = ?',
-          whereArgs: [
-            acknowledgedQueue.updatedAt.millisecondsSinceEpoch,
-            jsonEncode(acknowledgedQueue.episodeIds),
-          ],
-        );
+        final match = _pendingQueue(acknowledgedQueue);
+        batch.update('queue', row, where: match.where, whereArgs: match.args);
       }
     }
     await batch.commit(noResult: true);
   });
 
-  Future<String?> description(int episodeId) async {
+  static ({String where, List<Object?> args}) _pendingState(
+    EpisodeState sent,
+  ) => (
+    where:
+        'pending = 1 AND episode_id = ? AND updated_at = ? '
+        'AND position_ms = ? AND status = ? AND duration_ms '
+        '${sent.durationMs == null ? 'IS NULL' : '= ?'}',
+    args: [
+      sent.episodeId,
+      sent.updatedAt.millisecondsSinceEpoch,
+      sent.positionMs,
+      sent.status.json,
+      ?sent.durationMs,
+    ],
+  );
+
+  static ({String where, List<Object?> args}) _pendingQueue(QueueState sent) =>
+      (
+        where: 'id = 1 AND pending = 1 AND updated_at = ? AND episode_ids = ?',
+        args: [
+          sent.updatedAt.millisecondsSinceEpoch,
+          jsonEncode(sent.episodeIds),
+        ],
+      );
+
+  Future<bool> updateRejectedTime(
+    EpisodeState? state,
+    QueueState? queue,
+    DateTime? correctedTime,
+  ) async {
+    final match = state == null ? _pendingQueue(queue!) : _pendingState(state);
+    final updated = await db.update(
+      state == null ? 'queue' : 'episode_states',
+      {
+        'clock_rejected': correctedTime == null ? 1 : 0,
+        if (correctedTime != null)
+          'updated_at': correctedTime.millisecondsSinceEpoch,
+      },
+      where: match.where,
+      whereArgs: match.args,
+    );
+    return updated == 1;
+  }
+
+  Future<({String text, String? version})?> description(int episodeId) async {
     final rows = await db.query(
       'descriptions',
       where: 'episode_id = ?',
       whereArgs: [episodeId],
     );
-    return rows.isEmpty ? null : rows.first['text'] as String;
+    if (rows.isEmpty) return null;
+    final row = rows.single;
+    return (
+      text: row['text'] as String,
+      version: row['episodes_version'] as String?,
+    );
   }
 
-  Future<void> setDescription(int episodeId, String text) => db.insert(
+  Future<void> setDescription(
+    int episodeId,
+    String text,
+    String? version, {
+    required bool replace,
+  }) => db.insert(
     'descriptions',
-    {'episode_id': episodeId, 'text': text},
-    conflictAlgorithm: ConflictAlgorithm.replace,
+    {'episode_id': episodeId, 'text': text, 'episodes_version': version},
+    conflictAlgorithm: replace
+        ? ConflictAlgorithm.replace
+        : ConflictAlgorithm.ignore,
   );
 
   Future<void> clearLibrary() => db.transaction((txn) async {

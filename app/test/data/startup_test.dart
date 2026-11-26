@@ -27,6 +27,13 @@ void main() {
             episode_id INTEGER PRIMARY KEY, position_ms INTEGER NOT NULL,
             status TEXT NOT NULL, updated_at INTEGER NOT NULL, pending INTEGER NOT NULL)''',
             );
+            await db.execute(
+              'CREATE TABLE descriptions (episode_id INTEGER PRIMARY KEY, text TEXT NOT NULL)',
+            );
+            await db.execute(
+              'CREATE TABLE queue (id INTEGER PRIMARY KEY CHECK (id = 1), '
+              'episode_ids TEXT NOT NULL, updated_at INTEGER NOT NULL, pending INTEGER NOT NULL)',
+            );
             await LocalStore.createSchema(db);
           },
         ),
@@ -40,14 +47,19 @@ void main() {
           'updated_at': at.millisecondsSinceEpoch,
           'pending': 1,
         });
+        await legacy.insert('descriptions', {
+          'episode_id': 7,
+          'text': 'Saved notes',
+        });
       } finally {
         await legacy.close();
       }
 
       final db = await LocalStore.open(databaseFactoryFfi, path);
       addTearDown(db.close);
-      expect(await db.getVersion(), 2);
+      expect(await db.getVersion(), LocalStore.schemaVersion);
       final store = LocalStore(db);
+      expect(await store.description(7), (text: 'Saved notes', version: null));
       final snapshot = await store.load();
       expect(snapshot.pendingStates, {7});
       final state = snapshot.states.single;

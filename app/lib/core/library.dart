@@ -1,6 +1,12 @@
 import 'package:flutter/foundation.dart';
 
+import 'api.dart';
 import 'models.dart';
+
+class BulkDismissNeedsConnection extends OfflineException {
+  BulkDismissNeedsConnection()
+    : super('Bulk dismissal needs a fresh server snapshot.');
+}
 
 /// The UI reads the local copy so it works offline.
 abstract class Library extends ChangeNotifier {
@@ -53,7 +59,7 @@ abstract class Library extends ChangeNotifier {
   /// Ids of episodes that just became played or dismissed, locally or from another device.
   Stream<int> get finishedEpisodes;
 
-  /// Plain text; fetched once and cached.
+  /// Cached notes stay available offline when a new feed version is announced.
   Future<String> description(int episodeId);
 
   Future<Podcast> subscribe(String feedUrl);
@@ -87,6 +93,17 @@ abstract class Library extends ChangeNotifier {
 
   /// Played episodes keep their status when dismissal is requested.
   Future<void> dismiss(int episodeId);
+
+  List<Episode> dismissOlderCandidates(int episodeId) {
+    final chosen = episode(episodeId);
+    if (chosen == null) return const [];
+    final queued = queue.map((item) => item.id).toSet();
+    final episodes = episodesOf(chosen.podcastId);
+    return [
+      for (final item in episodes.skipWhile((e) => e.id != episodeId))
+        if (stateOf(item.id).isNew && !queued.contains(item.id)) item,
+    ];
+  }
 
   /// Dismisses this and older episodes of its podcast that are new and unqueued.
   Future<void> dismissOlder(int episodeId);

@@ -8,6 +8,7 @@ class SyncStatus {
     this.lastSuccess,
     this.pending = 0,
     this.error,
+    this.clockSkewWarning,
   });
 
   final SyncPhase phase;
@@ -16,6 +17,11 @@ class SyncStatus {
   /// Changes waiting to be sent.
   final int pending;
   final String? error;
+  final Duration? clockSkewWarning;
+}
+
+extension SyncClockWarning on SyncService {
+  Duration? get clockSkewWarning => status.value.clockSkewWarning;
 }
 
 abstract interface class SyncService {

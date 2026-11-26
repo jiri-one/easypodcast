@@ -32,9 +32,11 @@ class SqfliteLibrary extends Library {
   final Map<int, Episode> _episodes = {};
   final Map<int, EpisodeState> _states = {};
   final Set<int> _pendingStates = {};
+  final Map<int?, DateTime> _clockRejections = {};
   final Map<int, EpisodeListInfo> _episodeLists = {};
   QueueState? _queue;
   bool _queuePending = false;
+  Future<void> _queueCommands = Future.value();
 
   Map<int, int>? _playedCounts;
   List<Podcast>? _podcastList;
@@ -45,8 +47,7 @@ class SqfliteLibrary extends Library {
   /// Set by the sync service; remote records never touch this episode.
   int? playingEpisodeId;
 
-  void Function()? onLocalChange;
-  void Function()? onPendingSend;
+  void Function({bool force})? onPendingSend;
   Future<StateSnapshot?> Function()? refreshStatesAndQueue;
 
   void _loadFrom(LocalSnapshot snapshot) {
@@ -65,6 +66,9 @@ class SqfliteLibrary extends Library {
     _pendingStates
       ..clear()
       ..addAll(snapshot.pendingStates);
+    _clockRejections
+      ..clear()
+      ..addAll(snapshot.clockRejections);
     _episodeLists
       ..clear()
       ..addAll(snapshot.episodeLists);
@@ -257,10 +261,27 @@ class SqfliteLibrary extends Library {
   @override
   Future<String> description(int episodeId) async {
     final cached = await _store.description(episodeId);
-    if (cached != null) return cached;
-    final detail = await _api.episode(episodeId);
-    await _store.setDescription(episodeId, detail.description);
-    return detail.description;
+    String? version() =>
+        _podcasts[_episodes[episodeId]?.podcastId]?.episodesVersion;
+    final requestedVersion = version();
+    if (cached != null &&
+        (requestedVersion == null || cached.version == requestedVersion)) {
+      return cached.text;
+    }
+    final String text;
+    try {
+      text = (await _api.episode(episodeId)).description;
+    } on Exception {
+      if (cached == null) rethrow;
+      return cached.text;
+    }
+    await _store.setDescription(
+      episodeId,
+      text,
+      requestedVersion,
+      replace: requestedVersion == version(),
+    );
+    return text;
   }
 
   @override
@@ -309,6 +330,7 @@ class SqfliteLibrary extends Library {
       await _setStates([_state(episodeId, 0, EpisodeStatus.none)]);
       return Duration.zero;
     }
+    requestPendingSend();
     return Duration(milliseconds: state.positionMs);
   }
 
@@ -332,15 +354,17 @@ class SqfliteLibrary extends Library {
     required DateTime updatedAt,
   }) async {
     if (!_canRecord(episodeId, updatedAt)) return;
+    final positionMs = position.isNegative ? 0 : position.inMilliseconds;
+    if ((stateOf(episodeId).positionMs - positionMs).abs() <= 1000) return;
     await _setStates([
       _state(
         episodeId,
-        position.isNegative ? 0 : position.inMilliseconds,
+        positionMs,
         EpisodeStatus.none,
         durationMs: duration?.inMilliseconds,
         updatedAt: updatedAt,
       ),
-    ]);
+    ], forceSend: false);
   }
 
   @override
@@ -349,7 +373,10 @@ class SqfliteLibrary extends Library {
 
   @override
   Future<void> markCompletedAt(int episodeId, DateTime updatedAt) async {
-    if (!_canRecord(episodeId, updatedAt)) return;
+    if (!_canRecord(episodeId, updatedAt)) {
+      requestPendingSend();
+      return;
+    }
     await _setStates([
       _state(episodeId, 0, EpisodeStatus.played, updatedAt: updatedAt),
     ]);
@@ -358,12 +385,13 @@ class SqfliteLibrary extends Library {
   bool _canRecord(int episodeId, DateTime updatedAt) {
     final current = stateOf(episodeId);
     return current.status == EpisodeStatus.none &&
-        updatedAt.isAfter(current.updatedAt);
+        (updatedAt.isAfter(current.updatedAt) ||
+            _correctedTime(episodeId, current.updatedAt) != null);
   }
 
   @override
   void requestPendingSend() {
-    if (hasPending) onPendingSend?.call();
+    if (hasPending) onPendingSend?.call(force: true);
   }
 
   @override
@@ -375,24 +403,15 @@ class SqfliteLibrary extends Library {
   @override
   Future<void> dismissOlder(int episodeId) async {
     final snapshot = await refreshStatesAndQueue?.call();
-    final chosen = _episodes[episodeId];
-    if (chosen == null) return;
-    final cutoff = chosen.publishedAt;
+    if (snapshot == null) throw BulkDismissNeedsConnection();
     final protectedIds = {
-      ...?_queue?.episodeIds,
-      for (final state in snapshot?.episodes ?? const <EpisodeState>[])
+      for (final state in snapshot.episodes)
         if (!state.isNew && state.isNewerThan(stateOf(state.episodeId)))
           state.episodeId,
     };
     final ids = [
-      for (final e in episodesOf(chosen.podcastId))
-        if ((e.id == episodeId ||
-                (cutoff != null &&
-                    e.publishedAt != null &&
-                    !e.publishedAt!.isAfter(cutoff))) &&
-            stateOf(e.id).isNew &&
-            !protectedIds.contains(e.id))
-          e.id,
+      for (final e in dismissOlderCandidates(episodeId))
+        if (!protectedIds.contains(e.id)) e.id,
     ];
     await _finish(ids, EpisodeStatus.dismissed);
   }
@@ -411,9 +430,9 @@ class SqfliteLibrary extends Library {
   }
 
   @override
-  Future<void> enqueue(int episodeId, {bool next = false}) async {
-    await refreshStatesAndQueue?.call();
-    final ids = _editableQueueIds();
+  Future<void> enqueue(int episodeId, {bool next = false}) => _editQueue((
+    ids,
+  ) async {
     if (next) {
       ids.remove(episodeId);
       final firstVisible = ids.indexWhere(_episodes.containsKey);
@@ -428,19 +447,16 @@ class SqfliteLibrary extends Library {
     } else {
       await _saveQueueEdit(ids);
     }
-  }
+  });
 
   @override
-  Future<void> dequeue(int episodeId) async {
-    await refreshStatesAndQueue?.call();
-    final ids = _editableQueueIds()..remove(episodeId);
-    await _saveQueueEdit(ids);
-  }
+  Future<void> dequeue(int episodeId) =>
+      _editQueue((ids) => _saveQueueEdit(ids..remove(episodeId)));
 
   @override
-  Future<void> moveInQueue(int episodeId, int newIndex) async {
-    await refreshStatesAndQueue?.call();
-    final ids = _editableQueueIds();
+  Future<void> moveInQueue(int episodeId, int newIndex) => _editQueue((
+    ids,
+  ) async {
     final visible = [
       for (final id in ids)
         if (_episodes.containsKey(id) || id == episodeId) id,
@@ -455,6 +471,15 @@ class SqfliteLibrary extends Library {
       }
     }
     await _saveQueueEdit(ids);
+  });
+
+  Future<void> _editQueue(Future<void> Function(List<int>) edit) {
+    final command = _queueCommands.then((_) async {
+      await refreshStatesAndQueue?.call();
+      await edit(_editableQueueIds());
+    });
+    _queueCommands = command.onError((Object _, StackTrace _) {});
+    return command;
   }
 
   List<int> _editableQueueIds() => [
@@ -480,8 +505,27 @@ class SqfliteLibrary extends Library {
       positionMs: positionMs,
       status: status,
       durationMs: durationMs ?? previous.durationMs,
-      updatedAt: updatedAt ?? _stamp(previous.updatedAt),
+      updatedAt:
+          _correctedTime(episodeId, previous.updatedAt) ??
+          updatedAt ??
+          _stamp(previous.updatedAt),
     );
+  }
+
+  DateTime? _correctedTime(int? id, DateTime previous) {
+    if (_clockRejections[id] != previous) return null;
+    final now = _clock();
+    return now.isBefore(previous) ? now : null;
+  }
+
+  void _updateClockRejection(int? id, DateTime at) {
+    final rejected = _clockRejections[id];
+    if (rejected == null) return;
+    if (at.isBefore(rejected)) {
+      _clockRejections.remove(id);
+    } else {
+      _clockRejections[id] = at;
+    }
   }
 
   /// Keeps a local change newer than what it replaces even if the clock stepped back.
@@ -492,32 +536,41 @@ class SqfliteLibrary extends Library {
         : previous.add(const Duration(milliseconds: 1));
   }
 
-  Future<void> _setStates(List<EpisodeState> states, {List<int>? queue}) async {
+  Future<void> _setStates(
+    List<EpisodeState> states, {
+    List<int>? queue,
+    bool forceSend = true,
+  }) async {
     final finished = <int>[];
     for (final state in states) {
       final before = stateOf(state.episodeId).status;
       _states[state.episodeId] = state;
       _pendingStates.add(state.episodeId);
+      _updateClockRejection(state.episodeId, state.updatedAt);
       if (state.status != EpisodeStatus.none && state.status != before) {
         finished.add(state.episodeId);
       }
     }
     QueueState? newQueue;
     if (queue != null) {
+      final previous = _queue?.updatedAt ?? oldestTime;
       newQueue = QueueState(
         episodeIds: List.unmodifiable(queue),
-        updatedAt: _stamp(_queue?.updatedAt ?? oldestTime),
+        updatedAt: _correctedTime(null, previous) ?? _stamp(previous),
       );
       _queue = newQueue;
       _queuePending = true;
+      _updateClockRejection(null, newQueue.updatedAt);
     }
-    final saved = _store.writeStates([
-      for (final s in states) (s, true),
-    ], queue: newQueue == null ? null : (newQueue, true));
+    final saved = _store.writeStates(
+      [for (final s in states) (s, true)],
+      queue: newQueue == null ? null : (newQueue, true),
+      clockRejections: Map.of(_clockRejections),
+    );
     _changed();
     finished.forEach(_finished.add);
     await saved;
-    onLocalChange?.call();
+    onPendingSend?.call(force: forceSend);
   }
 
   int get pendingCount => _pendingStates.length + (_queuePending ? 1 : 0);
@@ -529,6 +582,47 @@ class SqfliteLibrary extends Library {
       ? _queuePending && _queue!.updatedAt.isAtSameMomentAs(updatedAt)
       : _pendingStates.contains(episodeId) &&
             _states[episodeId]!.updatedAt.isAtSameMomentAs(updatedAt);
+
+  Future<void> repairRejectedTimes() async {
+    final now = _clock();
+    for (final entry in _clockRejections.entries.toList()) {
+      if (entry.value.isAfter(now) &&
+          _clockRejections[entry.key] == entry.value) {
+        await handleRejectedTime(entry.key, entry.value);
+      }
+    }
+  }
+
+  Future<bool> handleRejectedTime(int? id, DateTime rejectedAt) async {
+    if (!hasPendingVersion(id, rejectedAt)) return false;
+    final now = _clock();
+    final corrected = now.isBefore(rejectedAt) ? now : null;
+    if (corrected == null && _clockRejections[id] == rejectedAt) return false;
+    final state = _states[id];
+    final queue = id == null ? _queue : null;
+    if (!await _store.updateRejectedTime(state, queue, corrected) ||
+        !hasPendingVersion(id, rejectedAt)) {
+      return false;
+    }
+    if (corrected == null) {
+      _clockRejections[id] = rejectedAt;
+      return false;
+    }
+    _clockRejections.remove(id);
+    if (state != null) {
+      _states[state.episodeId] = EpisodeState(
+        episodeId: state.episodeId,
+        positionMs: state.positionMs,
+        status: state.status,
+        durationMs: state.durationMs,
+        updatedAt: now,
+      );
+    } else {
+      _queue = QueueState(episodeIds: queue!.episodeIds, updatedAt: now);
+    }
+    _changed();
+    return true;
+  }
 
   ({List<EpisodeState> states, QueueState? queue}) pendingChanges({
     int maxStates = 2000,
@@ -621,6 +715,7 @@ class SqfliteLibrary extends Library {
     final writeQueue = queueChanged || acknowledgedQueue != null;
     if (writeQueue) _queuePending = false;
     if (written.isNotEmpty || writeQueue) {
+      _clockRejections.removeWhere((id, at) => !hasPendingVersion(id, at));
       final saved = _store.writeStates(
         [for (final s in written.values) (s, false)],
         queue: writeQueue ? (_queue!, false) : null,

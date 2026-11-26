@@ -178,6 +178,7 @@ class FakeApiClient implements ApiClient {
   Duration? episodeStateTimeout;
   Future<void> Function()? beforeStateReply;
   Future<void> Function()? beforePodcasts;
+  Future<void> Function(int)? beforeEpisodes;
   Future<void> Function(int)? beforeEpisode;
   Future<void> Function()? beforePush;
   StatePushResult Function(StatePushResult)? transformPushResult;
@@ -260,6 +261,7 @@ class FakeApiClient implements ApiClient {
   }) async {
     _check();
     episodesCalls[podcastId] = (episodesCalls[podcastId] ?? 0) + 1;
+    await beforeEpisodes?.call(podcastId);
     final list = server.listEpisodes(podcastId);
     if (list == null) throw ApiException(404, 'not found');
     final tag = _tag([for (final e in list) e.toJson()]);
@@ -351,6 +353,8 @@ class Device {
     FakeServer server, {
     Database? db,
     TestClock? deviceClock,
+    bool observeLifecycle = false,
+    Duration pullInterval = const Duration(minutes: 15),
     Duration initialBackoff = const Duration(milliseconds: 20),
     Duration maxBackoff = const Duration(milliseconds: 160),
     Duration freshStateTimeout = const Duration(milliseconds: 100),
@@ -371,7 +375,8 @@ class Device {
       api: api,
       library: library,
       store: store,
-      observeLifecycle: false,
+      observeLifecycle: observeLifecycle,
+      pullInterval: pullInterval,
       initialBackoff: initialBackoff,
       maxBackoff: maxBackoff,
       freshStateTimeout: freshStateTimeout,

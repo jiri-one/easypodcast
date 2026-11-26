@@ -559,37 +559,38 @@ void main() {
       },
     );
 
-    test(
-      'a Go server 400 leaves the future change pending and accepts the rest',
-      () async {
-        final (:a, :b, :ids) = await pair('bad-clock');
-        final [future, valid, inbound] = ids;
-        b.wire.offline = true;
-        final validTime = deviceTime;
-        deviceTime = validTime.add(const Duration(days: 2));
-        await b.data.library.markPlayed(future);
-        final rejected = b.data.library.stateOf(future);
-        deviceTime = validTime;
-        await b.pauseAt(valid, 71000);
-        await a.pauseAt(inbound, 99000);
+    test('a Go server 400 repairs a future stamp after the device clock is corrected', () async {
+      final (:a, :b, :ids) = await pair('bad-clock');
+      final [future, valid, inbound] = ids;
+      b.wire.offline = true;
+      final validTime = deviceTime;
+      deviceTime = validTime.add(const Duration(days: 2));
+      await b.data.library.markPlayed(future);
+      final rejected = b.data.library.stateOf(future);
+      deviceTime = validTime;
+      await b.pauseAt(valid, 71000);
+      await a.pauseAt(inbound, 99000);
 
-        final start = b.wire.exchanges.length;
-        b.wire.offline = false;
-        await b.sync.syncNow();
-        b.wire.exchanges[start].expectStatus(400);
-        expect(await a.data.api.episodeState(future), isNull);
-        expect((await a.data.api.episodeState(valid))?.positionMs, 71000);
-        expect(b.data.library.stateOf(inbound).positionMs, 99000);
-        final snapshot = await b.store.load();
-        expect(snapshot.pendingStates, {future});
-        expect(
-          snapshot.states
-              .singleWhere((state) => state.episodeId == future)
-              .toJson(),
-          rejected.toJson(),
-        );
-      },
-    );
+      final start = b.wire.exchanges.length;
+      b.wire.offline = false;
+      await b.sync.syncNow();
+      b.wire.exchanges[start].expectStatus(400);
+      final repaired = (await a.data.api.episodeState(future))!;
+      expect(repaired.toJson(), {
+        ...rejected.toJson(),
+        'updated_at': formatTime(validTime),
+      });
+      expect((await a.data.api.episodeState(valid))?.positionMs, 71000);
+      expect(b.data.library.stateOf(inbound).positionMs, 99000);
+      final snapshot = await b.store.load();
+      expect(snapshot.pendingStates, isEmpty);
+      expect(
+        snapshot.states
+            .singleWhere((state) => state.episodeId == future)
+            .toJson(),
+        repaired.toJson(),
+      );
+    });
 
     test('dismissing on A removes the episode from in-progress on B', () async {
       final (:a, :b, :ids) = await pair('dismiss');
