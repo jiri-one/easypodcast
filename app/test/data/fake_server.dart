@@ -175,6 +175,9 @@ class FakeApiClient implements ApiClient {
   String? token;
   int? statusOverride;
   Duration? episodeStateDelay;
+  Future<void> Function()? beforeStateReply;
+  Future<void> Function()? beforePodcasts;
+  Future<void> Function()? beforePush;
 
   int pushCalls = 0;
   int stateCalls = 0;
@@ -183,6 +186,7 @@ class FakeApiClient implements ApiClient {
   final Map<int, int> episodesCalls = {};
   final Map<int, int> episodesNotModified = {};
   final List<List<EpisodeState>> pushedStates = [];
+  final List<String> syncCalls = [];
 
   void _check({bool auth = true}) {
     if (!online) throw OfflineException('no network');
@@ -211,6 +215,7 @@ class FakeApiClient implements ApiClient {
 
   @override
   Future<void> logout() async {
+    syncCalls.add('logout');
     try {
       _check();
     } finally {
@@ -222,6 +227,8 @@ class FakeApiClient implements ApiClient {
   Future<Fetched<List<Podcast>>?> podcasts({String? ifNoneMatch}) async {
     _check();
     podcastsCalls++;
+    syncCalls.add('podcasts');
+    if (beforePodcasts case final hook?) await hook();
     final list = server.listPodcasts();
     final tag = _tag([for (final p in list) p.toJson()]);
     if (tag == ifNoneMatch) return null;
@@ -273,11 +280,14 @@ class FakeApiClient implements ApiClient {
   Future<StateSnapshot> state() async {
     _check();
     stateCalls++;
-    return StateSnapshot(
+    syncCalls.add('state');
+    final snapshot = StateSnapshot(
       episodes: server.states.values.toList(),
       queue: server.queue,
       serverTime: server.clock(),
     );
+    if (beforeStateReply case final hook?) await hook();
+    return snapshot;
   }
 
   @override
@@ -287,7 +297,9 @@ class FakeApiClient implements ApiClient {
   }) async {
     _check();
     pushCalls++;
+    syncCalls.add('push');
     pushedStates.add(List.of(episodes));
+    if (beforePush case final hook?) await hook();
     return server.push(episodes, queue);
   }
 
@@ -331,6 +343,8 @@ class Device {
     TestClock? deviceClock,
     Duration initialBackoff = const Duration(milliseconds: 20),
     Duration maxBackoff = const Duration(milliseconds: 160),
+    Duration queueRefreshTimeout = const Duration(seconds: 2),
+    Duration logoutSendTimeout = const Duration(seconds: 2),
   }) async {
     final database =
         db ?? await LocalStore.open(databaseFactoryFfi, inMemoryDatabasePath);
@@ -350,6 +364,8 @@ class Device {
       initialBackoff: initialBackoff,
       maxBackoff: maxBackoff,
       freshStateTimeout: const Duration(milliseconds: 100),
+      queueRefreshTimeout: queueRefreshTimeout,
+      logoutSendTimeout: logoutSendTimeout,
       clock: (deviceClock ?? server.clock).call,
     );
     return Device._(database, store, api, library, sync);

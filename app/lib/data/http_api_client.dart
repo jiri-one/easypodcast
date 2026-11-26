@@ -55,10 +55,10 @@ class HttpApiClient implements ApiClient {
       Uri.parse('${serverUrl ?? _serverUrl}$path'),
     );
     request.headers['Accept'] = 'application/json';
+    final requestToken = authenticated ? token : null;
     if (authenticated) {
-      final current = token;
-      if (current == null) throw ApiException(401, 'not logged in');
-      request.headers['Authorization'] = 'Bearer $current';
+      if (requestToken == null) throw ApiException(401, 'not logged in');
+      request.headers['Authorization'] = 'Bearer $requestToken';
     }
     if (ifNoneMatch != null) request.headers['If-None-Match'] = ifNoneMatch;
     if (json != null) {
@@ -86,7 +86,7 @@ class HttpApiClient implements ApiClient {
     }
     final status = response.statusCode;
     if (status == 304 || (status >= 200 && status < 300)) return response;
-    if (status == 401 && authenticated) {
+    if (status == 401 && authenticated && requestToken == token) {
       token = null;
       onUnauthorized?.call();
     }
@@ -147,10 +147,11 @@ class HttpApiClient implements ApiClient {
 
   @override
   Future<void> logout() async {
+    final requestToken = token;
     try {
       await _send('POST', '/api/logout');
     } finally {
-      token = null;
+      if (token == requestToken) token = null;
     }
   }
 

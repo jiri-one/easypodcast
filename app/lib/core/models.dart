@@ -158,17 +158,20 @@ class EpisodeState {
     required this.positionMs,
     required this.status,
     required this.updatedAt,
+    this.durationMs,
   });
 
   /// What an episode without any stored state behaves like.
   EpisodeState.initial(this.episodeId)
       : positionMs = 0,
         status = EpisodeStatus.none,
+        durationMs = null,
         updatedAt = oldestTime;
 
   final int episodeId;
   final int positionMs;
   final EpisodeStatus status;
+  final int? durationMs;
   final DateTime updatedAt;
 
   bool get isInProgress =>
@@ -185,6 +188,7 @@ class EpisodeState {
         episodeId: json['episode_id'] as int,
         positionMs: json['position_ms'] as int? ?? 0,
         status: EpisodeStatus.fromJson(json['status'] as String? ?? ''),
+        durationMs: json['duration_ms'] as int?,
         updatedAt: _time(json['updated_at'])!,
       );
 
@@ -192,6 +196,7 @@ class EpisodeState {
         'episode_id': episodeId,
         'position_ms': positionMs,
         'status': status.json,
+        'duration_ms': durationMs,
         'updated_at': formatTime(updatedAt),
       };
 }

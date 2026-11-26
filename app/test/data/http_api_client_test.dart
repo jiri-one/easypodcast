@@ -105,24 +105,29 @@ void main() {
     expect(detail.description, 'Links stay as https://example.test');
   });
 
-  test('state parses a missing queue and the server time', () async {
-    handler = (_) async => json({
-      'episodes': [
-        {
-          'episode_id': 7,
-          'position_ms': 61000,
-          'status': '',
-          'updated_at': '2026-11-26T14:03:07.120Z',
-        },
-      ],
-      'queue': null,
-      'server_time': '2026-11-26T14:05:00.000Z',
-    });
-    final snapshot = await api.state();
-    expect(snapshot.queue, isNull);
-    expect(snapshot.episodes.single.isInProgress, isTrue);
-    expect(snapshot.serverTime, DateTime.utc(2026, 11, 26, 14, 5));
-  });
+  test(
+    'state parses measured duration, a missing queue and server time',
+    () async {
+      handler = (_) async => json({
+        'episodes': [
+          {
+            'episode_id': 7,
+            'position_ms': 61000,
+            'status': '',
+            'duration_ms': 165000,
+            'updated_at': '2026-11-26T14:03:07.120Z',
+          },
+        ],
+        'queue': null,
+        'server_time': '2026-11-26T14:05:00.000Z',
+      });
+      final snapshot = await api.state();
+      expect(snapshot.queue, isNull);
+      expect(snapshot.episodes.single.isInProgress, isTrue);
+      expect(snapshot.episodes.single.durationMs, 165000);
+      expect(snapshot.serverTime, DateTime.utc(2026, 11, 26, 14, 5));
+    },
+  );
 
   test(
     'pushState sends states and queue in one body and parses unknown ids',
@@ -133,6 +138,7 @@ void main() {
             'episode_id': 7,
             'position_ms': 0,
             'status': 'played',
+            'duration_ms': null,
             'updated_at': '2026-11-26T14:03:07.120Z',
           },
         ],
@@ -149,6 +155,7 @@ void main() {
             episodeId: 7,
             positionMs: 0,
             status: EpisodeStatus.played,
+            durationMs: 165000,
             updatedAt: at,
           ),
         ],
@@ -164,6 +171,7 @@ void main() {
             'episode_id': 7,
             'position_ms': 0,
             'status': 'played',
+            'duration_ms': 165000,
             'updated_at': '2026-11-26T14:03:07.120Z',
           },
         ],
@@ -175,6 +183,7 @@ void main() {
       expect(result.unknown, [9]);
       expect(result.queue!.episodeIds, [8]);
       expect(result.episodes.single.isPlayed, isTrue);
+      expect(result.episodes.single.durationMs, isNull);
 
       await api.pushState();
       expect(jsonDecode(requests.last.body), {'episodes': <Object>[]});
@@ -219,6 +228,23 @@ void main() {
     expect(called, 1);
     expect(api.token, isNull);
   });
+
+  test(
+    'a delayed 401 from the previous token leaves the new session active',
+    () async {
+      final reply = Completer<http.Response>();
+      handler = (_) => reply.future;
+      var unauthorized = false;
+      api.onUnauthorized = () => unauthorized = true;
+
+      final rejected = expectLater(api.state(), throwsA(isA<ApiException>()));
+      api.token = 'new-token';
+      reply.complete(json({'error': 'token revoked'}, status: 401));
+      await rejected;
+      expect(api.token, 'new-token');
+      expect(unauthorized, isFalse);
+    },
+  );
 
   test('wrong credentials at login are not a lost session', () async {
     var called = 0;

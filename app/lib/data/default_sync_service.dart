@@ -22,6 +22,8 @@ class DefaultSyncService with WidgetsBindingObserver implements SyncService {
     this.maxBackoff = const Duration(minutes: 5),
     this.pullInterval = const Duration(minutes: 15),
     this.freshStateTimeout = const Duration(seconds: 2),
+    this.queueRefreshTimeout = const Duration(seconds: 2),
+    this.logoutSendTimeout = const Duration(seconds: 2),
     this._clock = nowUtc,
   }) : _library = library,
        _store = store {
@@ -35,6 +37,7 @@ class DefaultSyncService with WidgetsBindingObserver implements SyncService {
       ),
     );
     library.onLocalChange = _onLocalChange;
+    library.refreshQueueBeforeEdit = _refreshQueueBeforeEdit;
   }
 
   final ApiClient _api;
@@ -49,6 +52,8 @@ class DefaultSyncService with WidgetsBindingObserver implements SyncService {
   final Duration maxBackoff;
   final Duration pullInterval;
   final Duration freshStateTimeout;
+  final Duration queueRefreshTimeout;
+  final Duration logoutSendTimeout;
 
   late final ValueNotifier<SyncStatus> _status;
   DateTime? _lastSuccess;
@@ -56,10 +61,13 @@ class DefaultSyncService with WidgetsBindingObserver implements SyncService {
   bool _started = false;
   bool _observing = false;
   bool _foreground = true;
-  bool _pushWanted = false;
   bool _pullWanted = false;
+  bool _forceWanted = false;
   bool _failedSinceSuccess = false;
+  bool _loggingOut = false;
+  int _session = 0;
   Future<void>? _running;
+  Future<void>? _sending;
   Timer? _retryTimer;
   Timer? _pullTimer;
   Duration? _backoff;
@@ -89,6 +97,7 @@ class DefaultSyncService with WidgetsBindingObserver implements SyncService {
       password: password,
       deviceName: deviceName,
     );
+    _endSessionWork();
     final normalized = HttpApiClient.normalizeServerUrl(serverUrl);
     final previous = _store.meta(MetaKey.serverUrl);
     if (previous != null && previous != normalized) {
@@ -107,28 +116,36 @@ class DefaultSyncService with WidgetsBindingObserver implements SyncService {
     _setStatus(SyncPhase.idle);
     if (_started) {
       _startPullTimer();
-      _request(push: true, pull: true, force: true);
+      _request(pull: true, force: true);
     }
   }
 
   @override
   Future<void> logout() async {
+    if (_loggingOut) return;
+    _loggingOut = true;
     _cancelTimers();
-    await whenIdle();
+    try {
+      await _flushPending(_session, logoutSendTimeout, Stopwatch()..start());
+    } on Object {
+      // Pending changes survive an unavailable server.
+    }
+    _endSessionWork();
     try {
       await _api.logout();
     } on Object {
       // The local session ends even if the server cannot be told.
+    } finally {
+      await _store.setMeta(MetaKey.token, null);
+      _loggingOut = false;
+      _setStatus(SyncPhase.loggedOut);
     }
-    await _store.setMeta(MetaKey.token, null);
-    _setStatus(SyncPhase.loggedOut);
   }
 
   /// The server rejected the token: the user has to log in again, local changes stay.
   void handleUnauthorized() {
-    _cancelTimers();
-    _pushWanted = false;
-    _pullWanted = false;
+    if (!isLoggedIn) return;
+    _endSessionWork();
     unawaited(_store.setMeta(MetaKey.token, null));
     _setStatus(SyncPhase.loggedOut);
   }
@@ -147,14 +164,14 @@ class DefaultSyncService with WidgetsBindingObserver implements SyncService {
     }
     _startPullTimer();
     // Not awaited: an offline start must not hold up the first frame.
-    _request(push: true, pull: true, force: true);
+    _request(pull: true, force: true);
   }
 
   @override
   Future<void> stop() async {
     if (!_started) return;
     _cancelTimers();
-    if (isLoggedIn && _library.hasPending) _request(push: true, force: true);
+    if (isLoggedIn && _library.hasPending) _request(force: true);
     await whenIdle();
     _cancelTimers();
     _started = false;
@@ -167,22 +184,27 @@ class DefaultSyncService with WidgetsBindingObserver implements SyncService {
   @override
   Future<void> syncNow() async {
     if (!isLoggedIn) return;
-    _request(push: true, pull: true, force: true);
+    _request(pull: true, force: true);
     await whenIdle();
   }
 
   @override
   Future<void> freshStateBeforePlay(int episodeId) async {
-    if (!isLoggedIn) return;
+    if (!isLoggedIn || _loggingOut) return;
+    final session = _session;
     try {
       final remote = await _api
           .episodeState(episodeId, timeout: freshStateTimeout)
           .timeout(freshStateTimeout);
-      if (remote != null && remote.episodeId == episodeId) {
-        await _library.applyRemote([remote], null);
+      if (remote == null ||
+          remote.episodeId != episodeId ||
+          !_inSession(session) ||
+          _loggingOut) {
+        return;
       }
+      await _applyRemote(session, [remote], null);
     } on ApiException catch (e) {
-      if (e.statusCode == 401) handleUnauthorized();
+      if (e.statusCode == 401 && _inSession(session)) handleUnauthorized();
     } on Object {
       // Offline or slow: playback starts from the local state.
     }
@@ -202,7 +224,7 @@ class DefaultSyncService with WidgetsBindingObserver implements SyncService {
         if (!_started || !isLoggedIn) return;
         _startPullTimer();
         _backoff = null;
-        _request(push: true, pull: true, force: true);
+        _request(pull: true, force: true);
       case AppLifecycleState.paused ||
           AppLifecycleState.hidden ||
           AppLifecycleState.detached:
@@ -210,7 +232,7 @@ class DefaultSyncService with WidgetsBindingObserver implements SyncService {
         _pullTimer?.cancel();
         _pullTimer = null;
         if (_started && isLoggedIn && _library.hasPending) {
-          _request(push: true, force: true);
+          _request(force: true);
         }
       case AppLifecycleState.inactive:
         break;
@@ -226,14 +248,14 @@ class DefaultSyncService with WidgetsBindingObserver implements SyncService {
 
   void _onLocalChange() {
     _setStatus(_status.value.phase, error: _status.value.error);
-    _request(push: true);
+    _kick();
   }
 
   /// [force] skips the backoff wait, for the user's and the lifecycle's explicit triggers.
-  void _request({bool push = false, bool pull = false, bool force = false}) {
-    _pushWanted |= push;
+  void _request({bool pull = false, bool force = false}) {
     _pullWanted |= pull;
     if (force) {
+      _forceWanted = true;
       _retryTimer?.cancel();
       _retryTimer = null;
     }
@@ -241,37 +263,40 @@ class DefaultSyncService with WidgetsBindingObserver implements SyncService {
   }
 
   void _kick() {
-    if (!_started || !isLoggedIn || _running != null) return;
+    if (!_started || !isLoggedIn || _loggingOut || _running != null) return;
     if (_retryTimer?.isActive ?? false) return;
-    if (!_pushWanted && !_pullWanted && !_library.hasPending) return;
-    _running = _run().whenComplete(() {
+    if (!_pullWanted && !_library.hasPending) return;
+    final session = _session;
+    _running = Future<void>.microtask(() => _run(session)).whenComplete(() {
+      if (session != _session) return;
       _running = null;
       _kick();
     });
   }
 
-  Future<void> _run() async {
-    while (_started && isLoggedIn) {
+  Future<void> _run(int session) async {
+    while (_started && _inSession(session) && !_loggingOut) {
+      _forceWanted = false;
       if (_library.hasPending) {
-        _pushWanted = false;
         _setStatus(SyncPhase.syncing);
         try {
-          await _push();
+          await _sendPending();
         } on Object catch (e) {
-          _fail(e);
+          if (_inSession(session) && !_loggingOut) _fail(e);
           return;
         }
         continue;
       }
-      _pushWanted = false;
       if (_pullWanted) {
         _pullWanted = false;
         _setStatus(SyncPhase.syncing);
         try {
-          await _pull();
+          await _pull(session);
         } on Object catch (e) {
-          _pullWanted = true;
-          _fail(e);
+          if (_inSession(session) && !_loggingOut) {
+            _pullWanted = true;
+            _fail(e);
+          }
           return;
         }
         continue;
@@ -281,34 +306,106 @@ class DefaultSyncService with WidgetsBindingObserver implements SyncService {
     }
   }
 
-  Future<void> _push() async {
+  Future<void> _sendPending({Duration? timeout}) {
+    final session = _session;
+    return _sending ??= _push(session, timeout: timeout).whenComplete(() {
+      if (session == _session) _sending = null;
+    });
+  }
+
+  Future<void> _push(int session, {Duration? timeout}) async {
     final changes = _library.pendingChanges();
-    final result = await _api.pushState(
+    final request = _api.pushState(
       episodes: changes.states,
       queue: changes.queue,
     );
-    await _library.applyPushResult(changes.states, changes.queue, result);
-    if (_failedSinceSuccess) _pullWanted = true;
+    final result = await (timeout == null ? request : request.timeout(timeout));
+    if (!_inSession(session)) return;
+    final missing = await _library.applyPushResult(
+      changes.states,
+      changes.queue,
+      result,
+    );
+    if (!_inSession(session)) return;
+    if (_failedSinceSuccess || missing) _pullWanted = true;
     await _succeeded();
   }
 
-  Future<void> _pull() async {
+  Future<void> _flushPending(
+    int session,
+    Duration timeout,
+    Stopwatch watch,
+  ) async {
+    while (_inSession(session) && _library.hasPending) {
+      final remaining = timeout - watch.elapsed;
+      if (remaining <= Duration.zero) return;
+      await _sendPending(timeout: remaining).timeout(remaining);
+    }
+  }
+
+  Future<void> _refreshQueueBeforeEdit() async {
+    if (!isLoggedIn || _loggingOut) return;
+    final session = _session;
+    final watch = Stopwatch()..start();
+    try {
+      try {
+        await _flushPending(session, queueRefreshTimeout, watch);
+      } on ApiException catch (e) {
+        // A rejected write can leave the server's queue readable.
+        if (e.statusCode == 401) rethrow;
+      }
+      final remaining = queueRefreshTimeout - watch.elapsed;
+      if (remaining <= Duration.zero || !_inSession(session) || _loggingOut) {
+        return;
+      }
+      final snapshot = await _api.state().timeout(remaining);
+      if (!_inSession(session) || _loggingOut) return;
+      await _applyRemote(session, snapshot.episodes, snapshot.queue);
+    } on ApiException catch (e) {
+      if (e.statusCode == 401 && _inSession(session)) handleUnauthorized();
+    } on OfflineException {
+      // A queue edit can use the cached state when the server is unreachable.
+    } on TimeoutException {
+      // A late response must not affect the edit.
+    } finally {
+      _kick();
+    }
+  }
+
+  Future<void> _applyRemote(
+    int session,
+    List<EpisodeState> states,
+    QueueState? queue,
+  ) async {
+    final missing = await _library.applyRemote(states, queue);
+    if (missing && _inSession(session) && !_loggingOut) _request(pull: true);
+  }
+
+  Future<void> _pull(int session) async {
+    bool isCurrent() => _inSession(session) && !_loggingOut;
+    final snapshot = await _api.state();
+    if (!isCurrent()) return;
+    await _library.applyRemote(snapshot.episodes, snapshot.queue);
+    if (!isCurrent()) return;
     final fetched = await _api.podcasts(
       ifNoneMatch: _store.meta(MetaKey.podcastsEtag),
     );
+    if (!isCurrent()) return;
     if (fetched != null) {
       await _library.replacePodcasts(fetched.value);
+      if (!isCurrent()) return;
       await _store.setMeta(MetaKey.podcastsEtag, fetched.etag);
     }
     for (final podcast in _library.knownPodcasts.toList()) {
-      await _library.refreshEpisodes(podcast);
+      if (!isCurrent()) return;
+      await _library.refreshEpisodes(podcast, isCurrent: isCurrent);
     }
-    final snapshot = await _api.state();
-    await _library.applyRemote(snapshot.episodes, snapshot.queue);
-    await _succeeded();
+    if (isCurrent()) await _succeeded();
   }
 
   Future<void> _succeeded() async {
+    _retryTimer?.cancel();
+    _retryTimer = null;
     _backoff = null;
     _failedSinceSuccess = false;
     _lastSuccess = _clock();
@@ -321,7 +418,7 @@ class DefaultSyncService with WidgetsBindingObserver implements SyncService {
       return;
     }
     _failedSinceSuccess = true;
-    if (error is OfflineException) {
+    if (error is OfflineException || error is TimeoutException) {
       _setStatus(SyncPhase.offline);
     } else {
       _setStatus(
@@ -329,6 +426,7 @@ class DefaultSyncService with WidgetsBindingObserver implements SyncService {
         error: error is ApiException ? error.message : '$error',
       );
     }
+    if (_forceWanted || _loggingOut || !isLoggedIn) return;
     final backoff = _backoff == null ? initialBackoff : _backoff! * 2;
     _backoff = backoff > maxBackoff ? maxBackoff : backoff;
     _retryTimer?.cancel();
@@ -352,6 +450,17 @@ class DefaultSyncService with WidgetsBindingObserver implements SyncService {
     _pullTimer = null;
   }
 
+  bool _inSession(int session) => session == _session && isLoggedIn;
+
+  void _endSessionWork() {
+    _session++;
+    _cancelTimers();
+    _pullWanted = false;
+    _forceWanted = false;
+    _running = null;
+    _sending = null;
+  }
+
   void _setStatus(SyncPhase phase, {String? error}) {
     final old = _status.value;
     final pending = _library.pendingCount;
@@ -370,7 +479,9 @@ class DefaultSyncService with WidgetsBindingObserver implements SyncService {
   }
 
   void dispose() {
-    _cancelTimers();
+    _endSessionWork();
+    _library.onLocalChange = null;
+    _library.refreshQueueBeforeEdit = null;
     if (_observing) {
       WidgetsBinding.instance.removeObserver(this);
       _observing = false;

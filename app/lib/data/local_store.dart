@@ -50,7 +50,7 @@ class LocalStore {
   final Database db;
   final Map<String, String> _meta = {};
 
-  static const schemaVersion = 1;
+  static const schemaVersion = 2;
 
   static Future<Database> open(DatabaseFactory factory, String path) =>
       factory.openDatabase(
@@ -58,6 +58,13 @@ class LocalStore {
         options: OpenDatabaseOptions(
           version: schemaVersion,
           onCreate: (db, _) => createSchema(db),
+          onUpgrade: (db, oldVersion, _) async {
+            if (oldVersion < 2) {
+              await db.execute(
+                'ALTER TABLE episode_states ADD COLUMN duration_ms INTEGER',
+              );
+            }
+          },
           singleInstance: false,
         ),
       );
@@ -79,11 +86,10 @@ class LocalStore {
       ..execute(
         'CREATE INDEX IF NOT EXISTS episodes_podcast ON episodes (podcast_id, sort)',
       )
-      ..execute(
-        '''CREATE TABLE IF NOT EXISTS episode_states (
+      ..execute('''CREATE TABLE IF NOT EXISTS episode_states (
         episode_id INTEGER PRIMARY KEY, position_ms INTEGER NOT NULL,
-        status TEXT NOT NULL, updated_at INTEGER NOT NULL, pending INTEGER NOT NULL)''',
-      )
+        status TEXT NOT NULL, duration_ms INTEGER, updated_at INTEGER NOT NULL,
+        pending INTEGER NOT NULL)''')
       ..execute('''CREATE TABLE IF NOT EXISTS queue (
         id INTEGER PRIMARY KEY CHECK (id = 1), episode_ids TEXT NOT NULL,
         updated_at INTEGER NOT NULL, pending INTEGER NOT NULL)''')
@@ -122,6 +128,7 @@ class LocalStore {
           episodeId: id,
           positionMs: row['position_ms'] as int,
           status: EpisodeStatus.fromJson(row['status'] as String),
+          durationMs: row['duration_ms'] as int?,
           updatedAt: _fromMs(row['updated_at'] as int),
         ),
       );
@@ -228,6 +235,7 @@ class LocalStore {
         'episode_id': state.episodeId,
         'position_ms': state.positionMs,
         'status': state.status.json,
+        'duration_ms': state.durationMs,
         'updated_at': state.updatedAt.millisecondsSinceEpoch,
         'pending': pending ? 1 : 0,
       }, conflictAlgorithm: ConflictAlgorithm.replace);

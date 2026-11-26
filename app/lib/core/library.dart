@@ -2,8 +2,7 @@ import 'package:flutter/foundation.dart';
 
 import 'models.dart';
 
-/// The local view of everything the UI shows. Commands change the local copy at once and leave
-/// sending to the sync service, so they work offline.
+/// The UI reads the local copy so it works offline.
 abstract class Library extends ChangeNotifier {
   /// Subscribed podcasts, most played first, then by title.
   List<Podcast> get podcasts;
@@ -20,6 +19,7 @@ abstract class Library extends ChangeNotifier {
   /// In-progress episodes, most recently listened first.
   List<Episode> get inProgress;
 
+  /// Episodes still eligible for queue playback, in queue order.
   List<Episode> get queue;
 
   /// New episodes of subscribed podcasts, newest first.
@@ -38,15 +38,21 @@ abstract class Library extends ChangeNotifier {
   /// Turns a played or dismissed episode back into a fresh one and returns where to start.
   Future<Duration> prepareForPlayback(int episodeId);
 
-  Future<void> recordPosition(int episodeId, Duration position);
+  /// Updates the position and measured duration of an unfinished episode.
+  Future<void> recordPosition(
+    int episodeId,
+    Duration position, {
+    Duration? duration,
+  });
 
-  /// Playback reached the end: played, out of the queue.
+  /// Marks an unfinished episode as played when playback reaches the end.
   Future<void> markCompleted(int episodeId);
 
+  /// Played episodes keep their status when dismissal is requested.
   Future<void> dismiss(int episodeId);
 
-  /// Dismisses every new or in-progress episode of the podcast published before [before].
-  Future<void> dismissOlder(int podcastId, DateTime before);
+  /// Dismisses this and older episodes of its podcast that are new and unqueued.
+  Future<void> dismissOlder(int episodeId);
 
   Future<void> markPlayed(int episodeId);
 
