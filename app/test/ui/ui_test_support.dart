@@ -400,7 +400,7 @@ Future<void> tourPhone(UiHarness app, VisitScreen visit) async {
   await app.tester.enterText(find.byType(TextField), 'nocni nadrazi');
   await visit('30-podcast-search');
   await app.tap(find.byTooltip(l.clearSearch));
-  await app.tap(find.bySemanticsLabel(l.aboutPodcast));
+  await app.tap(find.byTooltip(l.aboutPodcast));
   await visit('20-about-podcast');
   await app.tapText(l.unsubscribe);
   expect(find.text(l.unsubscribeTitle), findsOneWidget);
@@ -495,7 +495,7 @@ Future<void> tourDesktop(
     find.byType(PodcastList),
   );
   await visit('pc-podcast');
-  await app.tap(find.bySemanticsLabel(l.aboutPodcast));
+  await app.tap(find.byTooltip(l.aboutPodcast));
   await visit('pc-about');
   await app.section(LibrarySection.settings);
   await visit('pc-settings');

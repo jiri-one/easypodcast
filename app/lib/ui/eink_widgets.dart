@@ -74,6 +74,9 @@ const buttonLabelStyle = TextStyle(
 );
 const underlineStyle = TextStyle(decoration: TextDecoration.underline);
 
+double headerIconSize(BuildContext context) =>
+    MediaQuery.textScalerOf(context).scale(24);
+
 class EinkHeader extends StatelessWidget {
   const EinkHeader(
     this.title, {
@@ -130,6 +133,7 @@ class EinkHeader extends StatelessWidget {
             if (onBack != null)
               IconButton(
                 onPressed: onBack,
+                iconSize: headerIconSize(context),
                 tooltip: MaterialLocalizations.of(context).backButtonTooltip,
                 icon: const Icon(Icons.arrow_back),
               )

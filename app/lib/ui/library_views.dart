@@ -104,7 +104,7 @@ class EpisodeList extends StatelessWidget {
   final PlaybackActions playback;
   final ValueChanged<Episode> onOpen;
   final ValueChanged<Episode> onMenu;
-  final VoidCallback? onRefresh;
+  final RefreshCallback? onRefresh;
   final List<Widget> actions;
   final List<Widget> headerSlivers;
   final bool desktop;
@@ -140,11 +140,6 @@ class EpisodeList extends StatelessWidget {
     final refresh = onRefresh;
     final list = CustomScrollView(
       key: key ?? PageStorageKey(kind),
-      physics: refresh == null
-          ? null
-          : const ClampingScrollPhysics(
-              parent: AlwaysScrollableScrollPhysics(),
-            ),
       slivers: [
         SliverToBoxAdapter(child: problem),
         for (final action in actions) SliverToBoxAdapter(child: action),
@@ -200,7 +195,7 @@ class EpisodeList extends StatelessWidget {
     );
     return refresh == null
         ? list
-        : _PullToRefresh(onRefresh: refresh, child: list);
+        : RefreshIndicator.noSpinner(onRefresh: refresh, child: list);
   }
 
   Widget _episodeRow(
@@ -328,50 +323,6 @@ class EpisodeList extends StatelessWidget {
       builder: buildRow,
     );
   }
-}
-
-class _PullToRefresh extends StatefulWidget {
-  const _PullToRefresh({required this.onRefresh, required this.child});
-
-  final VoidCallback onRefresh;
-  final Widget child;
-
-  @override
-  State<_PullToRefresh> createState() => _PullToRefreshState();
-}
-
-class _PullToRefreshState extends State<_PullToRefresh> {
-  static const _refreshDistance = 64.0;
-  double? _distance;
-
-  bool _onScroll(ScrollNotification notification) {
-    if (notification.depth != 0) return false;
-    switch (notification) {
-      case ScrollStartNotification(:final metrics, :final dragDetails):
-        _distance = dragDetails != null && metrics.extentBefore == 0 ? 0 : null;
-      case ScrollUpdateNotification():
-        _distance = null;
-      case OverscrollNotification(:final overscroll, dragDetails: _?)
-          when _distance != null:
-        _distance = overscroll < 0 ? _distance! - overscroll : null;
-      case ScrollEndNotification(:final dragDetails):
-        final distance = _distance;
-        _distance = null;
-        if (dragDetails != null &&
-            distance != null &&
-            distance >= _refreshDistance) {
-          widget.onRefresh();
-        }
-    }
-    return false;
-  }
-
-  @override
-  Widget build(BuildContext context) =>
-      NotificationListener<ScrollNotification>(
-        onNotification: _onScroll,
-        child: widget.child,
-      );
 }
 
 class _EpisodeMetadata extends StatelessWidget {

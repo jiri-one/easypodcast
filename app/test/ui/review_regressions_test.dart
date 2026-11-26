@@ -138,7 +138,7 @@ void main() {
 
         expect(subtitle(date), findsOneWidget);
         expect(find.textContaining(podcast.lastError!), findsOneWidget);
-        await app.tap(find.bySemanticsLabel(l.refresh));
+        await app.tap(find.byTooltip(l.refresh));
         expect(library.refreshes, 1);
         expect(subtitle(l.refreshing), findsOneWidget);
         expect(subtitle(date), findsNothing);
@@ -146,10 +146,10 @@ void main() {
           await tester.pump(Duration(seconds: seconds));
           await tester.pump();
         }
-        expect(subtitle(l.refreshRequested), findsOneWidget);
+        expect(subtitle(l.refreshRequested), findsNothing);
+        expect(subtitle(date), findsOneWidget);
         library.finishRefresh();
         await tester.pumpAndSettle();
-        expect(subtitle(l.refreshRequested), findsNothing);
         final updated = library.podcast(podcast.id)!.lastSuccessAt!;
         expect(subtitle(l.loadedAt(clockText(l, updated))), findsOneWidget);
         expect(find.textContaining(podcast.lastError!), findsNothing);
@@ -174,18 +174,21 @@ void main() {
             find.byType(PodcastList),
           );
         }
+        expect(find.byTooltip(l.refresh), findsOneWidget);
         final list = find.byType(EpisodeList);
         final scrollable = find.descendant(
           of: list,
           matching: find.byType(Scrollable),
         );
         final position = tester.state<ScrollableState>(scrollable).position;
-        await tester.drag(list, const Offset(0, 40));
+        final height = tester.getSize(list).height;
+        await tester.drag(list, Offset(0, height / 8));
         await tester.pumpAndSettle();
         expect(library.refreshes, 0);
 
+        // A finger rarely moves straight: the small step back must not cancel.
         final gesture = await tester.startGesture(tester.getCenter(list));
-        for (final distance in [25.0, 40.0, 40.0]) {
+        for (final distance in [25.0, height / 6, -2.0, height / 6]) {
           await gesture.moveBy(Offset(0, distance));
         }
         await tester.pump();
@@ -226,7 +229,7 @@ void main() {
       await app.section(LibrarySection.newEpisodes);
       final refresh = find.descendant(
         of: find.byType(EinkHeader),
-        matching: find.bySemanticsLabel(l.refresh),
+        matching: find.byTooltip(l.refresh),
       );
       final target = tester.getSize(refresh);
       expect(target.width, greaterThanOrEqualTo(48));
@@ -235,6 +238,65 @@ void main() {
       await tester.pumpAndSettle();
       expect(library.refreshes, 1);
       expect(find.widgetWithText(EinkError, l.refreshFailed), findsOneWidget);
+
+      await app.section(LibrarySection.podcasts);
+      await app.scrollToRow(
+        library.podcast(1)!.title,
+        find.byType(PodcastList),
+      );
+      expect(find.widgetWithText(EinkError, l.refreshFailed), findsNothing);
+      await tester.tap(refresh, kind: PointerDeviceKind.mouse);
+      await tester.pumpAndSettle();
+      expect(library.refreshes, 2);
+      expect(find.widgetWithText(EinkError, l.refreshFailed), findsOneWidget);
+    } finally {
+      await app.finish();
+    }
+  });
+
+  for (final (size, textScale) in const [
+    (Size(392, 785), 1.8),
+    (palmaSize, palmaTextScale),
+  ]) {
+    testWidgets('header buttons grow with the text at ${size.width} dp', (
+      tester,
+    ) async {
+      final app = await UiHarness.open(
+        tester,
+        size: size,
+        textScale: textScale,
+      );
+      final l = app.strings;
+      try {
+        await app.section(LibrarySection.podcasts);
+        await app.scrollToRow(
+          app.services.library.podcast(1)!.title,
+          find.byType(PodcastList),
+        );
+        for (final label in [l.refresh, l.aboutPodcast]) {
+          final button = find.byTooltip(label);
+          final icon = find.descendant(of: button, matching: find.byType(Icon));
+          expect(tester.getSize(icon).height, closeTo(24 * textScale, 0.01));
+          expect(tester.getSize(button).shortestSide, greaterThanOrEqualTo(48));
+        }
+      } finally {
+        await app.finish();
+      }
+    });
+  }
+
+  testWidgets('an empty list of new episodes can still be pulled', (
+    tester,
+  ) async {
+    final library = _NoNewEpisodesLibrary();
+    final app = await _phone(tester, library: library);
+    try {
+      await app.section(LibrarySection.newEpisodes);
+      final list = find.byType(EpisodeList);
+      expect(find.text(app.strings.newEmpty), findsOneWidget);
+      await tester.drag(list, Offset(0, tester.getSize(list).height / 2));
+      await tester.pumpAndSettle();
+      expect(library.refreshes, 1);
     } finally {
       await app.finish();
     }
@@ -375,16 +437,16 @@ void main() {
   testWidgets(
     'unsubscribe requires confirmation and the same button restores the subscription',
     (tester) async {
-      final app = await _phone(tester);
+      final library = _StaleFeedLibrary();
+      final app = await _phone(tester, library: library);
       final l = app.strings;
-      final library = app.services.library;
       try {
         await app.section(LibrarySection.podcasts);
         await app.scrollToRow(
           library.podcast(1)!.title,
           find.byType(PodcastList),
         );
-        await app.tap(find.bySemanticsLabel(l.aboutPodcast));
+        await app.tap(find.byTooltip(l.aboutPodcast));
         expect(find.byType(AboutPodcastPage), findsOneWidget);
         await app.tapText(l.unsubscribe);
         expect(library.podcast(1)!.subscribed, isTrue);
@@ -396,6 +458,12 @@ void main() {
         await app.dialog(l.unsubscribe);
         expect(library.podcast(1)!.subscribed, isFalse);
         expect(find.text(l.resubscribe), findsOneWidget);
+        await app.back();
+        expect(find.byTooltip(l.refresh), findsNothing);
+        await tester.drag(find.byType(EpisodeList), const Offset(0, 400));
+        await tester.pumpAndSettle();
+        expect(library.refreshes, 0);
+        await app.tap(find.byTooltip(l.aboutPodcast));
         await tester.pump(const Duration(milliseconds: 601));
         await app.tapText(l.resubscribe);
         expect(library.podcast(1)!.subscribed, isTrue);
@@ -564,6 +632,11 @@ class _StaleFeedLibrary extends DemoLibrary {
   }
 
   void finishRefresh() => super.refreshFeeds();
+}
+
+class _NoNewEpisodesLibrary extends _StaleFeedLibrary {
+  @override
+  List<Episode> newEpisodes({required DateTime since}) => const [];
 }
 
 class _UpdatedNotesLibrary extends DemoLibrary {

@@ -59,7 +59,8 @@ Aplikace se do telefonů instalují mimo Google Play, takže Android Auto vyžad
   import převezme, jen pokud je fronta v EasyPodcastu prázdná. Díly, které už ve feedu nejsou,
   import založí, aby zůstala historie i počty přehraných dílů.
 - Feedy čte jen server, aplikace ne. Server je stahuje každou hodinu, podmíněně přes `ETag`
-  a `Last-Modified`, po chybách s delší prodlevou. Tlačítkem „Obnovit“ se stáhnou hned.
+  a `Last-Modified`, po chybách s delší prodlevou. Potažením seznamu dolů nebo ikonou ⟳
+  v záhlaví se stáhnou hned.
 - Zrušení odběru jen zastaví stahování feedu. Díly i jejich stav zůstanou a nové přidání stejné
   adresy odběr obnoví.
 - Seznam podcastů je řazený podle počtu přehraných dílů, po přepnutí abecedně.

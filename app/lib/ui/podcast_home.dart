@@ -567,6 +567,7 @@ class _LibraryHomeState extends State<_LibraryHome> {
     final canRefresh =
         podcast?.subscribed == true ||
         (page == null && _section == LibrarySection.newEpisodes);
+    final iconSize = headerIconSize(context);
     return EinkHeader(
       page == null ? _section.label(context) : _title(context, page),
       onBack: onBack,
@@ -576,14 +577,16 @@ class _LibraryHomeState extends State<_LibraryHome> {
       actions: [
         if (canRefresh)
           IconButton(
-            icon: Icon(Icons.refresh, semanticLabel: strings.refresh),
-            onPressed: _refresh.running
-                ? null
-                : () => _refresh.request(podcastId: podcast?.id),
+            icon: const Icon(Icons.refresh),
+            iconSize: iconSize,
+            tooltip: strings.refresh,
+            onPressed: () => _refresh.request(podcastId: podcast?.id),
           ),
         if (podcast != null)
           IconButton(
-            icon: Icon(Icons.info_outline, semanticLabel: strings.aboutPodcast),
+            icon: const Icon(Icons.info_outline),
+            iconSize: iconSize,
+            tooltip: strings.aboutPodcast,
             onPressed: () => _open(_Screen.about, podcast.id),
           ),
       ],
@@ -595,7 +598,11 @@ class _LibraryHomeState extends State<_LibraryHome> {
     final id = podcast?.id;
     if (_refresh.runningFor(id)) return strings.refreshing;
     final last = podcast == null ? _refresh.lastLoaded : podcast.lastSuccessAt;
-    if (_refresh.requestedFor(id, last)) return strings.refreshRequested;
+    // A failing feed's error box already explains the wait; keep its date.
+    if (_refresh.requestedFor(id, last) &&
+        !(podcast?.lastError?.isNotEmpty ?? false)) {
+      return strings.refreshRequested;
+    }
     if (last == null) return null;
     return DateUtils.isSameDay(last.toLocal(), DateTime.now())
         ? strings.loadedAt(clockText(strings, last))
@@ -652,7 +659,7 @@ class _LibraryHomeState extends State<_LibraryHome> {
         playback: _playback,
         onOpen: _openEpisode,
         onMenu: _openEpisodeMenu,
-        onRefresh: canRefresh ? () => _refresh.request() : null,
+        onRefresh: canRefresh ? _refresh.request : null,
         desktop: desktop,
         selectedId: _selectedEpisodeId,
         actions: [
