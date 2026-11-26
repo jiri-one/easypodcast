@@ -131,6 +131,21 @@ void main() {
     });
   }
 
+  test('a directory thumbnail is shown but not kept on disk', () async {
+    final cache = await coverCache(binding);
+    final bytes = await _coverBytes();
+    const cover = CoverImage(
+      'https://directory.example/thumbnail.png',
+      persist: false,
+    );
+    addTearDown(cover.evict);
+    await http.runWithClient(
+      () async => expect(await _imageSize(cover), const ui.Size.square(192)),
+      () => MockClient((_) async => http.Response.bytes(bytes, 200)),
+    );
+    expect(await cache.list().length, 0);
+  });
+
   test('a prefetched cover can be displayed offline', () async {
     await coverCache(binding);
     final bytes = await _coverBytes();

@@ -225,6 +225,7 @@ class _AddPodcastPageState extends State<AddPodcastPage> with ActionTapGuard {
       setState(() => _searchError = strings.directoryTooShort);
       return;
     }
+    _releaseField();
     setState(() {
       _searching = true;
       _results = null;
@@ -276,6 +277,7 @@ class _AddPodcastPageState extends State<AddPodcastPage> with ActionTapGuard {
 
   Future<void> _subscribe(String url, {bool fromDirectory = false}) async {
     final strings = context.strings;
+    _releaseField();
     setState(() {
       _adding = true;
       if (fromDirectory) {
@@ -288,7 +290,7 @@ class _AddPodcastPageState extends State<AddPodcastPage> with ActionTapGuard {
     try {
       final podcast = await widget.services.library.subscribe(url);
       if (mounted) widget.onAdded(podcast);
-    } on Exception catch (error) {
+    } on Object catch (error) {
       if (!mounted) return;
       final unavailable = error is ApiException && error.statusCode == 422;
       if (fromDirectory) {
@@ -309,6 +311,9 @@ class _AddPodcastPageState extends State<AddPodcastPage> with ActionTapGuard {
       }
     }
   }
+
+  // Closes the keyboard but keeps focus inside the page, where the Linux keys are handled.
+  void _releaseField() => FocusScope.of(context).focusedChild?.unfocus();
 
   @override
   void dispose() {

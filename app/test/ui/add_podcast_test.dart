@@ -7,6 +7,7 @@ import 'package:easypodcast/ui/account_pages.dart';
 import 'package:easypodcast/ui/eink_widgets.dart';
 import 'package:easypodcast/ui/library_views.dart';
 import 'package:easypodcast/ui/theme.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
@@ -153,17 +154,11 @@ void main() {
           expect(plus, findsOneWidget);
           expect(tester.widget<Icon>(plus).semanticLabel, l.addPodcast);
         }
-        expect(
-          tester
-              .widget<PodcastThumbnail>(
-                find.descendant(
-                  of: row,
-                  matching: find.byType(PodcastThumbnail),
-                ),
-              )
-              .imageUrl,
-          result.imageUrl,
+        final thumbnail = tester.widget<PodcastThumbnail>(
+          find.descendant(of: row, matching: find.byType(PodcastThumbnail)),
         );
+        expect(thumbnail.imageUrl, result.imageUrl);
+        expect(thumbnail.persist, isFalse);
       }
       expect(find.text(l.subscribedMark), findsOneWidget);
     } finally {
@@ -364,11 +359,17 @@ void main() {
 
   testWidgets('Linux keys still work after a search', (tester) async {
     final (app, api, _) = await _open(tester, desktopFont: font);
+    final l = app.strings;
     try {
       await tester.enterText(_fields.first, 'vlak');
-      await tester.testTextInput.receiveAction(TextInputAction.search);
-      api.searches.single.response.complete([_railway]);
+      await tester.tap(_button(l.search), kind: PointerDeviceKind.mouse);
+      api.searches.single.response.completeError(OfflineException());
       await tester.pumpAndSettle();
+      expect(find.text(l.directoryOffline), findsOneWidget);
+      expect(tester.testTextInput.isVisible, isFalse);
+      await tester.sendKeyEvent(LogicalKeyboardKey.space);
+      await tester.pump();
+      expect(tester.widget<TextField>(_fields.first).controller!.text, 'vlak');
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
       await tester.pumpAndSettle();
       expect(_page, findsNothing);

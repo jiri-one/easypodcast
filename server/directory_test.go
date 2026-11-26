@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -164,6 +165,24 @@ func TestDirectoryTransportFailures(t *testing.T) {
 			return nil, errors.New("confidential transport details")
 		})
 		expectDirectoryFailure(t, r, "directory request failed")
+	})
+	t.Run("client gone", func(t *testing.T) {
+		r := directoryRefresher(t, "https://directory.example/search")
+		r.client.Transport = feedRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return nil, req.Context().Err()
+		})
+		var logs bytes.Buffer
+		previous := slog.Default()
+		slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+		defer slog.SetDefault(previous)
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		w := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodGet, "/api/directory?q=listener-query", nil)
+		newAPI(store{}, r).searchDirectory(w, request.WithContext(ctx))
+		if w.Code != http.StatusBadGateway || logs.Len() != 0 {
+			t.Fatalf("client gone: %d, log %q", w.Code, logs.String())
+		}
 	})
 	t.Run("private address", func(t *testing.T) {
 		t.Setenv("EASYPODCAST_ALLOW_PRIVATE_FEEDS", "false")
