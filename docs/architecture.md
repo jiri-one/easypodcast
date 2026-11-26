@@ -192,6 +192,37 @@ id under `unknown`; the client then drops the pending change. A body over 1 MiB 
 - `settings.dart`: `Settings` (server URL, device name, skip back/forward seconds, speed, keep
   screen updates sparse on e-ink) persisted in `shared_preferences`.
 
+### Wiring
+
+`main.dart` (orchestrator) builds the app from factories that the owners provide with exactly these
+names and signatures:
+
+```dart
+final settings = await Settings.load();
+final data = await openDataLayer(settings);                 // lib/data/data_layer.dart (WP-D)
+final downloads = await openDownloads(                      // lib/downloads/downloads.dart (WP-P)
+    library: data.library, settings: settings);
+final player = await openPlayer(                            // lib/player/player.dart (WP-P)
+    library: data.library, sync: data.sync, downloads: downloads, settings: settings);
+await data.sync.start();
+runApp(EasyPodcastApp(services: AppServices(               // lib/ui/app_root.dart (WP-U)
+    settings: settings, api: data.api, library: data.library, sync: data.sync,
+    player: player, downloads: downloads)));
+```
+
+- WP-D: `class DataLayer { final ApiClient api; final Library library; final SyncService sync; }`
+  and `Future<DataLayer> openDataLayer(Settings settings)`.
+- WP-P: `Future<DownloadService> openDownloads({required Library library, required Settings settings})`
+  and `Future<PlayerController> openPlayer({required Library library, required SyncService sync,
+  required DownloadService downloads, required Settings settings})`. The player plays the local file
+  when `downloads.localFileOf(id)` is set, otherwise the enclosure URL; it calls
+  `sync.freshStateBeforePlay`, then `library.prepareForPlayback`, reports through
+  `library.recordPosition` and `library.markCompleted`, and tells `sync.setPlayingEpisode`. The
+  download service listens to `library.finishedEpisodes` and deletes those files when
+  `settings.deleteAfterPlayed` is on (dismissed episodes always).
+- WP-U: `EasyPodcastApp` plus `lib/ui/demo/demo_main.dart`, an entry point with fake services and
+  invented content, so the UI runs without a server: `flutter run -d linux -t lib/ui/demo/demo_main.dart`.
+
 ## Work packages
 
 - **WP-S, server** (Codex): everything under `server/` and the server CI. Part 2, after the core
