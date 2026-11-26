@@ -435,6 +435,10 @@ class _SkipControl extends StatelessWidget {
       onPressed: onPressed,
       style: const ButtonStyle(
         minimumSize: WidgetStatePropertyAll(Size(64, 64)),
+        // Narrow e-ink phones need the room for "−15 s" in large text.
+        padding: WidgetStatePropertyAll(
+          EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+        ),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,

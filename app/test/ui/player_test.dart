@@ -21,7 +21,7 @@ void main() {
       final library = _PositionLibrary();
       final app = await UiHarness.open(tester, library: library);
       final player = app.services.player;
-      final clock = find.byKey(PlaybackTimeline.previewKey);
+      final clock = find.byKey(PlaybackTimeline.positionKey);
       try {
         await _start(app);
         await player.pause();
@@ -31,6 +31,8 @@ void main() {
         final track = find.byKey(PlaybackTimeline.trackKey);
         final area = tester.getRect(track);
         final original = player.position.value;
+        final shown = positionText(original, padMinutes: true);
+        expect(tester.widget<Text>(clock).data, shown);
         await tester.tapAt(area.centerLeft + const Offset(24, 0));
         await tester.pumpAndSettle();
         expect(player.position.value, original);
@@ -39,10 +41,10 @@ void main() {
         final cancelled = await tester.startGesture(area.center);
         await cancelled.moveTo(area.centerLeft);
         await tester.pump();
-        expect(tester.widget<Text>(clock).data, isNotEmpty);
+        expect(tester.widget<Text>(clock).data, isNot(shown));
         await cancelled.cancel();
         await tester.pumpAndSettle();
-        expect(tester.widget<Text>(clock).data, isEmpty);
+        expect(tester.widget<Text>(clock).data, shown);
         expect(library.positions, isEmpty);
 
         final drag = await tester.startGesture(area.center);
@@ -51,7 +53,7 @@ void main() {
         );
         await tester.pump();
         final first = tester.widget<Text>(clock).data;
-        expect(first, isNotEmpty);
+        expect(first, isNot(shown));
         await drag.moveTo(
           Offset(area.left + area.width * 0.22, area.center.dy),
         );
@@ -65,7 +67,7 @@ void main() {
         await tester.pumpAndSettle();
         expect(library.positions, [player.position.value]);
         expect(positionText(player.position.value, padMinutes: true), second);
-        expect(tester.widget<Text>(clock).data, isEmpty);
+        expect(tester.widget<Text>(clock).data, second);
       } finally {
         await app.finish();
       }

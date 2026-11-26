@@ -4,8 +4,10 @@ import 'package:easypodcast/core/api.dart';
 import 'package:easypodcast/core/models.dart';
 import 'package:easypodcast/core/services.dart';
 import 'package:easypodcast/ui/eink_widgets.dart';
+import 'package:easypodcast/ui/episode_page.dart';
 import 'package:easypodcast/ui/library_views.dart';
 import 'package:easypodcast/ui/podcast_search.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -16,7 +18,8 @@ import 'ui_test_support.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-  setUpAll(loadTestFonts);
+  late String font;
+  setUpAll(() async => font = await loadTestFonts());
 
   test('title matching folds case and accents and requires every word', () {
     final episodes = [
@@ -57,7 +60,9 @@ void main() {
       await tester.pump();
       expect(_episodeIds(tester), [102, 108, 114, 120]);
       await tester.pump(const Duration(milliseconds: 401));
-      expect(api.requests, isEmpty);
+      api.requests.single.$3.completeError(OfflineException());
+      await tester.pump();
+      expect(_episodeIds(tester), [102, 108, 114, 120]);
 
       await app.tap(find.byTooltip(l.clearSearch));
       expect(field, findsNothing);
@@ -66,6 +71,11 @@ void main() {
       await tester.enterText(field, 'no such episode');
       await tester.pump();
       expect(_episodeIds(tester), isEmpty);
+      expect(find.text(l.syncLoading), findsOneWidget);
+      expect(find.text(l.noMatchingEpisodes), findsNothing);
+      await tester.pump(const Duration(milliseconds: 400));
+      api.requests.last.$3.complete(const []);
+      await tester.pump();
       final empty = find.text(l.noMatchingEpisodes);
       if (empty.hitTestable().evaluate().isEmpty) {
         await app.scrollTo(empty, find.byType(EpisodeList));
@@ -130,12 +140,44 @@ void main() {
       await app.finish();
     }
   });
+
+  testWidgets('Escape in the search field closes only the search on Linux', (
+    tester,
+  ) async {
+    final (app, _) = await _openPodcast(tester, desktopFont: font);
+    final field = find.byType(TextField);
+    try {
+      await app.row(app.strings.searchThisPodcast);
+      await tester.enterText(field, 'vlak');
+      await tester.pump();
+      final episode = app.services.library
+          .episodesOf(1)
+          .firstWhere((episode) => episode.id == 101);
+      await app.tap(find.byKey(EpisodeRowKey(episode)));
+      expect(find.byType(EpisodePage), findsOneWidget);
+      await app.tap(field);
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(field, findsNothing);
+      expect(
+        tester.widget<EpisodePage>(find.byType(EpisodePage)).episode.id,
+        101,
+      );
+    } finally {
+      await app.finish();
+    }
+  });
 }
 
-Future<(UiHarness, _SearchApi)> _openPodcast(WidgetTester tester) async {
+Future<(UiHarness, _SearchApi)> _openPodcast(
+  WidgetTester tester, {
+  String? desktopFont,
+}) async {
   late _SearchApi api;
   final app = await UiHarness.open(
     tester,
+    size: desktopFont == null ? const Size(360, 720) : const Size(1000, 700),
+    desktopFont: desktopFont,
     configure: (demo) => AppServices(
       settings: demo.settings,
       library: demo.library,

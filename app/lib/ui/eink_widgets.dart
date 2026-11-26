@@ -297,13 +297,26 @@ class EinkButton extends StatelessWidget {
         ),
       );
     }
+    Widget line(String text) {
+      final label = Text(text, textAlign: TextAlign.center);
+      if (icon == null) return label;
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, size: 20),
+          const SizedBox(width: 6),
+          Flexible(child: label),
+        ],
+      );
+    }
+
     final text = alternatives.isEmpty
-        ? Text(label, textAlign: TextAlign.center)
+        ? line(label)
         : IndexedStack(
             alignment: Alignment.center,
             children: [
-              for (final text in {label, ...alternatives})
-                Text(text, textAlign: TextAlign.center),
+              for (final text in {label, ...alternatives}) line(text),
             ],
           );
     final Widget content;
@@ -338,16 +351,6 @@ class EinkButton extends StatelessWidget {
               child: text,
             ),
           ),
-        ],
-      );
-    } else if (icon case final IconData icon) {
-      content = Row(
-        mainAxisSize: MainAxisSize.min,
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(icon, size: 20),
-          const SizedBox(width: 6),
-          Flexible(child: text),
         ],
       );
     } else {

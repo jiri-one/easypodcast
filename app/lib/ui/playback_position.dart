@@ -127,7 +127,7 @@ class PlaybackTimeline extends StatefulWidget {
   });
 
   static const trackKey = ValueKey('seek-track');
-  static const previewKey = ValueKey('seek-preview');
+  static const positionKey = ValueKey('playback-position');
 
   final PlaybackActions playback;
   final Episode episode;
@@ -178,10 +178,10 @@ class _PlaybackTimelineState extends State<PlaybackTimeline> {
     builder: (context, elapsed, duration) {
       final known = duration != null && duration > Duration.zero;
       final canSeek = known && widget.playback.canSeek(widget.episode.id);
-      final remaining = known
-          ? (elapsed >= duration ? Duration.zero : duration - elapsed)
-          : null;
       final displayed = _preview ?? elapsed;
+      final remaining = known
+          ? (displayed >= duration ? Duration.zero : duration - displayed)
+          : null;
       const step = Duration(seconds: 10);
       final earlier = displayed < step ? Duration.zero : displayed - step;
       final later = known && displayed + step > duration
@@ -259,37 +259,26 @@ class _PlaybackTimelineState extends State<PlaybackTimeline> {
               ),
             ),
           ),
-          Row(
-            spacing: 4,
-            crossAxisAlignment: CrossAxisAlignment.baseline,
-            textBaseline: TextBaseline.alphabetic,
-            children: [
-              Expanded(
-                child: Text(
-                  positionText(elapsed, padMinutes: true),
+          // Both times keep their full width so hour-long values never wrap.
+          SizedBox(
+            width: double.infinity,
+            child: Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              spacing: 8,
+              children: [
+                Text(
+                  positionText(displayed, padMinutes: true),
+                  key: PlaybackTimeline.positionKey,
                   style: rowTitleStyle,
                 ),
-              ),
-              Expanded(
-                child: Text(
-                  _preview == null
-                      ? ''
-                      : positionText(displayed, padMinutes: true),
-                  key: PlaybackTimeline.previewKey,
-                  textAlign: TextAlign.center,
-                  style: headingStyle,
-                ),
-              ),
-              Expanded(
-                child: Text(
+                Text(
                   remaining == null
                       ? '—'
                       : '−${positionText(remaining, padMinutes: true)}',
-                  textAlign: TextAlign.end,
                   style: rowTitleStyle,
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ],
       );

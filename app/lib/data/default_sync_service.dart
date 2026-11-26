@@ -406,18 +406,25 @@ class DefaultSyncService extends SyncService with WidgetsBindingObserver {
 
   @override
   Future<void> sendPending({Duration? timeout}) async {
-    if (!isLoggedIn ||
-        (!_library.hasPending && _send.running == null) ||
-        (timeout != null && timeout <= Duration.zero)) {
-      return;
-    }
-    final sending = _sendPending(timeout: timeout, sendOnly: true);
-    _updateStatus();
-    // A shared send may have started with a longer deadline.
-    if (timeout == null) {
-      await sending;
-    } else {
-      await sending.timeout(timeout, onTimeout: () {});
+    final watch = Stopwatch()..start();
+    // A send already running may fail or stop at its own deadline before it
+    // carries this change, so one own attempt follows it.
+    for (var round = 0; round < 2; round++) {
+      final remaining = timeout == null ? null : timeout - watch.elapsed;
+      if (!isLoggedIn ||
+          (!_library.hasPending && _send.running == null) ||
+          (remaining != null && remaining <= Duration.zero)) {
+        return;
+      }
+      final joined = _send.running != null;
+      final sending = _sendPending(timeout: remaining, sendOnly: true);
+      _updateStatus();
+      if (remaining == null) {
+        await sending;
+      } else {
+        await sending.timeout(remaining, onTimeout: () {});
+      }
+      if (!joined) return;
     }
   }
 

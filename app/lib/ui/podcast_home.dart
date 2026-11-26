@@ -7,7 +7,6 @@ import 'package:material_ui/material_ui.dart';
 
 import '../core/models.dart';
 import '../core/services.dart';
-import '../core/sync.dart';
 import 'account_pages.dart';
 import 'app_root.dart';
 import 'downloads_page.dart';
@@ -78,7 +77,8 @@ class _LibraryHomeState extends State<_LibraryHome> {
   int? _searchPodcastId;
   Timer? _searchTimer;
   List<String> _searchWords = const [];
-  Set<int> _descriptionMatches = const {};
+  // Null while the server searches the descriptions.
+  Set<int>? _descriptionMatches = const {};
 
   LibrarySection _section = LibrarySection.inProgress;
   bool _menuOpen = false;
@@ -201,24 +201,24 @@ class _LibraryHomeState extends State<_LibraryHome> {
     final id = _searchPodcastId;
     if (id == null) return;
     final words = podcastSearchWords(input);
+    final askServer =
+        words.length > 1 || (words.isNotEmpty && words.single.runes.length > 1);
     _searchTimer?.cancel();
     setState(() {
       _searchWords = words;
-      _descriptionMatches = const {};
+      _descriptionMatches = askServer ? null : const {};
     });
-    if (words.isEmpty || (words.length == 1 && words.single.runes.length < 2)) {
-      return;
-    }
-    final services = widget.services;
+    if (!askServer) return;
+    final api = widget.services.api;
     _searchTimer = Timer(const Duration(milliseconds: 400), () async {
-      if (services.sync.status.value.phase == SyncPhase.offline) return;
+      var matches = const <int>{};
       try {
-        final matches = await services.api.searchPodcast(id, input.trim());
-        if (mounted && identical(_searchWords, words)) {
-          setState(() => _descriptionMatches = matches.toSet());
-        }
+        matches = (await api.searchPodcast(id, input.trim())).toSet();
       } on Exception {
         // Local matches stay available when the server cannot answer.
+      }
+      if (mounted && identical(_searchWords, words)) {
+        setState(() => _descriptionMatches = matches);
       }
     });
   }
@@ -226,7 +226,11 @@ class _LibraryHomeState extends State<_LibraryHome> {
   List<Episode> _podcastEpisodes(int id) {
     final episodes = widget.services.library.episodesOf(id);
     return _searchPodcastId == id
-        ? matchPodcastEpisodes(episodes, _searchWords, _descriptionMatches)
+        ? matchPodcastEpisodes(
+            episodes,
+            _searchWords,
+            _descriptionMatches ?? const {},
+          )
         : episodes;
   }
 
@@ -255,7 +259,11 @@ class _LibraryHomeState extends State<_LibraryHome> {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
     final key = event.logicalKey;
     if (key == LogicalKeyboardKey.escape && !_atHome) {
-      _back();
+      if (_searchFocus.hasFocus) {
+        setState(_closeSearch);
+      } else {
+        _back();
+      }
       return KeyEventResult.handled;
     }
     final keyboard = HardwareKeyboard.instance;
@@ -642,7 +650,9 @@ class _LibraryHomeState extends State<_LibraryHome> {
       desktop: desktop,
       selectedId: last?.screen == _Screen.episode ? last?.id : null,
       emptyMessage: searching && _searchWords.isNotEmpty
-          ? strings.noMatchingEpisodes
+          ? (_descriptionMatches == null
+                ? strings.syncLoading
+                : strings.noMatchingEpisodes)
           : null,
       actions: [
         if (searching)

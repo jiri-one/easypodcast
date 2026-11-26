@@ -153,6 +153,32 @@ void main() {
     expect(phone.store.meta(MetaKey.lastSync), formatTime(clock.now));
   });
 
+  test('sendPending tries once more when the send it joined fails', () async {
+    final phone = await device(
+      'phone',
+      initialBackoff: const Duration(minutes: 1),
+    );
+    final started = Completer<void>(), release = Completer<void>();
+    var failNext = true;
+    phone.api.beforePush = () async {
+      if (!failNext) return;
+      failNext = false;
+      started.complete();
+      await release.future;
+      throw OfflineException('connection reset');
+    };
+    final before = phone.api.pushCalls;
+    later();
+    await phone.library.recordPosition(episodes[1], const Duration(minutes: 2));
+    await started.future.timeout(const Duration(seconds: 2));
+    final pausing = phone.sync.sendPending(timeout: const Duration(seconds: 2));
+    release.complete();
+    await pausing;
+    expect(phone.api.pushCalls, before + 2);
+    expect(server.states[episodes[1]]!.positionMs, 120000);
+    expect(phone.library.pendingCount, 0);
+  });
+
   test('status and queue commands force a send even when the preceding write failed', () async {
     const retry = Duration(seconds: 30);
     final phone = await device(
