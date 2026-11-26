@@ -2,7 +2,10 @@ import 'dart:async';
 
 import 'package:flutter/widgets.dart';
 
+import 'core/downloads.dart';
+import 'core/library.dart';
 import 'core/models.dart';
+import 'core/player.dart';
 import 'core/services.dart';
 import 'core/settings.dart';
 import 'data/data_layer.dart';
@@ -25,33 +28,41 @@ Future<void> main() async {
     downloads: downloads,
     settings: settings,
   );
-  final services = AppServices(
-    settings: settings,
-    api: data.api,
+  prefetchEpisodeCovers(
     library: data.library,
-    sync: data.sync,
-    player: player,
     downloads: downloads,
+    player: player,
   );
-  prefetchEpisodeCovers(services);
   await data.sync.start();
-  runApp(EasyPodcastApp(services: services));
+  runApp(
+    EasyPodcastApp(
+      services: AppServices(
+        settings: settings,
+        api: data.api,
+        library: data.library,
+        sync: data.sync,
+        player: player,
+        downloads: downloads,
+      ),
+    ),
+  );
 }
 
-void prefetchEpisodeCovers(
-  AppServices services, {
+/// Keeps the cover the player will show on disk for downloaded and current
+/// episodes, so it appears at once and offline.
+void prefetchEpisodeCovers({
+  required Library library,
+  required DownloadService downloads,
+  required PlayerController player,
   Future<void> Function(String url) fetch = CoverImage.prefetch,
 }) {
-  final AppServices(:library, :downloads, :player) = services;
-
   void prefetch(Episode? episode) {
     if (episode == null) return;
-    final url = validCoverUrl(episode.imageUrl);
-    if (url == null ||
-        url == validCoverUrl(library.podcast(episode.podcastId)?.imageUrl)) {
-      return;
-    }
-    unawaited(fetch(url));
+    final url = coverUrls(
+      episode,
+      library.podcast(episode.podcastId),
+    ).firstOrNull;
+    if (url != null) unawaited(fetch(url));
   }
 
   var downloaded = <int>{};

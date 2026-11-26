@@ -3,6 +3,8 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import '../core/models.dart';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
 import 'package:http/http.dart' as http;
@@ -42,6 +44,12 @@ String? validCoverUrl(String? url) {
       ? trimmed
       : null;
 }
+
+/// The episode's own cover first, then the podcast's.
+List<String> coverUrls(Episode episode, Podcast? podcast) => {
+  ?validCoverUrl(episode.imageUrl),
+  ?validCoverUrl(podcast?.imageUrl),
+}.toList();
 
 class CoverImage extends ImageProvider<CoverImage> {
   const CoverImage(this.url);

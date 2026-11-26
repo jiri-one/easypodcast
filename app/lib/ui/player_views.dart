@@ -218,7 +218,7 @@ class PlayerPage extends StatelessWidget {
     final next = services.library.queue
         .where((item) => item.id != episode.id)
         .firstOrNull;
-    final covers = _coverUrls(episode, podcast);
+    final covers = coverUrls(episode, podcast);
     final playing = playback.playing(episode.id);
     final playText = playLabel(context, playback, episode);
     final player = services.player;
@@ -380,11 +380,6 @@ class PlayerPage extends StatelessWidget {
   }
 }
 
-List<String> _coverUrls(Episode episode, Podcast? podcast) => {
-  ?validCoverUrl(episode.imageUrl),
-  ?validCoverUrl(podcast?.imageUrl),
-}.toList();
-
 class _PlayerCover extends StatelessWidget {
   const _PlayerCover({required this.urls, this.bottomGap = 0});
 
@@ -542,7 +537,7 @@ class DesktopPlayer extends StatelessWidget {
         einkButtonFontSize;
     final covers = episode == null
         ? const <String>[]
-        : _coverUrls(episode, podcast);
+        : coverUrls(episode, podcast);
     final buttons = [
       EinkButton(
         strings.skipBackValue(settings.skipBackSeconds),

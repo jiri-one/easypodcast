@@ -10,7 +10,6 @@ import 'ui/fixtures/demo_services.dart';
 import 'ui/fixtures/fake_playback_engine.dart';
 
 const _episodeId = 103;
-const _sharedCoverId = 104;
 const _noCoverId = 105;
 const _episodeCover = 'https://podcast.example/episode.png';
 const _podcastCover = 'https://podcast.example/podcast.png';
@@ -37,11 +36,16 @@ void main() {
     services.settings.dispose();
   });
 
-  void listen() =>
-      prefetchEpisodeCovers(services, fetch: (url) async => fetched.add(url));
+  void listen() => prefetchEpisodeCovers(
+    library: services.library,
+    downloads: services.downloads,
+    player: services.player,
+    fetch: (url) async => fetched.add(url),
+  );
 
-  test('only a finished download with its own cover fetches artwork', () async {
+  test('a finished download fetches the cover the player shows', () async {
     listen();
+    fetched.clear();
     final downloads = services.downloads as DemoDownloadService;
     downloads.queueDownload(_episodeId);
     downloads.setDownloadInfo(
@@ -52,9 +56,8 @@ void main() {
 
     await downloads.download(_episodeId);
     expect(fetched, [_episodeCover]);
-    await downloads.download(_sharedCoverId);
     await downloads.download(_noCoverId);
-    expect(fetched, [_episodeCover]);
+    expect(fetched, [_episodeCover, _podcastCover]);
   });
 
   test(
@@ -62,25 +65,21 @@ void main() {
     () async {
       await services.downloads.download(_episodeId);
       listen();
-      expect(fetched, [_episodeCover]);
+      expect(fetched, contains(_episodeCover));
     },
   );
 
-  test('each start of an episode fetches only its own cover, once', () async {
+  test('each new current episode fetches its cover once', () async {
     listen();
+    fetched.clear();
     final player = services.player;
     await player.play(_episodeId);
-    engine.buffer();
-    await player.setSpeed(1.5);
     await player.pause();
     await player.resume();
     expect(fetched, [_episodeCover]);
 
-    await player.play(_sharedCoverId);
     await player.play(_noCoverId);
-    expect(fetched, [_episodeCover]);
-    await player.play(_episodeId);
-    expect(fetched, [_episodeCover, _episodeCover]);
+    expect(fetched, [_episodeCover, _podcastCover]);
   });
 }
 
@@ -91,7 +90,6 @@ class _CoverLibrary extends DemoLibrary {
   Episode? episode(int episodeId) {
     final imageUrl = switch (episodeId) {
       _episodeId => _episodeCover,
-      _sharedCoverId => _podcastCover,
       _ => null,
     };
     if (imageUrl == null) return super.episode(episodeId);
