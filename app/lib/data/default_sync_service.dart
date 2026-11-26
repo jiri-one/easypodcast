@@ -11,6 +11,13 @@ import 'http_api_client.dart';
 import 'local_store.dart';
 import 'sqflite_library.dart';
 
+typedef _RejectedVersion = ({
+  DateTime updatedAt,
+  Duration backoff,
+  Duration retryAt,
+  String error,
+});
+
 class DefaultSyncService with WidgetsBindingObserver implements SyncService {
   DefaultSyncService({
     required this._api,
@@ -37,7 +44,8 @@ class DefaultSyncService with WidgetsBindingObserver implements SyncService {
       ),
     );
     library.onLocalChange = _onLocalChange;
-    library.refreshQueueBeforeEdit = _refreshQueueBeforeEdit;
+    library.onPendingSend = () => _request(force: true);
+    library.refreshStatesAndQueue = _refreshStatesAndQueue;
   }
 
   final ApiClient _api;
@@ -69,8 +77,11 @@ class DefaultSyncService with WidgetsBindingObserver implements SyncService {
   Future<void>? _running;
   Future<void>? _sending;
   Timer? _retryTimer;
+  Timer? _rejectedRetryTimer;
   Timer? _pullTimer;
   Duration? _backoff;
+  final _elapsed = Stopwatch()..start();
+  final _rejected = <int?, _RejectedVersion>{};
 
   @override
   ValueListenable<SyncStatus> get status => _status;
@@ -82,7 +93,9 @@ class DefaultSyncService with WidgetsBindingObserver implements SyncService {
   Duration? get currentBackoff => _backoff;
 
   @visibleForTesting
-  bool get retryScheduled => _retryTimer?.isActive ?? false;
+  bool get retryScheduled =>
+      (_retryTimer?.isActive ?? false) ||
+      (_rejectedRetryTimer?.isActive ?? false);
 
   @override
   Future<void> login({
@@ -192,10 +205,16 @@ class DefaultSyncService with WidgetsBindingObserver implements SyncService {
   Future<void> freshStateBeforePlay(int episodeId) async {
     if (!isLoggedIn || _loggingOut) return;
     final session = _session;
+    final watch = Stopwatch()..start();
     try {
+      await _flushBeforeRead(session, freshStateTimeout, watch);
+      final remaining = freshStateTimeout - watch.elapsed;
+      if (remaining <= Duration.zero || !_inSession(session) || _loggingOut) {
+        return;
+      }
       final remote = await _api
-          .episodeState(episodeId, timeout: freshStateTimeout)
-          .timeout(freshStateTimeout);
+          .episodeState(episodeId, timeout: remaining)
+          .timeout(remaining);
       if (remote == null ||
           remote.episodeId != episodeId ||
           !_inSession(session) ||
@@ -207,6 +226,8 @@ class DefaultSyncService with WidgetsBindingObserver implements SyncService {
       if (e.statusCode == 401 && _inSession(session)) handleUnauthorized();
     } on Object {
       // Offline or slow: playback starts from the local state.
+    } finally {
+      _kick();
     }
   }
 
@@ -258,6 +279,14 @@ class DefaultSyncService with WidgetsBindingObserver implements SyncService {
       _forceWanted = true;
       _retryTimer?.cancel();
       _retryTimer = null;
+      _rejected.updateAll(
+        (_, version) => (
+          updatedAt: version.updatedAt,
+          backoff: version.backoff,
+          retryAt: Duration.zero,
+          error: version.error,
+        ),
+      );
     }
     _kick();
   }
@@ -265,7 +294,10 @@ class DefaultSyncService with WidgetsBindingObserver implements SyncService {
   void _kick() {
     if (!_started || !isLoggedIn || _loggingOut || _running != null) return;
     if (_retryTimer?.isActive ?? false) return;
-    if (!_pullWanted && !_library.hasPending) return;
+    if (!_pullWanted && !_hasSendablePending) {
+      _scheduleRejectedRetry();
+      return;
+    }
     final session = _session;
     _running = Future<void>.microtask(() => _run(session)).whenComplete(() {
       if (session != _session) return;
@@ -277,7 +309,7 @@ class DefaultSyncService with WidgetsBindingObserver implements SyncService {
   Future<void> _run(int session) async {
     while (_started && _inSession(session) && !_loggingOut) {
       _forceWanted = false;
-      if (_library.hasPending) {
+      if (_sending != null || _hasSendablePending) {
         _setStatus(SyncPhase.syncing);
         try {
           await _sendPending();
@@ -301,7 +333,12 @@ class DefaultSyncService with WidgetsBindingObserver implements SyncService {
         }
         continue;
       }
-      _setStatus(SyncPhase.idle);
+      _pruneRejected();
+      if (_rejected.isEmpty) {
+        _setStatus(SyncPhase.idle);
+      } else {
+        _setStatus(SyncPhase.error, error: _rejected.values.first.error);
+      }
       return;
     }
   }
@@ -314,21 +351,114 @@ class DefaultSyncService with WidgetsBindingObserver implements SyncService {
   }
 
   Future<void> _push(int session, {Duration? timeout}) async {
-    final changes = _library.pendingChanges();
-    final request = _api.pushState(
-      episodes: changes.states,
-      queue: changes.queue,
-    );
-    final result = await (timeout == null ? request : request.timeout(timeout));
-    if (!_inSession(session)) return;
-    final missing = await _library.applyPushResult(
+    final changes = _sendableChanges();
+    if (changes.states.isEmpty && changes.queue == null) return;
+    final watch = timeout == null ? null : (Stopwatch()..start());
+    await _pushBatch(
+      session,
       changes.states,
       changes.queue,
-      result,
+      timeLeft: watch == null ? null : () => timeout! - watch.elapsed,
     );
+  }
+
+  Future<void> _pushBatch(
+    int session,
+    List<EpisodeState> states,
+    QueueState? queue, {
+    Duration Function()? timeLeft,
+  }) async {
+    if (!_inSession(session)) return;
+    final remaining = timeLeft?.call();
+    if (remaining != null && remaining <= Duration.zero) {
+      throw TimeoutException('State send deadline expired');
+    }
+    final StatePushResult result;
+    try {
+      final request = _api.pushState(episodes: states, queue: queue);
+      result = await (remaining == null ? request : request.timeout(remaining));
+    } on ApiException catch (error) {
+      if (error.statusCode != 400) rethrow;
+      if (!_inSession(session)) return;
+      final count = states.length + (queue == null ? 0 : 1);
+      if (count == 1) {
+        _deferRejected(
+          states.firstOrNull?.episodeId,
+          queue?.updatedAt ?? states.single.updatedAt,
+          error.message,
+        );
+      } else {
+        final middle = count ~/ 2;
+        await _pushBatch(
+          session,
+          states.sublist(0, middle),
+          null,
+          timeLeft: timeLeft,
+        );
+        await _pushBatch(
+          session,
+          states.sublist(middle),
+          queue,
+          timeLeft: timeLeft,
+        );
+      }
+      return;
+    }
+    if (!_inSession(session)) return;
+    final missing = await _library.applyPushResult(states, queue, result);
     if (!_inSession(session)) return;
     if (_failedSinceSuccess || missing) _pullWanted = true;
     await _succeeded();
+  }
+
+  ({List<EpisodeState> states, QueueState? queue}) _sendableChanges({
+    int maxStates = 2000,
+  }) {
+    final now = _elapsed.elapsed;
+    return _library.pendingChanges(
+      maxStates: maxStates,
+      include: (id, at) {
+        final rejected = _rejected[id];
+        return rejected == null ||
+            !rejected.updatedAt.isAtSameMomentAs(at) ||
+            rejected.retryAt <= now;
+      },
+    );
+  }
+
+  bool get _hasSendablePending {
+    final changes = _sendableChanges(maxStates: 1);
+    return changes.states.isNotEmpty || changes.queue != null;
+  }
+
+  void _deferRejected(int? id, DateTime at, String error) {
+    if (!_library.hasPendingVersion(id, at)) return;
+    final rejected = _rejected[id];
+    final repeats = rejected != null && rejected.updatedAt.isAtSameMomentAs(at);
+    final backoff = _nextBackoff(repeats ? rejected.backoff : null);
+    _rejected[id] = (
+      updatedAt: at,
+      backoff: backoff,
+      retryAt: _elapsed.elapsed + backoff,
+      error: error,
+    );
+    if (!repeats) _pullWanted = true;
+  }
+
+  void _pruneRejected() => _rejected.removeWhere(
+    (id, version) => !_library.hasPendingVersion(id, version.updatedAt),
+  );
+
+  void _scheduleRejectedRetry() {
+    _rejectedRetryTimer?.cancel();
+    _rejectedRetryTimer = null;
+    _pruneRejected();
+    Duration? next;
+    for (final version in _rejected.values) {
+      if (next == null || version.retryAt < next) next = version.retryAt;
+    }
+    if (next == null) return;
+    _rejectedRetryTimer = Timer(next - _elapsed.elapsed, _kick);
   }
 
   Future<void> _flushPending(
@@ -336,37 +466,51 @@ class DefaultSyncService with WidgetsBindingObserver implements SyncService {
     Duration timeout,
     Stopwatch watch,
   ) async {
-    while (_inSession(session) && _library.hasPending) {
+    while (_inSession(session) && (_sending != null || _hasSendablePending)) {
       final remaining = timeout - watch.elapsed;
       if (remaining <= Duration.zero) return;
       await _sendPending(timeout: remaining).timeout(remaining);
     }
   }
 
-  Future<void> _refreshQueueBeforeEdit() async {
-    if (!isLoggedIn || _loggingOut) return;
+  Future<void> _flushBeforeRead(
+    int session,
+    Duration timeout,
+    Stopwatch watch,
+  ) async {
+    try {
+      await _flushPending(session, timeout, watch);
+    } on ApiException catch (e) {
+      if (e.statusCode == 401) rethrow;
+    } on OfflineException {
+      // A failed write can leave the server readable.
+      return;
+    } on FormatException {
+      return;
+    }
+  }
+
+  Future<StateSnapshot?> _refreshStatesAndQueue() async {
+    if (!isLoggedIn || _loggingOut) return null;
     final session = _session;
     final watch = Stopwatch()..start();
     try {
-      try {
-        await _flushPending(session, queueRefreshTimeout, watch);
-      } on ApiException catch (e) {
-        // A rejected write can leave the server's queue readable.
-        if (e.statusCode == 401) rethrow;
-      }
+      await _flushBeforeRead(session, queueRefreshTimeout, watch);
       final remaining = queueRefreshTimeout - watch.elapsed;
       if (remaining <= Duration.zero || !_inSession(session) || _loggingOut) {
-        return;
+        return null;
       }
       final snapshot = await _api.state().timeout(remaining);
-      if (!_inSession(session) || _loggingOut) return;
+      if (!_inSession(session) || _loggingOut) return null;
       await _applyRemote(session, snapshot.episodes, snapshot.queue);
+      return snapshot;
     } on ApiException catch (e) {
       if (e.statusCode == 401 && _inSession(session)) handleUnauthorized();
+      return null;
     } on OfflineException {
-      // A queue edit can use the cached state when the server is unreachable.
+      return null;
     } on TimeoutException {
-      // A late response must not affect the edit.
+      return null;
     } finally {
       _kick();
     }
@@ -427,13 +571,17 @@ class DefaultSyncService with WidgetsBindingObserver implements SyncService {
       );
     }
     if (_forceWanted || _loggingOut || !isLoggedIn) return;
-    final backoff = _backoff == null ? initialBackoff : _backoff! * 2;
-    _backoff = backoff > maxBackoff ? maxBackoff : backoff;
+    _backoff = _nextBackoff(_backoff);
     _retryTimer?.cancel();
     _retryTimer = Timer(_backoff!, () {
       _retryTimer = null;
       _kick();
     });
+  }
+
+  Duration _nextBackoff(Duration? previous) {
+    final backoff = previous == null ? initialBackoff : previous * 2;
+    return backoff > maxBackoff ? maxBackoff : backoff;
   }
 
   void _startPullTimer() {
@@ -446,6 +594,8 @@ class DefaultSyncService with WidgetsBindingObserver implements SyncService {
   void _cancelTimers() {
     _retryTimer?.cancel();
     _retryTimer = null;
+    _rejectedRetryTimer?.cancel();
+    _rejectedRetryTimer = null;
     _pullTimer?.cancel();
     _pullTimer = null;
   }
@@ -459,6 +609,7 @@ class DefaultSyncService with WidgetsBindingObserver implements SyncService {
     _forceWanted = false;
     _running = null;
     _sending = null;
+    _rejected.clear();
   }
 
   void _setStatus(SyncPhase phase, {String? error}) {
@@ -481,7 +632,8 @@ class DefaultSyncService with WidgetsBindingObserver implements SyncService {
   void dispose() {
     _endSessionWork();
     _library.onLocalChange = null;
-    _library.refreshQueueBeforeEdit = null;
+    _library.onPendingSend = null;
+    _library.refreshStatesAndQueue = null;
     if (_observing) {
       WidgetsBinding.instance.removeObserver(this);
       _observing = false;

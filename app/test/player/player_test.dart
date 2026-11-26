@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:easypodcast/core/api.dart';
 import 'package:easypodcast/core/downloads.dart';
 import 'package:easypodcast/core/library.dart';
 import 'package:easypodcast/core/models.dart';
@@ -9,6 +10,9 @@ import 'package:easypodcast/player/player.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+
+import '../data/fake_server.dart';
 
 const _first = Episode(
   id: 1,
@@ -73,7 +77,7 @@ void main() {
     openPlayer();
     await player.play(_first.id);
 
-    expect(calls, ['refresh:1', 'prepare:1', 'load', 'play', 'playing:1']);
+    expect(calls, ['refresh:1', 'load', 'play', 'playing:1']);
     expect(engine.uri, Uri.file('/downloads/episode.mp3'));
     expect(engine.position, const Duration(seconds: 10));
 
@@ -134,7 +138,7 @@ void main() {
     calls.clear();
     await player.resume();
 
-    expect(calls, ['refresh:1', 'prepare:1', 'seek:0', 'play', 'playing:1']);
+    expect(calls, ['refresh:1', 'seek:0', 'play', 'playing:1', 'prepare:1']);
     expect(engine.position, Duration.zero);
     expect(library.stateOf(_first.id).status, EpisodeStatus.none);
     await player.reportBeforeBackground();
@@ -160,10 +164,10 @@ void main() {
     expect(calls, [
       'refresh:2',
       'seek:45000',
-      'prepare:2',
       'seek:0',
       'play',
       'playing:2',
+      'prepare:2',
     ]);
     expect(engine.position, Duration.zero);
   });
@@ -251,7 +255,7 @@ void main() {
       expect(calls.last, 'record:1:45000');
 
       await player.stop();
-      expect(calls.where((call) => call == 'record:1:45000'), hasLength(2));
+      expect(calls.where((call) => call == 'record:1:45000'), hasLength(1));
       expect(player.current, isNull);
     },
   );
@@ -290,7 +294,6 @@ void main() {
         'playing:null',
         'completed:1',
         'refresh:2',
-        'prepare:2',
         'playing:2',
       ]),
     );
@@ -317,7 +320,6 @@ void main() {
         'completed:1',
         'refresh:2',
         'refresh:3',
-        'prepare:3',
         'load',
         'play',
         'playing:3',
@@ -408,12 +410,368 @@ void main() {
     expect(player.sleepRemaining, isNull);
     expect(player.isPlaying, isFalse);
   });
+
+  group('player with two synced libraries', () {
+    late TestClock clock;
+    late FakeServer server;
+    late List<int> ids;
+    late Device local;
+    late Device remote;
+    late _Engine decoder;
+    late EpisodePlayer activePlayer;
+
+    setUpAll(sqfliteFfiInit);
+
+    setUp(() async {
+      clock = TestClock();
+      server = FakeServer(clock)..addPodcast(1, 'Garden Talk');
+      ids = server.addEpisodes(1, 3);
+      local = await Device.open(
+        server,
+        initialBackoff: const Duration(seconds: 10),
+        maxBackoff: const Duration(seconds: 10),
+      );
+      addTearDown(local.close);
+      await local.loginAndStart('Palma');
+      remote = await Device.open(server);
+      addTearDown(remote.close);
+      await remote.loginAndStart('HiBreak');
+      decoder = _Engine([])..duration = const Duration(hours: 1);
+      activePlayer = EpisodePlayer(
+        library: local.library,
+        sync: local.sync,
+        downloads: _Downloads(),
+        settings: settings,
+        engine: decoder,
+        clock: clock.call,
+      );
+      addTearDown(settings.dispose);
+      addTearDown(activePlayer.dispose);
+    });
+
+    for (final action in ['background', 'stop', 'switch']) {
+      test('$action flushes the original offline pause', () async {
+        final id = ids.first;
+        await activePlayer.play(id);
+        local.api.online = false;
+        clock.advance(const Duration(minutes: 10));
+        decoder.position = const Duration(minutes: 10);
+        await activePlayer.pause();
+        await local.sync.whenIdle();
+        final paused = local.library.stateOf(id);
+        expect(local.library.pendingCount, 1);
+
+        clock.advance(const Duration(minutes: 25));
+        await remote.library.recordPosition(id, const Duration(minutes: 35));
+        await remote.sync.whenIdle();
+        final newer = remote.library.stateOf(id);
+
+        clock.advance(const Duration(hours: 1));
+        local.api.online = true;
+        await switch (action) {
+          'background' => activePlayer.reportBeforeBackground(),
+          'stop' => activePlayer.stop(),
+          _ => activePlayer.play(ids[1]),
+        };
+        await local.sync.whenIdle();
+        expect(
+          local.api.pushedStates
+              .expand((states) => states)
+              .map((state) => state.toJson()),
+          [paused.toJson()],
+        );
+        expect(local.library.pendingCount, 0);
+        expect(local.library.stateOf(id).toJson(), newer.toJson());
+        expect(server.states[id]?.toJson(), newer.toJson());
+      });
+    }
+
+    for (final terminal in [false, true]) {
+      test(
+        'a held load uses the latest ${terminal ? 'terminal state' : 'position'}',
+        () async {
+          final id = ids.first;
+          await local.library.recordPosition(id, const Duration(minutes: 10));
+          await local.sync.whenIdle();
+          final loading = Completer<void>();
+          final release = Completer<void>();
+          decoder.onLoad = () {
+            loading.complete();
+            return release.future;
+          };
+          final play = activePlayer.play(id);
+          try {
+            await loading.future;
+            expect(decoder.position, const Duration(minutes: 10));
+            clock.advance(const Duration(minutes: 1));
+            if (terminal) {
+              await remote.library.markPlayed(id);
+            } else {
+              await remote.library.recordPosition(
+                id,
+                const Duration(minutes: 35),
+              );
+            }
+            await remote.sync.whenIdle();
+            await local.sync.syncNow();
+          } finally {
+            release.complete();
+            await play;
+          }
+
+          final expected = terminal
+              ? Duration.zero
+              : const Duration(minutes: 35);
+          expect(decoder.position, expected);
+          expect(activePlayer.isPlaying, isTrue);
+          expect(local.library.stateOf(id).status, EpisodeStatus.none);
+          clock.advance(const Duration(seconds: 1));
+          await activePlayer.pause();
+          await local.sync.whenIdle();
+          expect(server.states[id]?.positionMs, expected.inMilliseconds);
+        },
+      );
+    }
+
+    test('autoplay skips a head that is finished during its load', () async {
+      final [first, next, following] = ids;
+      await local.library.enqueue(next);
+      await local.library.enqueue(following);
+      await local.sync.whenIdle();
+      await activePlayer.play(first);
+      final loading = Completer<void>();
+      final release = Completer<void>();
+      decoder.onLoad = () {
+        decoder.onLoad = null;
+        loading.complete();
+        return release.future;
+      };
+      final completion = activePlayer.seekTo(
+        const Duration(minutes: 59, seconds: 30),
+      );
+      try {
+        await loading.future;
+        expect(activePlayer.current?.id, next);
+        clock.advance(const Duration(seconds: 1));
+        await remote.library.dismiss(next);
+        await remote.sync.whenIdle();
+        await local.sync.syncNow();
+      } finally {
+        release.complete();
+        await completion;
+      }
+      expect(activePlayer.current?.id, following);
+      expect(activePlayer.isPlaying, isTrue);
+      expect(server.states[next]?.isDismissed, isTrue);
+      expect(decoder.calls.where((call) => call == 'play'), hasLength(2));
+    });
+
+    test(
+      'completion is durable at observation time while the decoder stops',
+      () async {
+        settings.autoplayQueue = false;
+        final id = ids.first;
+        await activePlayer.play(id);
+        final stopping = Completer<void>();
+        final release = Completer<void>();
+        decoder.onStop = () {
+          stopping.complete();
+          return release.future;
+        };
+        final observedAt = clock.now;
+        decoder.processingState = ProcessingState.completed;
+        decoder.events.add(null);
+        try {
+          await stopping.future;
+          final completed = (await local.store.load()).states.single;
+          expect(completed.isPlayed, isTrue);
+          expect(completed.updatedAt, observedAt);
+          await local.sync.whenIdle();
+          expect(server.states[id]?.toJson(), completed.toJson());
+
+          clock.advance(const Duration(seconds: 3));
+          await remote.sync.syncNow();
+          await remote.library.prepareForPlayback(id);
+          await remote.library.recordPosition(id, const Duration(minutes: 6));
+          await remote.sync.whenIdle();
+          await local.sync.syncNow();
+          clock.advance(const Duration(seconds: 1));
+        } finally {
+          release.complete();
+          await activePlayer.reportBeforeBackground();
+        }
+        await local.sync.whenIdle();
+        expect(activePlayer.current, isNull);
+        expect(server.states[id]?.status, EpisodeStatus.none);
+        expect(server.states[id]?.positionMs, 360000);
+      },
+    );
+
+    for (final status in [EpisodeStatus.played, EpisodeStatus.dismissed]) {
+      test(
+        'replaying a ${status.name} episode only resets it after the engine starts',
+        () async {
+          final id = ids.first;
+          if (status == EpisodeStatus.played) {
+            await local.library.markPlayed(id);
+          } else {
+            await local.library.dismiss(id);
+          }
+          await local.sync.whenIdle();
+          final previous = local.library.stateOf(id);
+          local.api.online = false;
+          decoder.onLoad = () => throw OfflineException();
+          await expectLater(
+            activePlayer.play(id),
+            throwsA(isA<OfflineException>()),
+          );
+          expect(decoder.position, Duration.zero);
+          expect(local.library.stateOf(id), same(previous));
+          expect(local.library.pendingCount, 0);
+          expect(
+            (await local.store.load()).states.single.toJson(),
+            previous.toJson(),
+          );
+
+          decoder.onLoad = null;
+          final starting = Completer<void>();
+          final release = Completer<void>();
+          decoder.onPlay = () {
+            starting.complete();
+            return release.future;
+          };
+          final play = activePlayer.play(id);
+          try {
+            await starting.future;
+            expect(local.library.stateOf(id), same(previous));
+            expect(local.library.pendingCount, 0);
+          } finally {
+            release.complete();
+            await play;
+          }
+          expect(activePlayer.isPlaying, isTrue);
+          expect(local.library.stateOf(id).isNew, isTrue);
+          local.api.online = true;
+          await local.sync.syncNow();
+          expect(server.states[id]?.isNew, isTrue);
+        },
+      );
+    }
+
+    for (final remoteWins in [false, true]) {
+      test(
+        'a paused seek keeps its target and respects a ${remoteWins ? 'later' : 'prior'} remote edit',
+        () async {
+          final id = ids.first;
+          await activePlayer.play(id);
+          decoder.position = const Duration(minutes: 10);
+          await activePlayer.pause();
+          await local.sync.whenIdle();
+          Future<void> editRemotely() async {
+            clock.advance(const Duration(seconds: 1));
+            await remote.library.recordPosition(
+              id,
+              const Duration(minutes: 35),
+            );
+            await remote.sync.whenIdle();
+          }
+
+          if (!remoteWins) await editRemotely();
+          clock.advance(const Duration(seconds: 1));
+          final issuedAt = clock.now;
+          final seeking = Completer<void>();
+          final release = Completer<void>();
+          const target = Duration(minutes: 20);
+          decoder.onSeek = (position) async {
+            if (position != target) return;
+            seeking.complete();
+            await release.future;
+            decoder.position = const Duration(minutes: 21);
+          };
+          final seek = activePlayer.seekTo(target);
+          try {
+            await seeking.future;
+            if (remoteWins) await editRemotely();
+            await local.sync.syncNow();
+            expect(local.library.stateOf(id).positionMs, 2100000);
+            clock.advance(const Duration(minutes: 1));
+          } finally {
+            release.complete();
+            await seek;
+          }
+          await local.sync.whenIdle();
+          expect(
+            local.library.stateOf(id).positionMs,
+            remoteWins ? 2100000 : 1200000,
+          );
+          expect(server.states[id]?.positionMs, remoteWins ? 2100000 : 1200000);
+          if (!remoteWins) expect(server.states[id]?.updatedAt, issuedAt);
+        },
+      );
+    }
+
+    for (final detailAvailable in [true, false]) {
+      test(
+        'autoplay waits for the uncached head (detail available: $detailAvailable)',
+        () async {
+          await activePlayer.play(ids[0]);
+          final missing = server.addEpisodes(1, 1).single;
+          await remote.sync.syncNow();
+          await remote.library.enqueue(missing);
+          await remote.library.enqueue(ids[1]);
+          await remote.sync.whenIdle();
+
+          final catalog = Completer<void>();
+          final releaseCatalog = Completer<void>();
+          local.api.beforePodcasts = () {
+            local.api.beforePodcasts = null;
+            catalog.complete();
+            return releaseCatalog.future;
+          };
+          final detail = Completer<int>();
+          final releaseDetail = Completer<void>();
+          local.api.beforeEpisode = (id) {
+            detail.complete(id);
+            return releaseDetail.future;
+          };
+          final pull = local.sync.syncNow();
+          Future<void>? complete;
+          try {
+            await catalog.future;
+            expect(local.library.episode(missing), isNull);
+            expect(local.library.queue.single.id, ids[1]);
+            complete = activePlayer.seekTo(
+              const Duration(minutes: 59, seconds: 30),
+            );
+            expect(
+              await detail.future.timeout(const Duration(seconds: 2)),
+              missing,
+            );
+            expect(activePlayer.current, isNull);
+            if (detailAvailable) releaseDetail.complete();
+            await complete.timeout(const Duration(seconds: 4));
+            expect(activePlayer.current?.id, detailAvailable ? missing : null);
+            expect(activePlayer.isPlaying, detailAvailable);
+            expect(local.library.episode(missing), isNull);
+          } finally {
+            if (!releaseDetail.isCompleted) releaseDetail.complete();
+            releaseCatalog.complete();
+            await pull;
+            await complete;
+          }
+        },
+      );
+    }
+  });
 }
 
 class _Engine implements PlaybackEngine {
   _Engine(this.calls);
   final List<String> calls;
-  void Function(Duration)? onSeek;
+  FutureOr<void> Function()? onLoad;
+  FutureOr<void> Function()? onPlay;
+  FutureOr<void> Function(Duration)? onSeek;
+  FutureOr<void> Function()? onStop;
   final events = StreamController<void>.broadcast();
   final interruptions = StreamController<void>.broadcast();
   Uri? uri;
@@ -438,6 +796,7 @@ class _Engine implements PlaybackEngine {
     calls.add('load');
     this.uri = uri;
     this.position = position;
+    await onLoad?.call();
     processingState = ProcessingState.ready;
   }
 
@@ -445,8 +804,11 @@ class _Engine implements PlaybackEngine {
   Future<void> pause() async => playing = false;
 
   @override
-  Future<void> play() async {
+  Future<void> play({
+    required void Function(Object, StackTrace) onError,
+  }) async {
     calls.add('play');
+    if (onPlay case final hook?) await hook();
     playing = true;
   }
 
@@ -454,7 +816,7 @@ class _Engine implements PlaybackEngine {
   Future<void> seek(Duration position) async {
     calls.add('seek:${position.inMilliseconds}');
     this.position = position;
-    onSeek?.call(position);
+    await onSeek?.call(position);
   }
 
   @override
@@ -464,6 +826,7 @@ class _Engine implements PlaybackEngine {
   Future<void> stop() async {
     playing = false;
     processingState = ProcessingState.idle;
+    await onStop?.call();
   }
 
   @override

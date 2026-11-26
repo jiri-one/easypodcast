@@ -9,7 +9,7 @@ abstract interface class PlaybackEngine {
   Duration get bufferedPosition;
   Duration? get duration;
   Future<void> load(Uri uri, Duration position);
-  Future<void> play();
+  Future<void> play({required void Function(Object, StackTrace) onError});
   Future<void> pause();
   Future<void> seek(Duration position);
   Future<void> setSpeed(double speed);
@@ -18,13 +18,13 @@ abstract interface class PlaybackEngine {
 }
 
 class _JustAudioEngine implements PlaybackEngine {
-  _JustAudioEngine(AudioSession? session)
+  _JustAudioEngine(this._session)
     : _audio = AudioPlayer(
         handleInterruptions: false,
-        handleAudioSessionActivation: session != null,
-        androidApplyAudioAttributes: session != null,
+        handleAudioSessionActivation: false,
+        androidApplyAudioAttributes: _session != null,
       ) {
-    if (session != null) {
+    if (_session case final session?) {
       _sessionEvents.add(
         session.becomingNoisyEventStream.listen((_) {
           _pauseRequests.add(null);
@@ -45,6 +45,7 @@ class _JustAudioEngine implements PlaybackEngine {
   }
 
   final AudioPlayer _audio;
+  final AudioSession? _session;
   final _pauseRequests = StreamController<void>.broadcast();
   final _sessionEvents = <StreamSubscription<void>>[];
 
@@ -78,7 +79,17 @@ class _JustAudioEngine implements PlaybackEngine {
   }
 
   @override
-  Future<void> play() => _audio.play();
+  Future<void> play({
+    required void Function(Object, StackTrace) onError,
+  }) async {
+    if (_session case final session?) {
+      if (!await session.setActive(true)) return;
+      // Android resolves this future when playback ends or pauses.
+      unawaited(_audio.play().catchError(onError));
+    } else {
+      await _audio.play();
+    }
+  }
 
   @override
   Future<void> pause() => _audio.pause();

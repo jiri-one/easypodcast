@@ -7,6 +7,7 @@ import '../core/api.dart';
 import '../core/library.dart';
 import '../core/models.dart';
 import 'local_store.dart';
+import 'state_confirmation.dart';
 
 class SqfliteLibrary extends Library {
   SqfliteLibrary._(this._store, this._api, this._clock);
@@ -45,7 +46,8 @@ class SqfliteLibrary extends Library {
   int? playingEpisodeId;
 
   void Function()? onLocalChange;
-  Future<void> Function()? refreshQueueBeforeEdit;
+  void Function()? onPendingSend;
+  Future<StateSnapshot?> Function()? refreshStatesAndQueue;
 
   void _loadFrom(LocalSnapshot snapshot) {
     _podcasts
@@ -176,6 +178,33 @@ class SqfliteLibrary extends Library {
       if (!_isFinished(id)) ?_episodes[id],
   ]);
 
+  @override
+  int? get queueHeadId {
+    for (final id in _queue?.episodeIds ?? const <int>[]) {
+      if (!_isFinished(id)) return id;
+    }
+    return null;
+  }
+
+  @override
+  Future<Episode?> resolveQueueEpisode(int episodeId) async {
+    final cached = _episodes[episodeId];
+    if (cached != null) return cached;
+    try {
+      final detail = await _api
+          .episode(episodeId)
+          .timeout(const Duration(seconds: 2));
+      return _episodes[episodeId] ??
+          (detail.episode.id == episodeId ? detail.episode : null);
+    } on ApiException {
+      return _episodes[episodeId];
+    } on OfflineException {
+      return _episodes[episodeId];
+    } on TimeoutException {
+      return _episodes[episodeId];
+    }
+  }
+
   QueueState? get queueState => _queue;
 
   @override
@@ -270,22 +299,53 @@ class SqfliteLibrary extends Library {
     int episodeId,
     Duration position, {
     Duration? duration,
+  }) => recordPositionAt(
+    episodeId,
+    position,
+    duration: duration,
+    updatedAt: _stamp(stateOf(episodeId).updatedAt),
+  );
+
+  @override
+  Future<void> recordPositionAt(
+    int episodeId,
+    Duration position, {
+    Duration? duration,
+    required DateTime updatedAt,
   }) async {
-    if (_isFinished(episodeId)) return;
+    if (!_canRecord(episodeId, updatedAt)) return;
     await _setStates([
       _state(
         episodeId,
         position.isNegative ? 0 : position.inMilliseconds,
         EpisodeStatus.none,
         durationMs: duration?.inMilliseconds,
+        updatedAt: updatedAt,
       ),
     ]);
   }
 
   @override
-  Future<void> markCompleted(int episodeId) async {
-    if (_isFinished(episodeId)) return;
-    await _finish([episodeId], EpisodeStatus.played);
+  Future<void> markCompleted(int episodeId) =>
+      markCompletedAt(episodeId, _stamp(stateOf(episodeId).updatedAt));
+
+  @override
+  Future<void> markCompletedAt(int episodeId, DateTime updatedAt) async {
+    if (!_canRecord(episodeId, updatedAt)) return;
+    await _setStates([
+      _state(episodeId, 0, EpisodeStatus.played, updatedAt: updatedAt),
+    ]);
+  }
+
+  bool _canRecord(int episodeId, DateTime updatedAt) {
+    final current = stateOf(episodeId);
+    return current.status == EpisodeStatus.none &&
+        updatedAt.isAfter(current.updatedAt);
+  }
+
+  @override
+  void requestPendingSend() {
+    if (hasPending) onPendingSend?.call();
   }
 
   @override
@@ -296,10 +356,16 @@ class SqfliteLibrary extends Library {
 
   @override
   Future<void> dismissOlder(int episodeId) async {
+    final snapshot = await refreshStatesAndQueue?.call();
     final chosen = _episodes[episodeId];
     if (chosen == null) return;
     final cutoff = chosen.publishedAt;
-    final queued = _queue?.episodeIds.toSet() ?? const <int>{};
+    final protectedIds = {
+      ...?_queue?.episodeIds,
+      for (final state in snapshot?.episodes ?? const <EpisodeState>[])
+        if (!state.isNew && state.isNewerThan(stateOf(state.episodeId)))
+          state.episodeId,
+    };
     final ids = [
       for (final e in episodesOf(chosen.podcastId))
         if ((e.id == episodeId ||
@@ -307,7 +373,7 @@ class SqfliteLibrary extends Library {
                     e.publishedAt != null &&
                     !e.publishedAt!.isAfter(cutoff))) &&
             stateOf(e.id).isNew &&
-            !queued.contains(e.id))
+            !protectedIds.contains(e.id))
           e.id,
     ];
     await _finish(ids, EpisodeStatus.dismissed);
@@ -328,7 +394,7 @@ class SqfliteLibrary extends Library {
 
   @override
   Future<void> enqueue(int episodeId, {bool next = false}) async {
-    await refreshQueueBeforeEdit?.call();
+    await refreshStatesAndQueue?.call();
     final ids = _editableQueueIds();
     if (next) {
       ids.remove(episodeId);
@@ -348,14 +414,14 @@ class SqfliteLibrary extends Library {
 
   @override
   Future<void> dequeue(int episodeId) async {
-    await refreshQueueBeforeEdit?.call();
+    await refreshStatesAndQueue?.call();
     final ids = _editableQueueIds()..remove(episodeId);
     await _saveQueueEdit(ids);
   }
 
   @override
   Future<void> moveInQueue(int episodeId, int newIndex) async {
-    await refreshQueueBeforeEdit?.call();
+    await refreshStatesAndQueue?.call();
     final ids = _editableQueueIds();
     final visible = [
       for (final id in ids)
@@ -388,6 +454,7 @@ class SqfliteLibrary extends Library {
     int positionMs,
     EpisodeStatus status, {
     int? durationMs,
+    DateTime? updatedAt,
   }) {
     final previous = stateOf(episodeId);
     return EpisodeState(
@@ -395,7 +462,7 @@ class SqfliteLibrary extends Library {
       positionMs: positionMs,
       status: status,
       durationMs: durationMs ?? previous.durationMs,
-      updatedAt: _stamp(previous.updatedAt),
+      updatedAt: updatedAt ?? _stamp(previous.updatedAt),
     );
   }
 
@@ -439,11 +506,26 @@ class SqfliteLibrary extends Library {
 
   bool get hasPending => _pendingStates.isNotEmpty || _queuePending;
 
+  bool hasPendingVersion(int? episodeId, DateTime updatedAt) =>
+      episodeId == null
+      ? _queuePending && _queue!.updatedAt.isAtSameMomentAs(updatedAt)
+      : _pendingStates.contains(episodeId) &&
+            _states[episodeId]!.updatedAt.isAtSameMomentAs(updatedAt);
+
   ({List<EpisodeState> states, QueueState? queue}) pendingChanges({
     int maxStates = 2000,
+    bool Function(int? id, DateTime updatedAt)? include,
   }) => (
-    states: [for (final id in _pendingStates.take(maxStates)) _states[id]!],
-    queue: _queuePending ? _queue : null,
+    states: _pendingStates
+        .map((id) => _states[id]!)
+        .where(
+          (state) => include?.call(state.episodeId, state.updatedAt) ?? true,
+        )
+        .take(maxStates)
+        .toList(),
+    queue: _queuePending && (include?.call(null, _queue!.updatedAt) ?? true)
+        ? _queue
+        : null,
   );
 
   /// A reply settles only the sent versions, including server-unknown IDs.
@@ -452,44 +534,56 @@ class SqfliteLibrary extends Library {
     QueueState? sentQueue,
     StatePushResult result,
   ) {
-    final cleared = <int, EpisodeState>{};
-    for (final s in sent) {
-      final current = _states[s.episodeId];
-      if (current != null &&
-          current.updatedAt.isAtSameMomentAs(s.updatedAt) &&
-          _pendingStates.remove(s.episodeId)) {
-        cleared[s.episodeId] = current;
-      }
-    }
-    final queueConfirmed =
-        sentQueue != null &&
-        _queuePending &&
-        (_queue?.updatedAt.isAtSameMomentAs(sentQueue.updatedAt) ?? false);
+    result.requireConfirmation(sent, sentQueue);
+    final acknowledged = {
+      for (final state in sent)
+        if (hasPendingVersion(state.episodeId, state.updatedAt))
+          state.episodeId: state,
+    };
+    final acknowledgedQueue =
+        sentQueue != null && hasPendingVersion(null, sentQueue.updatedAt)
+        ? sentQueue
+        : null;
     return _mergeRemote(
-      result.episodes,
-      result.queue,
-      cleared,
-      queueConfirmed: queueConfirmed,
+      [
+        for (final state in result.episodes)
+          if (acknowledged.containsKey(state.episodeId)) state,
+      ],
+      sentQueue == null || acknowledgedQueue != null ? result.queue : null,
+      acknowledgedStates: acknowledged,
+      acknowledgedQueue: acknowledgedQueue,
     );
   }
 
   Future<bool> applyRemote(
     List<EpisodeState> remote,
     QueueState? remoteQueue,
-  ) => _mergeRemote(remote, remoteQueue, {});
+  ) => _mergeRemote(remote, remoteQueue);
 
   Future<bool> _mergeRemote(
     List<EpisodeState> remote,
-    QueueState? remoteQueue,
-    Map<int, EpisodeState> written, {
-    bool queueConfirmed = false,
+    QueueState? remoteQueue, {
+    Map<int, EpisodeState> acknowledgedStates = const {},
+    QueueState? acknowledgedQueue,
   }) async {
+    final written = Map.of(acknowledgedStates);
+    _pendingStates.removeAll(acknowledgedStates.keys);
     var statesChanged = false;
     final finished = <int>[];
     for (final r in remote) {
-      if (r.episodeId == playingEpisodeId) continue;
       final local = _states[r.episodeId];
-      if (local != null && !r.isNewerThan(local)) continue;
+      final equalConfirmation =
+          local != null &&
+          acknowledgedStates.containsKey(r.episodeId) &&
+          r.updatedAt.isAtSameMomentAs(local.updatedAt) &&
+          (r.positionMs != local.positionMs ||
+              r.status != local.status ||
+              r.durationMs != local.durationMs);
+      if (!equalConfirmation &&
+          (r.episodeId == playingEpisodeId ||
+              (local != null && !r.isNewerThan(local)))) {
+        continue;
+      }
       final before = local?.status ?? EpisodeStatus.none;
       _states[r.episodeId] = r;
       _pendingStates.remove(r.episodeId);
@@ -499,20 +593,22 @@ class SqfliteLibrary extends Library {
         finished.add(r.episodeId);
       }
     }
-    // A confirmation can contain the same queue with server-unknown IDs removed.
     final queueChanged =
         remoteQueue != null &&
         (remoteQueue.isNewerThan(_queue) ||
-            (queueConfirmed &&
+            (acknowledgedQueue != null &&
                 remoteQueue.updatedAt.isAtSameMomentAs(_queue!.updatedAt) &&
                 !listEquals(remoteQueue.episodeIds, _queue!.episodeIds)));
     if (queueChanged) _queue = remoteQueue;
-    final writeQueue = queueChanged || queueConfirmed;
+    final writeQueue = queueChanged || acknowledgedQueue != null;
     if (writeQueue) _queuePending = false;
     if (written.isNotEmpty || writeQueue) {
-      final saved = _store.writeStates([
-        for (final s in written.values) (s, false),
-      ], queue: writeQueue ? (_queue!, false) : null);
+      final saved = _store.writeStates(
+        [for (final s in written.values) (s, false)],
+        queue: writeQueue ? (_queue!, false) : null,
+        acknowledgedStates: acknowledgedStates,
+        acknowledgedQueue: acknowledgedQueue,
+      );
       if (statesChanged || queueChanged) _changed();
       finished.forEach(_finished.add);
       await saved;

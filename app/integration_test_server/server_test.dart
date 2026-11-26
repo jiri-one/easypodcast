@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:easypodcast/core/api.dart';
 import 'package:easypodcast/core/models.dart';
@@ -512,6 +513,81 @@ void main() {
         expect(b.data.library.stateOf(id).toJson(), aState.toJson());
         expect(b.sync.status.value.pending, 0);
         expect(b.sync.status.value.phase, SyncPhase.idle);
+      },
+    );
+
+    test(
+      'same-millisecond writes converge and survive both clients restarting',
+      () async {
+        final directory = await Directory.systemTemp.createTemp(
+          'easypodcast-tie-',
+        );
+        addTearDown(() => directory.delete(recursive: true));
+        Future<Device> open(String name) => Device.open(
+          name,
+          () => deviceTime,
+          databasePath: '${directory.path}/$name.db',
+        );
+        final a = await open('tie-A');
+        final podcast = await a.data.library.subscribe(fixture('tie'));
+        final id = a.data.library.episodesOf(podcast.id).first.id;
+        final b = await open('tie-B');
+
+        b.wire.offline = true;
+        await b.pauseAt(id, 71000, duration: const Duration(minutes: 15));
+        await a.pauseAt(id, 99000, duration: const Duration(minutes: 20));
+        final winner = a.data.library.stateOf(id);
+        expect(b.data.library.stateOf(id).updatedAt, winner.updatedAt);
+        expect(b.data.library.stateOf(id).positionMs, 71000);
+
+        b.wire.offline = false;
+        final start = b.wire.exchanges.length;
+        await b.sync.syncNow();
+        final acknowledgement = b.wire.exchanges[start];
+        acknowledgement.expectStatus(200);
+        expect(acknowledgement.json['episodes'], [winner.toJson()]);
+        expect(b.data.library.stateOf(id).toJson(), winner.toJson());
+        expect(b.sync.status.value.pending, 0);
+
+        await a.close();
+        await b.close();
+        final restartedA = await open('tie-A');
+        final restartedB = await open('tie-B');
+        expect(restartedA.data.library.stateOf(id).toJson(), winner.toJson());
+        expect(restartedB.data.library.stateOf(id).toJson(), winner.toJson());
+        expect(restartedB.sync.status.value.pending, 0);
+      },
+    );
+
+    test(
+      'a Go server 400 leaves the future change pending and accepts the rest',
+      () async {
+        final (:a, :b, :ids) = await pair('bad-clock');
+        final [future, valid, inbound] = ids;
+        b.wire.offline = true;
+        final validTime = deviceTime;
+        deviceTime = validTime.add(const Duration(days: 2));
+        await b.data.library.markPlayed(future);
+        final rejected = b.data.library.stateOf(future);
+        deviceTime = validTime;
+        await b.pauseAt(valid, 71000);
+        await a.pauseAt(inbound, 99000);
+
+        final start = b.wire.exchanges.length;
+        b.wire.offline = false;
+        await b.sync.syncNow();
+        b.wire.exchanges[start].expectStatus(400);
+        expect(await a.data.api.episodeState(future), isNull);
+        expect((await a.data.api.episodeState(valid))?.positionMs, 71000);
+        expect(b.data.library.stateOf(inbound).positionMs, 99000);
+        final snapshot = await b.store.load();
+        expect(snapshot.pendingStates, {future});
+        expect(
+          snapshot.states
+              .singleWhere((state) => state.episodeId == future)
+              .toJson(),
+          rejected.toJson(),
+        );
       },
     );
 

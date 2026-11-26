@@ -81,8 +81,8 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
   late final StreamSubscription<void> _pauseRequests;
   Future<void> _commands = Future.value();
   Episode? _current;
-  late DateTime _pausedAt;
-  EpisodeState? _pausedState;
+  DateTime? _pausedAt;
+  DateTime? _endObservedAt;
   bool _finishedSinceStart = false;
   bool _loaded = false;
   bool _disposed = false;
@@ -143,52 +143,63 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
     }
 
     if (_loaded && (_current?.id != episodeId || isPlaying)) {
-      await _engine.pause();
-      await _report(advance: false);
+      await _pause();
     }
-    _setSyncEpisode(null);
-    await _loadEpisode(episode, refresh: true);
+    await _loadEpisode(episode);
   });
 
   Future<void> _advanceQueue() async {
     while (!_disposed && _settings.autoplayQueue) {
-      final next = _library.queue.firstOrNull;
-      if (next == null) return;
-      await _sync.freshStateBeforePlay(next.id);
-      // A refresh can hide a finished episode, and the listener can reorder the queue.
-      if (_library.queue.firstOrNull?.id != next.id) continue;
-      if (!_disposed && _settings.autoplayQueue) {
-        await _loadEpisode(next, refresh: false);
-      }
-      return;
+      final id = _library.queueHeadId;
+      if (id == null) return;
+      final next = await _library.resolveQueueEpisode(id);
+      if (_library.queueHeadId != id) continue;
+      if (next == null || _disposed || !_settings.autoplayQueue) return;
+      await _sync.freshStateBeforePlay(id);
+      if (_library.queueHeadId != id) continue;
+      if (_disposed || !_settings.autoplayQueue) return;
+      if (await _loadEpisode(next, automatic: true)) return;
     }
   }
 
-  Future<void> _loadEpisode(Episode episode, {required bool refresh}) async {
+  Future<bool> _loadEpisode(Episode episode, {bool automatic = false}) async {
     final episodeId = episode.id;
     _current = episode;
     _loaded = false;
-    _pausedState = null;
+    _pausedAt = null;
     _playAttempt = null;
     _position.value = Duration.zero;
     _publish();
     try {
-      if (refresh) await _sync.freshStateBeforePlay(episodeId);
-      if (_disposed) return;
-      final start = await _library.prepareForPlayback(episodeId);
+      if (!automatic) await _sync.freshStateBeforePlay(episodeId);
+      if (_disposed) return false;
+      var applied = _startPosition(_library.stateOf(episodeId));
       final file = _downloads.localFileOf(episodeId);
       final uri = file == null
           ? Uri.parse(episode.enclosureUrl)
           : Uri.file(file);
-      if (_disposed) return;
-      _position.value = start;
-      await _engine.load(uri, start);
+      _position.value = applied;
+      await _engine.load(uri, applied);
       await _engine.setSpeed(_speed);
-      if (_disposed) return;
-      _loaded = true;
-      _startEngine();
+      while (!_disposed) {
+        if (automatic &&
+            (!_settings.autoplayQueue || _library.queueHeadId != episodeId)) {
+          await _clear();
+          return false;
+        }
+        final state = _library.stateOf(episodeId);
+        final target = _startPosition(state);
+        if (target == applied) {
+          _loaded = true;
+          await _startEngine(state);
+          return true;
+        }
+        await _engine.seek(target);
+        applied = target;
+      }
+      return false;
     } catch (_) {
-      await _clear();
+      if (_current != null) await _clear();
       rethrow;
     }
   }
@@ -196,53 +207,78 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
   @override
   Future<void> resume() => _run(() async {
     if (!_loaded || isPlaying) return;
-    if (await _preparePaused(resuming: true)) _startEngine();
+    await _preparePaused(resuming: true);
   });
+
+  Duration _startPosition(EpisodeState state) =>
+      state.status == EpisodeStatus.none
+      ? Duration(milliseconds: state.positionMs)
+      : Duration.zero;
 
   Future<bool> _preparePaused({required bool resuming}) async {
     final id = _current!.id;
-    final paused = _pausedState;
+    final paused = _pausedAt;
     if (paused != null &&
-        _clock().difference(_pausedAt) > const Duration(seconds: 30)) {
+        _clock().difference(paused) > const Duration(seconds: 30)) {
       await _sync.freshStateBeforePlay(id);
     }
     if (_disposed) return false;
-    var applied = _finishedSinceStart ? null : paused ?? _library.stateOf(id);
-    // Another device can update the episode while a stream seek is pending.
+    var applied = _finishedSinceStart
+        ? null
+        : Duration(milliseconds: _engine.position.inMilliseconds);
     while (!_disposed) {
       final state = _library.stateOf(id);
       if (!resuming &&
           (_finishedSinceStart || state.status != EpisodeStatus.none)) {
         return false;
       }
-      if (state.status != EpisodeStatus.none) {
-        await _library.prepareForPlayback(id);
-        applied = null;
-      } else if (applied == null || state.isNewerThan(applied)) {
-        await _engine.seek(Duration(milliseconds: state.positionMs));
-        applied = state;
-      } else {
-        _pausedState = state;
+      final target = _startPosition(state);
+      if (target == applied) {
+        if (resuming) await _startEngine(state);
         return true;
       }
+      await _engine.seek(target);
+      applied = target;
     }
     return false;
   }
 
-  void _startEngine() {
-    _pausedState = null;
+  Future<void> _startEngine(EpisodeState state) async {
+    _pausedAt = null;
+    _endObservedAt = null;
     _finishedSinceStart = false;
     final attempt = _playAttempt = Object();
-    // just_audio's play future lasts until playback pauses, stops or ends.
-    _background(
-      _engine.play().catchError((Object error, StackTrace stack) async {
-        await _run(() async {
-          if (identical(_playAttempt, attempt)) await _clear();
-        });
-        Error.throwWithStackTrace(error, stack);
-      }),
-    );
-    _setSyncEpisode(_current!.id);
+    final id = state.episodeId;
+    var startFailed = false;
+    try {
+      final starting = _engine.play(
+        onError: (error, stack) {
+          startFailed = true;
+          _background(
+            _run(() async {
+              if (!identical(_playAttempt, attempt)) return;
+              await _clear();
+              Error.throwWithStackTrace(error, stack);
+            }),
+          );
+        },
+      );
+      _setSyncEpisode(id);
+      await starting;
+    } catch (_) {
+      await _clear();
+      rethrow;
+    }
+    if (_disposed || startFailed) return;
+    if (!isPlaying) {
+      _pausedAt = _clock();
+      _playAttempt = null;
+      _setSyncEpisode(null);
+    } else if (state.status != EpisodeStatus.none &&
+        identical(_library.stateOf(id), state)) {
+      _finishedSinceStart = false;
+      await _library.prepareForPlayback(id);
+    }
     _publish();
   }
 
@@ -250,13 +286,16 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
   Future<void> pause() => _run(_pause);
 
   Future<void> _pause() async {
-    if (!_loaded || _pausedState != null) return;
+    if (!_loaded) return;
+    if (_pausedAt != null) {
+      _library.requestPendingSend();
+      return;
+    }
     await _engine.pause();
     _pausedAt = _clock();
     try {
       await _report(advance: false);
     } finally {
-      if (_loaded) _pausedState = _library.stateOf(_current!.id);
       _setSyncEpisode(null);
       _publish();
     }
@@ -271,7 +310,7 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
 
   Future<void> _seek(Duration position, {bool relative = false}) async {
     if (!_loaded) return;
-    if (_pausedState != null && !await _preparePaused(resuming: false)) return;
+    if (_pausedAt != null && !await _preparePaused(resuming: false)) return;
     final target = relative ? _engine.position + position : position;
     final end = _measuredDuration;
     final clamped = target.isNegative
@@ -279,8 +318,9 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
         : end != null && target > end
         ? end
         : target;
+    final issuedAt = _playbackEventTime();
     await _engine.seek(clamped);
-    await _report(advance: isPlaying);
+    await _report(advance: isPlaying, position: clamped, updatedAt: issuedAt);
     _publish();
   }
 
@@ -324,19 +364,17 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
   Future<void> stop() => _run(() async {
     _cancelSleepTimer();
     try {
-      if (_loaded) {
-        await _engine.pause();
-        await _report(advance: false);
-      }
+      await _pause();
     } finally {
-      await _clear();
+      if (_current != null) await _clear();
     }
   });
 
   Future<void> _clear() async {
     _current = null;
     _loaded = false;
-    _pausedState = null;
+    _pausedAt = null;
+    _endObservedAt = null;
     _playAttempt = null;
     _setSyncEpisode(null);
     try {
@@ -364,13 +402,17 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
     _publish(updatePosition: !isPlaying, forceMediaUpdate: false);
     if (!_loaded) return;
     final completed = _engine.processingState == ProcessingState.completed;
+    final endedAt = completed
+        ? (_endObservedAt ??= _playbackEventTime())
+        : null;
     if (!completed && (isPlaying || _syncEpisode == null)) return;
     final attempt = _playAttempt;
     _background(
       _run(() async {
         if (!identical(_playAttempt, attempt) || !_loaded) return;
-        if (_engine.processingState == ProcessingState.completed) {
-          await _report(advance: _syncEpisode != null);
+        if (endedAt != null &&
+            _engine.processingState == ProcessingState.completed) {
+          await _complete(endedAt, advance: _syncEpisode != null);
         } else if (!isPlaying && _syncEpisode != null) {
           await _pause();
         }
@@ -383,32 +425,65 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
     return duration != null && duration > Duration.zero ? duration : null;
   }
 
-  Future<void> _report({required bool advance}) async {
+  DateTime _playbackEventTime() {
+    final now = _clock();
+    final previous = _library.stateOf(_current!.id).updatedAt;
+    return now.isAfter(previous)
+        ? now
+        : previous.add(const Duration(milliseconds: 1));
+  }
+
+  Future<void> _complete(DateTime updatedAt, {required bool advance}) async {
+    final id = _current!.id;
+    _setSyncEpisode(null);
+    try {
+      if (!_finishedSinceStart) await _library.markCompletedAt(id, updatedAt);
+    } finally {
+      await _clear();
+    }
+    if (advance) await _advanceQueue();
+  }
+
+  Future<void> _report({
+    required bool advance,
+    Duration? position,
+    DateTime? updatedAt,
+  }) async {
     if (!_loaded) return;
     final id = _current!.id;
-    final position = _engine.position;
+    final sample = position ?? _engine.position;
     final duration = _measuredDuration;
-    final state = _library.stateOf(id);
-    final paused = _pausedState;
-    if (paused != null && state.isNewerThan(paused)) return;
-    final finished = _finishedSinceStart || state.status != EpisodeStatus.none;
-    if (_engine.processingState == ProcessingState.completed ||
+    final completed = _engine.processingState == ProcessingState.completed;
+    if (completed ||
         (duration != null &&
-            duration - position <= const Duration(seconds: 30))) {
-      await _clear();
-      if (!finished) await _library.markCompleted(id);
-      if (advance) await _advanceQueue();
-    } else if (!finished) {
-      await _library.recordPosition(id, position, duration: duration);
-      if (paused != null) {
-        final saved = _library.stateOf(id);
-        if (saved.positionMs == position.inMilliseconds) _pausedState = saved;
+            duration - sample <= const Duration(seconds: 30))) {
+      await _complete(
+        (completed ? _endObservedAt : null) ??
+            updatedAt ??
+            _playbackEventTime(),
+        advance: advance,
+      );
+    } else if (!_finishedSinceStart) {
+      if (updatedAt == null) {
+        await _library.recordPosition(id, sample, duration: duration);
+      } else {
+        await _library.recordPositionAt(
+          id,
+          sample,
+          duration: duration,
+          updatedAt: updatedAt,
+        );
       }
     }
   }
 
-  Future<void> reportBeforeBackground() =>
-      _run(() => _report(advance: isPlaying));
+  Future<void> reportBeforeBackground() => _run(() async {
+    if (isPlaying && _pausedAt == null) {
+      await _report(advance: true);
+    } else {
+      _library.requestPendingSend();
+    }
+  });
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {

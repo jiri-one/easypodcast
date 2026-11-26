@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 
 import '../core/api.dart';
 import '../core/models.dart';
+import 'state_confirmation.dart';
 
 class HttpApiClient implements ApiClient {
   HttpApiClient({
@@ -240,7 +241,7 @@ class HttpApiClient implements ApiClient {
       ),
     );
     final stored = body['queue'];
-    return StatePushResult(
+    final result = StatePushResult(
       episodes: [
         for (final item in _list(body['episodes'])) EpisodeState.fromJson(item),
       ],
@@ -251,6 +252,8 @@ class HttpApiClient implements ApiClient {
         for (final id in (body['unknown'] as List?) ?? const []) id as int,
       ],
     );
+    result.requireConfirmation(episodes, queue);
+    return result;
   }
 
   @override

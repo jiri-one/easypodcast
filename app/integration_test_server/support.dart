@@ -107,18 +107,21 @@ class Device {
   final DataLayer data;
   final LocalStore store;
   final WireClient wire;
+  bool _closed = false;
 
   DefaultSyncService get sync => data.sync as DefaultSyncService;
 
-  static Future<Device> open(String name, DateTime Function() clock) async {
+  static Future<Device> open(
+    String name,
+    DateTime Function() clock, {
+    String databasePath = inMemoryDatabasePath,
+  }) async {
     final wire = WireClient(name);
-    addTearDown(wire.close);
     final api = HttpApiClient(serverUrl: serverUrl, client: wire);
-    final db = await LocalStore.open(databaseFactoryFfi, inMemoryDatabasePath);
-    addTearDown(db.close);
+    final db = await LocalStore.open(databaseFactoryFfi, databasePath);
     final store = LocalStore(db);
     final library = await SqfliteLibrary.open(store, api, clock: clock);
-    addTearDown(library.dispose);
+    api.token = store.meta(MetaKey.token);
     final sync = DefaultSyncService(
       api: api,
       library: library,
@@ -127,22 +130,21 @@ class Device {
       clock: clock,
     );
     api.onUnauthorized = sync.handleUnauthorized;
-    addTearDown(() async {
-      await sync.stop();
-      sync.dispose();
-    });
-    await sync.login(
-      serverUrl: serverUrl,
-      username: username,
-      password: password,
-      deviceName: name,
-    );
-    await sync.start();
     final device = Device(
       DataLayer(api: api, library: library, sync: sync),
       store,
       wire,
     );
+    addTearDown(device.close);
+    if (!sync.isLoggedIn) {
+      await sync.login(
+        serverUrl: serverUrl,
+        username: username,
+        password: password,
+        deviceName: name,
+      );
+    }
+    await sync.start();
     await device.waitForSync();
     expect(
       sync.status.value.phase,
@@ -150,6 +152,16 @@ class Device {
       reason: sync.status.value.error,
     );
     return device;
+  }
+
+  Future<void> close() async {
+    if (_closed) return;
+    _closed = true;
+    await sync.stop();
+    sync.dispose();
+    data.library.dispose();
+    await store.db.close();
+    wire.close();
   }
 
   Future<void> waitForSync() {

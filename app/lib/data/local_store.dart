@@ -228,26 +228,91 @@ class LocalStore {
   Future<void> writeStates(
     Iterable<(EpisodeState, bool)> states, {
     (QueueState, bool)? queue,
+    Map<int, EpisodeState> acknowledgedStates = const {},
+    QueueState? acknowledgedQueue,
   }) => db.transaction((txn) async {
     final batch = txn.batch();
     for (final (state, pending) in states) {
-      batch.insert('episode_states', {
+      final row = {
         'episode_id': state.episodeId,
         'position_ms': state.positionMs,
         'status': state.status.json,
         'duration_ms': state.durationMs,
         'updated_at': state.updatedAt.millisecondsSinceEpoch,
         'pending': pending ? 1 : 0,
-      }, conflictAlgorithm: ConflictAlgorithm.replace);
+      };
+      final sent = acknowledgedStates[state.episodeId];
+      if (pending) {
+        batch.insert(
+          'episode_states',
+          row,
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      } else if (sent == null) {
+        batch.update(
+          'episode_states',
+          row,
+          where: 'episode_id = ? AND updated_at < ?',
+          whereArgs: [state.episodeId, state.updatedAt.millisecondsSinceEpoch],
+        );
+        batch.insert(
+          'episode_states',
+          row,
+          conflictAlgorithm: ConflictAlgorithm.ignore,
+        );
+      } else {
+        final duration = sent.durationMs;
+        batch.update(
+          'episode_states',
+          row,
+          where:
+              'pending = 1 AND episode_id = ? AND updated_at = ? '
+              'AND position_ms = ? AND status = ? AND duration_ms '
+              '${duration == null ? 'IS NULL' : '= ?'}',
+          whereArgs: [
+            sent.episodeId,
+            sent.updatedAt.millisecondsSinceEpoch,
+            sent.positionMs,
+            sent.status.json,
+            ?duration,
+          ],
+        );
+      }
     }
     if (queue != null) {
       final (q, pending) = queue;
-      batch.insert('queue', {
+      final row = {
         'id': 1,
         'episode_ids': jsonEncode(q.episodeIds),
         'updated_at': q.updatedAt.millisecondsSinceEpoch,
         'pending': pending ? 1 : 0,
-      }, conflictAlgorithm: ConflictAlgorithm.replace);
+      };
+      if (pending) {
+        batch.insert(
+          'queue',
+          row,
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      } else if (acknowledgedQueue == null) {
+        batch.update(
+          'queue',
+          row,
+          where: 'id = 1 AND updated_at < ?',
+          whereArgs: [q.updatedAt.millisecondsSinceEpoch],
+        );
+        batch.insert('queue', row, conflictAlgorithm: ConflictAlgorithm.ignore);
+      } else {
+        batch.update(
+          'queue',
+          row,
+          where:
+              'id = 1 AND pending = 1 AND updated_at = ? AND episode_ids = ?',
+          whereArgs: [
+            acknowledgedQueue.updatedAt.millisecondsSinceEpoch,
+            jsonEncode(acknowledgedQueue.episodeIds),
+          ],
+        );
+      }
     }
     await batch.commit(noResult: true);
   });

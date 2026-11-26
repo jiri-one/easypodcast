@@ -22,6 +22,11 @@ abstract class Library extends ChangeNotifier {
   /// Episodes still eligible for queue playback, in queue order.
   List<Episode> get queue;
 
+  int? get queueHeadId => queue.firstOrNull?.id;
+
+  Future<Episode?> resolveQueueEpisode(int episodeId) async =>
+      episode(episodeId);
+
   /// New episodes of subscribed podcasts, newest first.
   List<Episode> newEpisodes({int limit = 100});
 
@@ -45,8 +50,20 @@ abstract class Library extends ChangeNotifier {
     Duration? duration,
   });
 
+  Future<void> recordPositionAt(
+    int episodeId,
+    Duration position, {
+    Duration? duration,
+    required DateTime updatedAt,
+  }) => recordPosition(episodeId, position, duration: duration);
+
   /// Marks an unfinished episode as played when playback reaches the end.
   Future<void> markCompleted(int episodeId);
+
+  Future<void> markCompletedAt(int episodeId, DateTime updatedAt) =>
+      markCompleted(episodeId);
+
+  void requestPendingSend() {}
 
   /// Played episodes keep their status when dismissal is requested.
   Future<void> dismiss(int episodeId);

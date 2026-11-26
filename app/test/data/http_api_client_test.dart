@@ -196,6 +196,46 @@ void main() {
     expect(requests.single.url.path, '/api/episodes/7/state');
   });
 
+  test('pushState rejects incomplete HTTP 200 confirmations', () async {
+    final time = DateTime.utc(2026, 11, 26, 14, 0, 0, 0, 999);
+    final played = EpisodeState(
+      episodeId: 7,
+      positionMs: 0,
+      status: EpisodeStatus.played,
+      updatedAt: time,
+    );
+    final missing = EpisodeState.initial(8);
+    final queue = QueueState(episodeIds: [7], updatedAt: time);
+    handler = (_) async => json({
+      'episodes': [played.toJson()],
+      'queue': queue.toJson(),
+    });
+    await expectLater(
+      api.pushState(episodes: [played, missing], queue: queue),
+      throwsFormatException,
+    );
+
+    handler = (_) async => json({
+      'episodes': [played.toJson()],
+      'unknown': [8],
+    });
+    await expectLater(
+      api.pushState(episodes: [played, missing], queue: queue),
+      throwsFormatException,
+    );
+
+    handler = (_) async => json({
+      'episodes': [played.toJson()],
+      'queue': queue.toJson(),
+      'unknown': [8],
+    });
+    final confirmed = await api.pushState(
+      episodes: [played, missing],
+      queue: queue,
+    );
+    expect(confirmed.unknown, [8]);
+  });
+
   test('errors carry the server message', () async {
     handler = (_) async => json({'error': 'not a usable feed'}, status: 422);
     await expectLater(

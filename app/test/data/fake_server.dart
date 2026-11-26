@@ -175,9 +175,12 @@ class FakeApiClient implements ApiClient {
   String? token;
   int? statusOverride;
   Duration? episodeStateDelay;
+  Duration? episodeStateTimeout;
   Future<void> Function()? beforeStateReply;
   Future<void> Function()? beforePodcasts;
+  Future<void> Function(int)? beforeEpisode;
   Future<void> Function()? beforePush;
+  StatePushResult Function(StatePushResult)? transformPushResult;
 
   int pushCalls = 0;
   int stateCalls = 0;
@@ -186,6 +189,7 @@ class FakeApiClient implements ApiClient {
   final Map<int, int> episodesCalls = {};
   final Map<int, int> episodesNotModified = {};
   final List<List<EpisodeState>> pushedStates = [];
+  final List<QueueState?> pushedQueues = [];
   final List<String> syncCalls = [];
 
   void _check({bool auth = true}) {
@@ -270,9 +274,12 @@ class FakeApiClient implements ApiClient {
   @override
   Future<({Episode episode, String description})> episode(int episodeId) async {
     _check();
+    await beforeEpisode?.call(episodeId);
     final episode = server._episodes.values
         .expand((l) => l)
-        .firstWhere((e) => e.id == episodeId);
+        .where((e) => e.id == episodeId)
+        .firstOrNull;
+    if (episode == null) throw ApiException(404, 'not found');
     return (episode: episode, description: server.descriptions[episodeId]!);
   }
 
@@ -299,14 +306,17 @@ class FakeApiClient implements ApiClient {
     pushCalls++;
     syncCalls.add('push');
     pushedStates.add(List.of(episodes));
+    pushedQueues.add(queue);
     if (beforePush case final hook?) await hook();
-    return server.push(episodes, queue);
+    final result = server.push(episodes, queue);
+    return transformPushResult?.call(result) ?? result;
   }
 
   @override
   Future<EpisodeState?> episodeState(int episodeId, {Duration? timeout}) async {
     _check();
     episodeStateCalls++;
+    episodeStateTimeout = timeout;
     if (episodeStateDelay case final delay?) await Future<void>.delayed(delay);
     return server.states[episodeId];
   }
@@ -343,6 +353,7 @@ class Device {
     TestClock? deviceClock,
     Duration initialBackoff = const Duration(milliseconds: 20),
     Duration maxBackoff = const Duration(milliseconds: 160),
+    Duration freshStateTimeout = const Duration(milliseconds: 100),
     Duration queueRefreshTimeout = const Duration(seconds: 2),
     Duration logoutSendTimeout = const Duration(seconds: 2),
   }) async {
@@ -363,7 +374,7 @@ class Device {
       observeLifecycle: false,
       initialBackoff: initialBackoff,
       maxBackoff: maxBackoff,
-      freshStateTimeout: const Duration(milliseconds: 100),
+      freshStateTimeout: freshStateTimeout,
       queueRefreshTimeout: queueRefreshTimeout,
       logoutSendTimeout: logoutSendTimeout,
       clock: (deviceClock ?? server.clock).call,

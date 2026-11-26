@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:easypodcast/core/api.dart';
 import 'package:easypodcast/core/models.dart';
 import 'package:easypodcast/core/sync.dart';
 import 'package:easypodcast/data/local_store.dart';
+import 'package:easypodcast/data/sqflite_library.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -38,12 +40,16 @@ void main() {
     String name, {
     bool start = true,
     Duration initialBackoff = const Duration(milliseconds: 20),
+    Duration maxBackoff = const Duration(milliseconds: 160),
+    Duration freshStateTimeout = const Duration(milliseconds: 100),
     Duration queueRefreshTimeout = const Duration(seconds: 2),
     Duration logoutSendTimeout = const Duration(seconds: 2),
   }) async {
     final d = await Device.open(
       server,
       initialBackoff: initialBackoff,
+      maxBackoff: maxBackoff,
+      freshStateTimeout: freshStateTimeout,
       queueRefreshTimeout: queueRefreshTimeout,
       logoutSendTimeout: logoutSendTimeout,
     );
@@ -445,6 +451,40 @@ void main() {
     expect(server.queue!.episodeIds, [third, second]);
   });
 
+  for (final playingLocally in [false, true]) {
+    test(
+      'bulk dismissal protects remote listening (playing locally: $playingLocally)',
+      () async {
+        final palma = await device('palma');
+        final hibreak = await device('hibreak');
+        final [queued, listening, older, chosen, newer] = episodes;
+        later();
+        await hibreak.library.enqueue(queued);
+        await hibreak.library.recordPosition(
+          listening,
+          const Duration(minutes: 9),
+        );
+        await hibreak.sync.whenIdle();
+        expect(palma.library.queue, isEmpty);
+        expect(palma.library.stateOf(listening).isNew, isTrue);
+        if (playingLocally) palma.sync.setPlayingEpisode(listening);
+
+        later();
+        palma.api.syncCalls.clear();
+        await palma.library.dismissOlder(chosen);
+        await palma.sync.whenIdle();
+        expect(palma.api.syncCalls.take(2), ['state', 'push']);
+        expect(palma.library.queue.map((entry) => entry.id), [queued]);
+        expect(server.states[queued], isNull);
+        expect(server.states[listening]?.positionMs, 540000);
+        expect(palma.library.stateOf(listening).isNew, playingLocally);
+        expect(server.states[older]?.isDismissed, isTrue);
+        expect(server.states[chosen]?.isDismissed, isTrue);
+        expect(server.states[newer], isNull);
+      },
+    );
+  }
+
   test('the newer queue wins when an older offline edit arrives', () async {
     final phone = await device('phone');
     final pc = await device('pc');
@@ -741,6 +781,77 @@ void main() {
       expect(phone.library.stateOf(episodes[0]).positionMs, 540000);
     });
 
+    test(
+      'flushes offline listening before requesting the episode state',
+      () async {
+        final phone = await device(
+          'phone',
+          initialBackoff: const Duration(seconds: 5),
+          maxBackoff: const Duration(seconds: 5),
+          freshStateTimeout: const Duration(milliseconds: 500),
+        );
+        final id = episodes.first;
+        phone.api.online = false;
+        await phone.library.recordPosition(id, const Duration(minutes: 13));
+        await phone.sync.whenIdle();
+        final offline = phone.library.stateOf(id);
+
+        phone.api.online = true;
+        final sending = Completer<void>();
+        final release = Completer<void>();
+        phone.api.beforePush = () {
+          sending.complete();
+          return release.future;
+        };
+        final check = phone.sync.freshStateBeforePlay(id);
+        try {
+          await sending.future.timeout(const Duration(seconds: 1));
+          expect(phone.api.episodeStateCalls, 0);
+        } finally {
+          release.complete();
+          await check;
+        }
+        expect(phone.api.episodeStateCalls, 1);
+        expect(phone.library.pendingCount, 0);
+        expect(server.states[id]?.toJson(), offline.toJson());
+      },
+    );
+
+    test(
+      'a delayed flush leaves only the remaining pre-play time for the GET',
+      () async {
+        const limit = Duration(milliseconds: 500);
+        final phone = await device(
+          'phone',
+          initialBackoff: const Duration(seconds: 5),
+          maxBackoff: const Duration(seconds: 5),
+          freshStateTimeout: limit,
+        );
+        phone.api.online = false;
+        await phone.library.recordPosition(
+          episodes[0],
+          const Duration(minutes: 2),
+        );
+        await phone.sync.whenIdle();
+        phone.api.online = true;
+        phone.api.beforePush = () => settle(const Duration(milliseconds: 120));
+        phone.api.episodeStateDelay = const Duration(seconds: 1);
+
+        final elapsed = Stopwatch()..start();
+        await phone.sync.freshStateBeforePlay(episodes[1]);
+        expect(phone.api.episodeStateCalls, 1);
+        expect(
+          phone.api.episodeStateTimeout,
+          lessThan(limit - const Duration(milliseconds: 100)),
+        );
+        expect(
+          elapsed.elapsed,
+          lessThan(limit + const Duration(milliseconds: 120)),
+        );
+        expect(phone.library.pendingCount, 0);
+      },
+    );
+
     test('offline or slow, it returns in time without throwing', () async {
       final phone = await device('phone');
       phone.api.online = false;
@@ -781,6 +892,200 @@ void main() {
       expect(phone.sync.status.value.phase, SyncPhase.idle);
     },
   );
+
+  test('an isolated state retries in the background when the server clock catches up', () async {
+    final ahead = TestClock(clock.now.add(const Duration(days: 2)));
+    final phone = await Device.open(server, deviceClock: ahead);
+    devices.add(phone);
+    await phone.loginAndStart('phone');
+    phone.sync.didChangeAppLifecycleState(AppLifecycleState.paused);
+    final id = episodes.first;
+    await phone.library.markPlayed(id);
+    await phone.sync.whenIdle();
+    final rejected = phone.library.stateOf(id);
+    expect(server.states[id], isNull);
+    expect(phone.sync.retryScheduled, isTrue);
+
+    final retried = Completer<void>();
+    phone.api.beforePush = () async {
+      phone.api.beforePush = null;
+      retried.complete();
+    };
+    later(const Duration(days: 2));
+    await retried.future.timeout(const Duration(seconds: 2));
+    await phone.sync.whenIdle();
+    expect(server.states[id]?.toJson(), rejected.toJson());
+    expect(phone.library.pendingCount, 0);
+  });
+
+  for (final rejectQueue in [false, true]) {
+    test(
+      'a future-dated ${rejectQueue ? 'queue' : 'state'} has independent retry',
+      () async {
+        final deviceClock = TestClock(clock.now);
+        final phone = await Device.open(
+          server,
+          deviceClock: deviceClock,
+          initialBackoff: const Duration(seconds: 5),
+          maxBackoff: const Duration(seconds: 5),
+        );
+        devices.add(phone);
+        await phone.loginAndStart('phone');
+        final [invalid, valid, queued, incoming, next] = episodes;
+        phone.api.online = false;
+        deviceClock.advance(const Duration(days: 2));
+        if (rejectQueue) {
+          await phone.library.enqueue(queued);
+        } else {
+          await phone.library.markPlayed(invalid);
+        }
+        final future = phone.library.pendingChanges();
+        deviceClock.now = clock.now;
+        await phone.library.recordPosition(valid, const Duration(minutes: 2));
+        if (!rejectQueue) await phone.library.enqueue(queued);
+        await phone.sync.whenIdle();
+        server.states[incoming] = EpisodeState(
+          episodeId: incoming,
+          positionMs: 300000,
+          status: EpisodeStatus.none,
+          updatedAt: clock.now,
+        );
+
+        phone.api.online = true;
+        await phone.sync.syncNow();
+        expect(server.states[valid]?.positionMs, 120000);
+        expect(server.queue?.episodeIds, rejectQueue ? null : [queued]);
+        expect(phone.library.stateOf(incoming).positionMs, 300000);
+        expect(phone.library.pendingCount, 1);
+        expect(phone.sync.retryScheduled, isTrue);
+        expect(server.states[invalid], isNull);
+
+        final splitAttempts = phone.api.pushCalls;
+        final remaining = phone.library.pendingChanges();
+        expect(remaining.states, future.states);
+        expect(remaining.queue, future.queue);
+        await phone.library.recordPosition(next, const Duration(minutes: 4));
+        await phone.sync.whenIdle();
+        expect(phone.api.pushCalls, splitAttempts + 1);
+        expect(phone.api.pushedStates.last.single.episodeId, next);
+        expect(phone.api.pushedQueues.last, isNull);
+        expect(server.states[next]?.positionMs, 240000);
+
+        later(const Duration(days: 2));
+        await phone.sync.syncNow();
+        expect(phone.library.pendingCount, 0);
+        if (rejectQueue) {
+          expect(server.queue?.updatedAt, future.queue!.updatedAt);
+        } else {
+          expect(
+            server.states[invalid]?.updatedAt,
+            future.states.single.updatedAt,
+          );
+        }
+      },
+    );
+  }
+
+  for (final missingQueue in [false, true]) {
+    test(
+      'a push with an unconfirmed ${missingQueue ? 'queue' : 'episode'} keeps the batch pending',
+      () async {
+        final phone = await device(
+          'phone',
+          initialBackoff: const Duration(seconds: 5),
+          maxBackoff: const Duration(seconds: 5),
+        );
+        final id = episodes.first;
+        phone.api.online = false;
+        await phone.library.recordPosition(id, const Duration(minutes: 2));
+        await phone.library.enqueue(episodes[1]);
+        await phone.sync.whenIdle();
+        phone.api.online = true;
+        phone.api.transformPushResult = (result) => StatePushResult(
+          episodes: missingQueue ? result.episodes : [],
+          queue: missingQueue ? null : result.queue,
+          unknown: [],
+        );
+        await phone.sync.syncNow();
+
+        expect(phone.sync.status.value.phase, SyncPhase.error);
+        expect(phone.library.pendingCount, 2);
+        final snapshot = await phone.store.load();
+        expect(snapshot.pendingStates, {id});
+        expect(snapshot.queuePending, isTrue);
+
+        phone.api.transformPushResult = null;
+        await phone.sync.syncNow();
+        expect(phone.library.pendingCount, 0);
+      },
+    );
+  }
+
+  for (final (gap, sendsQueue) in [
+    (Duration.zero, true),
+    (const Duration(seconds: 1), true),
+    (const Duration(seconds: 1), false),
+  ]) {
+    test(
+      'a delayed acknowledgement preserves a second writer at +$gap (sent queue: $sendsQueue)',
+      () async {
+        final directory = await Directory.systemTemp.createTemp(
+          'easypodcast-ack-',
+        );
+        addTearDown(() => directory.delete(recursive: true));
+        final path = '${directory.path}/shared.db';
+        Future<Database> open() => LocalStore.open(databaseFactoryFfi, path);
+        final phone = await Device.open(server, db: await open());
+        addTearDown(phone.close);
+        await phone.loginAndStart('phone');
+        final second = await open();
+        addTearDown(second.close);
+        final other = await SqfliteLibrary.open(
+          LocalStore(second),
+          phone.api,
+          clock: clock.call,
+        );
+        addTearDown(other.dispose);
+        final id = episodes[0];
+
+        phone.api.online = false;
+        await phone.library.recordPosition(id, const Duration(minutes: 2));
+        if (sendsQueue) await phone.library.enqueue(episodes[1]);
+        await phone.sync.whenIdle();
+        final sending = Completer<void>();
+        final release = Completer<void>();
+        phone.api.beforePush = () {
+          sending.complete();
+          return release.future;
+        };
+        phone.api.online = true;
+        final sync = phone.sync.syncNow();
+        try {
+          await sending.future.timeout(const Duration(seconds: 2));
+          if (!sendsQueue) {
+            server.queue = QueueState(
+              episodeIds: [episodes[3]],
+              updatedAt: clock.now,
+            );
+          }
+          later(gap);
+          await other.recordPosition(id, const Duration(minutes: 15));
+          await other.enqueue(episodes[2]);
+        } finally {
+          release.complete();
+          await sync;
+        }
+
+        final reopened = await open();
+        addTearDown(reopened.close);
+        final snapshot = await LocalStore(reopened).load();
+        expect(snapshot.states.single.toJson(), other.stateOf(id).toJson());
+        expect(snapshot.queue?.toJson(), other.queueState?.toJson());
+        expect(snapshot.pendingStates, {id});
+        expect(snapshot.queuePending, isTrue);
+      },
+    );
+  }
 
   test('401 logs the session out and keeps local changes', () async {
     final phone = await device('phone');
