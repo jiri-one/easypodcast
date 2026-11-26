@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EasyPodcast: návrh obrazovek</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:#fff;color:#000}
+body{font-family:"Liberation Sans",Arial,Helvetica,sans-serif;font-size:16px;line-height:1.45;padding:32px 32px 80px}
+h1{font-size:30px;line-height:1.2}
+.intro{max-width:900px;margin-top:12px;font-size:17px}
+h2{font-size:24px;line-height:1.25;margin:52px 0 10px;padding-bottom:6px;border-bottom:2px solid #000}
+.lead{max-width:900px;margin-bottom:26px}
+.figs{display:flex;flex-wrap:wrap;gap:52px 36px;align-items:flex-start}
+figure{width:254px}
+figure h3{font-size:17px;line-height:1.25;margin-bottom:10px}
+figcaption{margin-top:12px;font-size:14px;line-height:1.42}
+figcaption p+p{margin-top:6px}
+.nw{white-space:nowrap}
+svg.i{width:24px;height:24px;flex:none;fill:currentColor}
+svg.s20{width:20px;height:20px}
+
+/* HiBreak: 250 × 500 bodů, písmo jako při systémovém zvětšení 180 % */
+.ph{position:relative;box-sizing:content-box;width:250px;height:500px;border:2px solid #000;border-radius:10px;overflow:hidden;display:flex;flex-direction:column;background:#fff;color:#000;font-family:Roboto,"Liberation Sans",Arial,sans-serif;font-size:21.6px;line-height:1.2}
+.sb{flex:none;height:24px;display:flex;justify-content:space-between;align-items:center;padding:0 12px;font-size:13px;line-height:1}
+.ab{flex:none;height:52px;display:flex;align-items:center;border-bottom:1px solid #000}
+.ab .tt{min-width:0;font-size:27.6px;font-weight:700;white-space:nowrap;padding-left:12px}
+.ab .ib{flex:none;width:48px;height:48px;display:flex;align-items:center;justify-content:center}
+.ab .ib+.tt{padding-left:0}
+.ab .dd{margin-left:4px}
+.ct{flex:1;min-height:0;overflow:hidden;position:relative}
+.r{padding:10px 12px;border-bottom:1px solid #000}
+.r .t{font-size:26px}
+.r .s{font-size:21.6px}
+.la{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:52px;padding:4px 8px 4px 12px;border-bottom:1px solid #000;font-size:24.4px}
+.la .s{font-size:21.6px}
+.la .g{display:flex;align-items:center;gap:6px}
+.u{text-decoration:underline;text-decoration-thickness:1.5px;text-underline-offset:3px}
+.gh{padding:8px 12px 2px;font-size:21.6px;font-weight:700}
+.mini{flex:none;height:72px;border-top:2px solid #000;display:flex;align-items:center;gap:8px;padding:0 8px 0 12px}
+.mini .mt{flex:1;min-width:0;font-size:24.4px;line-height:1.2;max-height:58.6px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.mini .pp{flex:none;width:84px;height:58px;border-radius:8px;background:#000;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:21.6px;line-height:1.1}
+
+.btn{display:flex;align-items:center;justify-content:center;gap:6px;min-height:48px;padding:4px 6px;border:1.5px solid #000;border-radius:8px;background:#fff;color:#000;font-size:24.4px;line-height:1.2;text-align:center}
+.btn.f{background:#000;color:#fff;min-height:52px}
+.btn.v{flex-direction:column;gap:0;min-height:64px}
+.btn.v b{font-size:24.4px}
+.btn.v span{font-size:21.6px}
+.stack{display:flex;flex-direction:column;gap:6px}
+
+.ep{padding:8px 12px 0}
+.ep .et{font-size:27.6px;font-weight:700;line-height:1.2}
+.ep .st{font-size:21.6px;margin:2px 0 10px}
+.ep .meta{font-size:21.6px;margin-top:12px}
+
+.menu{position:absolute;left:0;right:0;top:76px;background:#fff;border-bottom:2px solid #000}
+.menu div{height:52px;display:flex;align-items:center;padding:0 12px;font-size:26px;border-bottom:1px solid #000}
+.menu div:last-child{border-bottom:0}
+.menu .on{background:#000;color:#fff}
+
+.dlg{position:absolute;left:10px;right:10px;background:#fff;border:2px solid #000;border-radius:8px;padding:12px 14px}
+.dlg .dh{font-size:27.6px;font-weight:700;line-height:1.2}
+.dlg .dp{font-size:24.4px;margin-top:8px}
+.dlg .bt{display:flex;justify-content:flex-end;align-items:center;gap:6px;margin-top:14px}
+.dlg .bt .btn{padding:4px 14px}
+.tb{display:flex;align-items:center;min-height:48px;padding:0 10px;font-size:24.4px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}
+.ch{height:48px;display:flex;align-items:center;justify-content:center;border:1.5px solid #000;border-radius:8px;font-size:24.4px}
+.ch.on{background:#000;color:#fff}
+
+.pl{display:flex;flex-direction:column;height:100%;padding:8px 12px 12px}
+.pl .pod{font-size:21.6px}
+.pl .ptt{font-size:27.6px;font-weight:700;line-height:1.2;height:99.4px;margin-top:2px}
+.pl .tm{font-size:26px;margin-top:4px}
+.ctrl{margin-top:auto;display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.ctrl .big{grid-column:1 / 3;min-height:64px}
+.ctrl .sk{min-height:56px}
+
+.note{margin:8px;border:2px solid #000;border-radius:8px;padding:6px 10px;font-size:21.6px}
+.info{padding:2px 12px 8px;font-size:21.6px;border-bottom:1px solid #000}
+
+.set{display:flex;align-items:center;gap:8px;padding:10px 8px 10px 12px;border-bottom:1px solid #000}
+.set .tx{flex:1;min-width:0}
+.set .t{font-size:26px}
+.set .s{font-size:21.6px}
+.seg{display:flex;margin-top:8px}
+.seg span{flex:1;height:48px;display:flex;align-items:center;justify-content:center;border:1.5px solid #000;font-size:24.4px}
+.seg span+span{border-left:0}
+.seg span:first-child{border-radius:8px 0 0 8px}
+.seg span:last-child{border-radius:0 8px 8px 0}
+.seg .on{background:#000;color:#fff}
+.sw{flex:none;width:52px;height:32px;border:2px solid #000;border-radius:16px;position:relative;background:#fff}
+.sw::after{content:"";position:absolute;top:4px;left:4px;width:20px;height:20px;border-radius:50%;background:#000}
+.sw.on{background:#000}
+.sw.on::after{left:24px;background:#fff}
+
+.rq{padding:10px 12px;border-bottom:1px solid #000;font-size:26px}
+.rq.on{background:#000;color:#fff}
+.eb{flex:none;border-top:2px solid #000;padding:8px;display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.eb .full{grid-column:1 / 3}
+
+/* Linux: okno 1000 × 620, písmo z GTK (Liberation Sans 18 pt = 24 px) */
+.dwrap{overflow-x:auto;padding:2px}
+.pc{box-sizing:content-box;width:1000px;height:620px;border:2px solid #000;display:grid;grid-template-columns:220px 360px 1fr;grid-template-rows:532px 88px;overflow:hidden;background:#fff;color:#000;font-family:"Liberation Sans",Arial,sans-serif;font-size:24px;line-height:1.25}
+.dn{border-right:1px solid #000;display:flex;flex-direction:column}
+.dn div{height:56px;flex:none;display:flex;align-items:center;padding:0 16px;border-bottom:1px solid #000;white-space:nowrap}
+.dn .on{background:#000;color:#fff}
+.dn .last{margin-top:auto;border-top:1px solid #000;border-bottom:0}
+.dl{border-right:1px solid #000;overflow:hidden}
+.dl .hd{height:56px;display:flex;align-items:center;padding:0 16px;border-bottom:1px solid #000;font-size:28px;font-weight:700}
+.dl .r{padding:10px 16px}
+.dl .r .t{font-size:24px}
+.dl .r .s{font-size:20px}
+.dl .r.on{background:#000;color:#fff}
+.de{padding:14px 24px;overflow:hidden}
+.de .pod{font-size:20px}
+.de .et{font-size:28px;font-weight:700;line-height:1.2;margin-top:2px}
+.de .st{font-size:20px;margin:4px 0 14px}
+.de .stack{max-width:360px;gap:8px}
+.de .btn{font-size:24px;min-height:52px}
+.de .meta{font-size:20px;margin-top:16px}
+.de .desc{font-size:20px;margin-top:4px}
+.dpl{grid-column:1 / -1;border-top:2px solid #000;display:flex;align-items:center;gap:12px;padding:0 16px}
+.dpl .btn{min-height:56px;font-size:24px;padding:0 16px;white-space:nowrap}
+.dpl .now{flex:1;min-width:0;padding-left:6px}
+.dpl .now .t{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dpl .now .s{font-size:20px}
+.dnote{max-width:1004px;margin-top:14px;font-size:15px;line-height:1.45}
+.dnote p+p{margin-top:6px}
+
+.leg{max-width:960px}
+.leg h3{font-size:19px;margin:28px 0 10px}
+.leg h3:first-child{margin-top:0}
+.leg ul,.leg ol{padding-left:22px}
+.leg li+li{margin-top:6px}
+table{border-collapse:collapse;width:100%}
+td,th{border:1px solid #000;padding:7px 10px;text-align:left;vertical-align:top}
+td:first-child{white-space:nowrap}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+<defs>
+<symbol id="back" viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></symbol>
+<symbol id="chev" viewBox="0 0 24 24"><path d="M10 6 8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></symbol>
+<symbol id="dn" viewBox="0 0 24 24"><path d="M16.59 8.59 12 13.17 7.41 8.59 6 10l6 6 6-6z"/></symbol>
+<symbol id="up" viewBox="0 0 24 24"><path d="M12 8l-6 6 1.41 1.41L12 10.83l4.59 4.58L18 14z"/></symbol>
+<symbol id="play" viewBox="0 0 24 24"><path d="M7 4.5v15L19.5 12z"/></symbol>
+<symbol id="pause" viewBox="0 0 24 24"><path d="M6 4.5h4.5v15H6zM13.5 4.5H18v15h-4.5z"/></symbol>
+<symbol id="plus" viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></symbol>
+<symbol id="aup" viewBox="0 0 24 24"><path d="M4 12l1.41 1.41L11 7.83V20h2V7.83l5.58 5.59L20 12l-8-8-8 8z"/></symbol>
+<symbol id="adn" viewBox="0 0 24 24"><path d="M20 12l-1.41-1.41L13 16.17V4h-2v12.17l-5.58-5.59L4 12l8 8 8-8z"/></symbol>
+</defs>
+</svg>
+
+<h1>EasyPodcast: návrh obrazovek</h1>
+<div class="intro">
+<p>Cílem návrhu je klidná aplikace jako tvoje ostatní: bílá stránka, černé písmo, tenké čáry a&nbsp;na každé obrazovce jen jedna věc. Otevře se na rozposlouchaných dílech a&nbsp;dole je pořád stejný malý přehrávač, takže pokračovat v&nbsp;poslechu jde jedním klepnutím odkudkoli. Všechno, co jde s&nbsp;dílem udělat, je na jeho stránce jako tlačítka s&nbsp;popiskem; v&nbsp;seznamech nejsou ikony, gesta ani menu ⋮ a&nbsp;stav dílu je vždy napsaný slovy. Nic se nehýbe ani neposkakuje a&nbsp;displej se během poslechu skoro nepřekresluje. Rámečky HiBreaku mají přesně 250&nbsp;×&nbsp;500 bodů a&nbsp;písmo jako při tvém systémovém zvětšení 180&nbsp;%, takže poctivě ukazují, kolik se na obrazovku vejde.</p>
+</div>
+
+<h2>Telefon (HiBreak, 250&nbsp;×&nbsp;500 bodů, písmo 180&nbsp;%)</h2>
+<p class="lead">Podcasty a&nbsp;díly jsou vymyšlené. Náhled kreslí písmem Liberation Sans, které je o&nbsp;kousek širší než Roboto v&nbsp;telefonu, takže co se vejde tady, vejde se i&nbsp;tam. Seznamy, které končí useknuté, pokračují po posunutí.</p>
+<div class="figs">
+
+<figure>
+<h3>1. Rozposlouchané</h3>
+<div class="ph">
+<div class="sb"><span>7:42</span><span>84&nbsp;%</span></div>
+<div class="ab"><span class="tt" style="font-size:25px">Rozposlouchané</span><svg class="i dd"><use href="#dn"/></svg></div>
+<div class="ct">
+<div class="r"><div class="t">Jak se kreslí mapa metra</div><div class="s">Mapa mluví</div><div class="s">zbývá 23&nbsp;min&nbsp;· stažený</div></div>
+<div class="r"><div class="t">Chleba z&nbsp;kvásku bez vážení</div><div class="s">Kuchyně bez receptu</div><div class="s">zbývá 19&nbsp;min&nbsp;· stažený</div></div>
+<div class="r"><div class="t">Komety, které se vracejí</div><div class="s">Hvězdy nad Vysočinou</div><div class="s">zbývá 1&nbsp;h&nbsp;4&nbsp;min</div></div>
+<div class="r"><div class="t">Stará židle jako nová</div><div class="s">Dílna u&nbsp;Nováků</div><div class="s">zbývá 9&nbsp;min</div></div>
+</div>
+<div class="mini"><div class="mt u">Jak se kreslí mapa metra</div><div class="pp"><svg class="i"><use href="#play"/></svg>Přehrát</div></div>
+</div>
+<figcaption>
+<p><b>Co je vidět:</b> tak se aplikace otevře. Díly, které máš rozposlouchané, naposledy poslouchaný nahoře. Pod názvem podcast a&nbsp;kolik zbývá. Dole malý přehrávač s&nbsp;dílem, který hrál naposledy.</p>
+<p><b>Klepnutí:</b> Přehrát pokračuje tam, kde poslech skončil, a&nbsp;na stejném místě se změní na „Pauza“. Podtržený název otevře přehrávač (5), řádek stránku dílu (3) a&nbsp;nadpis nahoře přepne seznam (2).</p>
+<p><b>Proč:</b> pokračovat v&nbsp;poslechu je nejčastější úkol, proto stačí jedno klepnutí odkudkoli, vždy na stejném místě. Při písmu 180&nbsp;% se vejdou dva až tři díly, další jsou po posunutí.</p>
+</figcaption>
+</figure>
+
+<figure>
+<h3>2. Přepnutí seznamu</h3>
+<div class="ph">
+<div class="sb"><span>7:42</span><span>84&nbsp;%</span></div>
+<div class="ab"><span class="tt" style="font-size:25px">Rozposlouchané</span><svg class="i dd"><use href="#up"/></svg></div>
+<div class="ct">
+<div class="r"><div class="t">Jak se kreslí mapa metra</div><div class="s">Mapa mluví</div><div class="s">zbývá 23&nbsp;min&nbsp;· stažený</div></div>
+<div class="r"><div class="t">Chleba z&nbsp;kvásku bez vážení</div><div class="s">Kuchyně bez receptu</div><div class="s">zbývá 19&nbsp;min&nbsp;· stažený</div></div>
+<div class="r"><div class="t">Komety, které se vracejí</div><div class="s">Hvězdy nad Vysočinou</div><div class="s">zbývá 1&nbsp;h&nbsp;4&nbsp;min</div></div>
+</div>
+<div class="mini"><div class="mt u">Jak se kreslí mapa metra</div><div class="pp"><svg class="i"><use href="#play"/></svg>Přehrát</div></div>
+<div class="menu">
+<div class="on">Rozposlouchané</div>
+<div>Fronta</div>
+<div>Nové díly</div>
+<div>Podcasty</div>
+<div>Stažené</div>
+<div>Nastavení</div>
+</div>
+</div>
+<figcaption>
+<p><b>Co je vidět:</b> po klepnutí na nadpis se pod ním objeví všechny seznamy a&nbsp;Nastavení. Ten, ve kterém jsi, je černý.</p>
+<p><b>Klepnutí:</b> položka otevře seznam a&nbsp;nabídka zmizí, klepnutí vedle ji zavře beze změny. Systémové Zpět vede z&nbsp;každého seznamu na Rozposlouchané, jako v&nbsp;EasyLauncheru na plochu.</p>
+<p><b>Proč:</b> dolní lišta se čtyřmi popisky by se při 180&nbsp;% vešla jen do dvou řádků (113&nbsp;px, skoro celý díl) a&nbsp;„Rozposlouchané“ by v&nbsp;ní mělo jen 15&nbsp;px. Nadpis žádné místo navíc nezabere a&nbsp;v&nbsp;nabídce je každý název celý. Za to je jiný seznam o&nbsp;jedno klepnutí dál.</p>
+</figcaption>
+</figure>
+
+<figure>
+<h3>3. Stránka dílu</h3>
+<div class="ph">
+<div class="sb"><span>7:43</span><span>84&nbsp;%</span></div>
+<div class="ab"><span class="ib"><svg class="i"><use href="#back"/></svg></span><span class="tt" style="font-size:18.4px">Kuchyně bez receptu</span></div>
+<div class="ct ep">
+<p class="et">Chleba z&nbsp;kvásku bez vážení</p>
+<p class="st">zbývá 19&nbsp;min z&nbsp;60</p>
+<div class="stack">
+<div class="btn f"><svg class="i s20"><use href="#play"/></svg>Přehrát od 41:05</div>
+<div class="btn">Přidat do fronty</div>
+<div class="btn">Smazat soubor</div>
+<div class="btn">Označit jako přehrané</div>
+<div class="btn">Vyřadit</div>
+</div>
+<p class="meta">Vyšlo 12.&nbsp;11.&nbsp;· 60&nbsp;min</p>
+<p class="meta">Kvásek, mouka, voda a&nbsp;sůl. Pekařka ukazuje, jak poznat správné těsto bez vážení.</p>
+</div>
+</div>
+<figcaption>
+<p><b>Co je vidět:</b> název, kolik zbývá a&nbsp;všechny akce jako tlačítka přes celou šířku, jen ty, které pro stav dílu dávají smysl. Pod nimi datum, délka a&nbsp;popis s&nbsp;odkazy.</p>
+<p><b>Klepnutí:</b> Přehrát od 41:05 se nejdřív nejvýš 2&nbsp;s ptá serveru na novější pozici (popisek mezitím „Zjišťuji pozici…“), pak díl hraje a&nbsp;tlačítko ukáže „Pauza“. Ostatní tlačítka se po klepnutí na stejném místě přepíšou na opak: Odebrat z&nbsp;fronty, Stáhnout, Vrátit mezi nové. Stránka zůstane otevřená.</p>
+<p><b>Proč:</b> jedna stránka pro díl ze všech seznamů i&nbsp;z&nbsp;přehrávače. Díl jde přidat do fronty i&nbsp;stáhnout bez dalšího otvírání a&nbsp;nic se pod prstem neposune. Dlouhý název podcastu v&nbsp;liště se zmenší, aby zůstal na jednom řádku.</p>
+</figcaption>
+</figure>
+
+<figure>
+<h3>4. Vyřadit díl</h3>
+<div class="ph">
+<div class="sb"><span>7:43</span><span>84&nbsp;%</span></div>
+<div class="ab"><span class="ib"><svg class="i"><use href="#back"/></svg></span><span class="tt" style="font-size:18.4px">Kuchyně bez receptu</span></div>
+<div class="ct ep">
+<p class="et">Chleba z&nbsp;kvásku bez vážení</p>
+<p class="st">zbývá 19&nbsp;min z&nbsp;60</p>
+<div class="stack">
+<div class="btn f"><svg class="i s20"><use href="#play"/></svg>Přehrát od 41:05</div>
+<div class="btn">Přidat do fronty</div>
+<div class="btn">Smazat soubor</div>
+<div class="btn">Označit jako přehrané</div>
+<div class="btn">Vyřadit</div>
+</div>
+</div>
+<div class="dlg" style="top:84px">
+<p class="dh">Vyřadit díl?</p>
+<p class="dp">Pozice 41:05 se zapomene a&nbsp;stažený soubor se smaže.</p>
+<div class="bt"><span class="tb">Zrušit</span><span class="btn f">Vyřadit</span></div>
+</div>
+</div>
+<figcaption>
+<p><b>Co je vidět:</b> otázka a&nbsp;jedna věta o&nbsp;tom, co se ztratí. Stránka za dialogem se neztmaví, dialog má obrys 2&nbsp;px.</p>
+<p><b>Klepnutí:</b> Vyřadit díl vyřadí: zmizí z&nbsp;rozposlouchaných, z&nbsp;fronty i&nbsp;z&nbsp;nových dílů, mezi přehrané se nepočítá a&nbsp;v&nbsp;detailu podcastu zůstane jako vyřazený. Na stránce pak místo Vyřadit stojí Vrátit mezi nové. Zrušit nic nezmění, klepnutí vedle dialog nezavře.</p>
+<p><b>Proč:</b> aplikace se ptá, jen když by se něco ztratilo, tedy pozice nebo stažený soubor; nový nestažený díl vyřadí hned. Potvrzení je jinde než tlačítko na stránce, takže nechtěné dvojí klepnutí nic neudělá.</p>
+</figcaption>
+</figure>
+
+<figure>
+<h3>5. Přehrávač</h3>
+<div class="ph">
+<div class="sb"><span>7:44</span><span>84&nbsp;%</span></div>
+<div class="ab"><span class="ib"><svg class="i"><use href="#back"/></svg></span><span class="tt">Přehrávač</span></div>
+<div class="ct">
+<div class="pl">
+<p class="pod">Mapa mluví</p>
+<p class="ptt u">Jak se kreslí mapa metra</p>
+<p class="tm">zbývá 23&nbsp;min z&nbsp;55</p>
+<div class="ctrl">
+<div class="btn f big"><svg class="i"><use href="#pause"/></svg>Pauza</div>
+<div class="btn sk">−15&nbsp;s</div>
+<div class="btn sk">+30&nbsp;s</div>
+<div class="btn v"><span>Rychlost</span><b>1,2×</b></div>
+<div class="btn v"><span>Spánek</span><b>vypnutý</b></div>
+</div>
+</div>
+</div>
+</div>
+<figcaption>
+<p><b>Co je vidět:</b> podcast, název dílu, kolik zbývá, velká Pauza, skoky, rychlost a&nbsp;časovač spánku. Ovládání je dole pod palcem.</p>
+<p><b>Klepnutí:</b> Pauza se na stejném místě změní na „Přehrát“. −15&nbsp;s a&nbsp;+30&nbsp;s skočí (délky jdou změnit v&nbsp;Nastavení). Rychlost a&nbsp;Spánek otevřou volbu (6). Podtržený název otevře stránku dílu se všemi akcemi.</p>
+<p><b>Proč:</b> čas se obnoví jednou za minutu a&nbsp;hned po každém klepnutí, proto je v&nbsp;minutách a&nbsp;nikdy neukazuje staré sekundy (návrh k&nbsp;O15). Posuvník tu není, pozice se nedá posunout omylem (O10). Název má vyhrazené tři řádky, aby tlačítka zůstala na místě. Zapnutý spánek je černý a&nbsp;místo „vypnutý“ ukazuje pevný čas konce, třeba „do 23:20“.</p>
+</figcaption>
+</figure>
+
+<figure>
+<h3>6. Rychlost</h3>
+<div class="ph">
+<div class="sb"><span>7:44</span><span>84&nbsp;%</span></div>
+<div class="ab"><span class="ib"><svg class="i"><use href="#back"/></svg></span><span class="tt">Přehrávač</span></div>
+<div class="ct">
+<div class="pl">
+<p class="pod">Mapa mluví</p>
+<p class="ptt u">Jak se kreslí mapa metra</p>
+<p class="tm">zbývá 23&nbsp;min z&nbsp;55</p>
+<div class="ctrl">
+<div class="btn f big"><svg class="i"><use href="#pause"/></svg>Pauza</div>
+<div class="btn sk">−15&nbsp;s</div>
+<div class="btn sk">+30&nbsp;s</div>
+<div class="btn v"><span>Rychlost</span><b>1,2×</b></div>
+<div class="btn v"><span>Spánek</span><b>vypnutý</b></div>
+</div>
+</div>
+</div>
+<div class="dlg" style="top:60px">
+<p class="dh">Rychlost</p>
+<p class="dp">Platí pro všechny podcasty.</p>
+<div class="grid2">
+<span class="ch">0,8×</span><span class="ch">1,0×</span>
+<span class="ch">1,1×</span><span class="ch on">1,2×</span>
+<span class="ch">1,3×</span><span class="ch">1,5×</span>
+<span class="ch">1,7×</span><span class="ch">2,0×</span>
+</div>
+<div class="bt"><span class="tb">Zavřít</span></div>
+</div>
+</div>
+<figcaption>
+<p><b>Co je vidět:</b> všechny rychlosti najednou, nastavená je černá.</p>
+<p><b>Klepnutí:</b> volba hned platí a&nbsp;dialog se zavře. Spánek má stejný dialog s&nbsp;volbami Vypnuto, 15, 30, 45 a&nbsp;60&nbsp;min a&nbsp;Do konce dílu. Věta nad nimi říká, kdy se přehrávání zastaví.</p>
+<p><b>Proč:</b> jedno klepnutí a&nbsp;jedno překreslení místo posuvníku nebo krokování po desetinách. Rychlost je jedna pro všechny podcasty (O8).</p>
+</figcaption>
+</figure>
+
+<figure>
+<h3>7. Fronta</h3>
+<div class="ph">
+<div class="sb"><span>7:45</span><span>84&nbsp;%</span></div>
+<div class="ab"><span class="tt">Fronta</span><svg class="i dd"><use href="#dn"/></svg></div>
+<div class="ct">
+<div class="la"><span class="u">Upravit pořadí</span><svg class="i"><use href="#chev"/></svg></div>
+<div class="r"><div class="t">1. Ulice, které změnily jméno</div><div class="s">Mapa mluví</div><div class="s">nový&nbsp;· 52&nbsp;min</div></div>
+<div class="r"><div class="t">2. Polévka z&nbsp;toho, co zbylo</div><div class="s">Kuchyně bez receptu</div><div class="s">zbývá 12&nbsp;min</div></div>
+<div class="r"><div class="t">3. Co uvidíme v&nbsp;prosinci</div><div class="s">Hvězdy nad Vysočinou</div><div class="s">nový&nbsp;· 38&nbsp;min</div></div>
+</div>
+<div class="mini"><div class="mt u">Jak se kreslí mapa metra</div><div class="pp"><svg class="i"><use href="#pause"/></svg>Pauza</div></div>
+</div>
+<figcaption>
+<p><b>Co je vidět:</b> díly v&nbsp;pořadí, v&nbsp;jakém půjdou, s&nbsp;číslem před názvem. U&nbsp;nového dílu délka, u&nbsp;rozposlouchaného kolik zbývá. Nahoře Upravit pořadí.</p>
+<p><b>Klepnutí:</b> řádek otevře stránku dílu, kde je Odebrat z&nbsp;fronty. Upravit pořadí otevře úpravu (8).</p>
+<p><b>Proč:</b> po dohrání dílu začne hrát další z&nbsp;fronty; v&nbsp;Nastavení to jde vypnout. Akce pro celý seznam je vždy jeho první řádek, nikdy na konci dlouhého seznamu.</p>
+</figcaption>
+</figure>
+
+<figure>
+<h3>8. Pořadí fronty</h3>
+<div class="ph">
+<div class="sb"><span>7:46</span><span>84&nbsp;%</span></div>
+<div class="ab"><span class="ib"><svg class="i"><use href="#back"/></svg></span><span class="tt">Pořadí fronty</span></div>
+<div class="ct">
+<div class="rq">1. Ulice, které změnily jméno</div>
+<div class="rq on">2. Polévka z&nbsp;toho, co zbylo</div>
+<div class="rq">3. Co uvidíme v&nbsp;prosinci</div>
+<div class="rq">4. Proč říkáme ahoj</div>
+</div>
+<div class="eb">
+<div class="btn"><svg class="i s20"><use href="#aup"/></svg>Výš</div>
+<div class="btn"><svg class="i s20"><use href="#adn"/></svg>Níž</div>
+<div class="btn full">Na začátek fronty</div>
+</div>
+</div>
+<figcaption>
+<p><b>Co je vidět:</b> jen názvy s&nbsp;pořadím, vybraný díl je černý. Dole pevná tlačítka.</p>
+<p><b>Klepnutí:</b> řádek díl vybere, Výš a&nbsp;Níž ho posunou o&nbsp;jedno místo, Na začátek fronty úplně nahoru. Zpět úpravu ukončí a&nbsp;celou frontu jednou odešle. Než něco vybereš, stojí místo tlačítek věta „Klepni na díl, který chceš posunout.“</p>
+<p><b>Proč:</b> bez tahání prstem, při posunu se překreslí jen dva řádky. Před úpravou si aplikace nejvýš 2&nbsp;s stahuje aktuální frontu ze serveru („Načítám frontu…“), jak chce specifikace.</p>
+</figcaption>
+</figure>
+
+<figure>
+<h3>9. Nové díly</h3>
+<div class="ph">
+<div class="sb"><span>7:47</span><span>84&nbsp;%</span></div>
+<div class="ab"><span class="tt">Nové díly</span><svg class="i dd"><use href="#dn"/></svg></div>
+<div class="ct">
+<div class="la"><span class="u">Obnovit</span><span class="s">načteno 7:40</span></div>
+<p class="gh">Dnes</p>
+<div class="r"><div class="t">Ulice, které změnily jméno</div><div class="s">Mapa mluví</div><div class="s">52&nbsp;min&nbsp;· ve&nbsp;frontě</div></div>
+<p class="gh">Včera</p>
+<div class="r"><div class="t">Co uvidíme v&nbsp;prosinci</div><div class="s">Hvězdy nad Vysočinou</div><div class="s">38&nbsp;min&nbsp;· ve&nbsp;frontě</div></div>
+<p class="gh">Po 23.&nbsp;11.</p>
+<div class="r"><div class="t">Týden bez spěchu: <span class="nw">16.–22.&nbsp;listopadu</span></div><div class="s">Pomalé zprávy</div><div class="s">41&nbsp;min</div></div>
+</div>
+<div class="mini"><div class="mt u">Jak se kreslí mapa metra</div><div class="pp"><svg class="i"><use href="#pause"/></svg>Pauza</div></div>
+</div>
+<figcaption>
+<p><b>Co je vidět:</b> nové díly ze všech podcastů po dnech, nejnovější nahoře. Díl, který už je ve frontě, to má napsané. Nahoře čas, kdy server naposledy načetl feedy.</p>
+<p><b>Klepnutí:</b> řádek otevře stránku dílu. Obnovit řekne serveru, ať stáhne feedy hned, a&nbsp;do té doby píše „Obnovuji…“.</p>
+<p><b>Proč:</b> je to návrh k&nbsp;O7. Samostatný seznam je jen jednou položkou nabídky, takže když ho nebudeš chtít, zmizí jen ta. Díl odsud zmizí, když ho začneš poslouchat, vyřadíš nebo označíš jako přehraný.</p>
+</figcaption>
+</figure>
+
+<figure>
+<h3>10. Podcasty</h3>
+<div class="ph">
+<div class="sb"><span>7:48</span><span>84&nbsp;%</span></div>
+<div class="ab"><span class="tt">Podcasty</span><svg class="i dd"><use href="#dn"/></svg></div>
+<div class="ct">
+<div class="la"><span class="g"><svg class="i"><use href="#plus"/></svg><span class="u">Přidat podcast</span></span></div>
+<div class="r"><div class="t">Mapa mluví</div><div class="s">41 přehraných</div></div>
+<div class="r"><div class="t">Stará rádia</div><div class="s">30 přehraných</div><div class="s"><b>Feed nejde stáhnout od 24.&nbsp;11.</b></div></div>
+<div class="r"><div class="t">Kuchyně bez receptu</div><div class="s">28 přehraných</div></div>
+<div class="r"><div class="t">Pomalé zprávy</div><div class="s">19 přehraných</div></div>
+</div>
+<div class="mini"><div class="mt u">Jak se kreslí mapa metra</div><div class="pp"><svg class="i"><use href="#pause"/></svg>Pauza</div></div>
+</div>
+<figcaption>
+<p><b>Co je vidět:</b> odběry podle počtu přehraných dílů. Chyba feedu je tučně přímo u&nbsp;podcastu.</p>
+<p><b>Klepnutí:</b> podcast otevře své díly (11). Přidat podcast otevře pole pro adresu feedu.</p>
+<p><b>Proč:</b> počet přehraných vysvětluje pořadí, víc v&nbsp;řádku není. Abecední řazení se zapíná v&nbsp;Nastavení (14).</p>
+</figcaption>
+</figure>
+
+<figure>
+<h3>11. Detail podcastu</h3>
+<div class="ph">
+<div class="sb"><span>7:48</span><span>84&nbsp;%</span></div>
+<div class="ab"><span class="ib"><svg class="i"><use href="#back"/></svg></span><span class="tt">Mapa mluví</span></div>
+<div class="ct">
+<div class="la"><span class="u">O&nbsp;podcastu</span><svg class="i"><use href="#chev"/></svg></div>
+<div class="r"><div class="t">Ulice, které změnily jméno</div><div class="s"><b>nový</b>&nbsp;· 26.&nbsp;11.&nbsp;· ve&nbsp;frontě</div></div>
+<div class="r"><div class="t">Jak se kreslí mapa metra</div><div class="s"><b>hraje</b>&nbsp;· 18.&nbsp;11.&nbsp;· stažený</div></div>
+<div class="r"><div class="t">Proč řeky nejsou rovné</div><div class="s">přehraný&nbsp;· 11.&nbsp;11.</div></div>
+<div class="r"><div class="t">Hranice, které nevidíš</div><div class="s">vyřazený&nbsp;· 4.&nbsp;11.</div></div>
+</div>
+<div class="mini"><div class="mt u">Jak se kreslí mapa metra</div><div class="pp"><svg class="i"><use href="#pause"/></svg>Pauza</div></div>
+</div>
+<figcaption>
+<p><b>Co je vidět:</b> všechny díly podcastu od nejnovějšího, u&nbsp;každého stav slovy a&nbsp;datum. „nový“ a&nbsp;„hraje“ jsou tučně, aby šly najít i&nbsp;v&nbsp;dlouhém seznamu.</p>
+<p><b>Klepnutí:</b> díl otevře svou stránku. O&nbsp;podcastu ukáže popis, adresu feedu, kdy se naposledy načetl a&nbsp;poslední chybu a&nbsp;nabídne Zrušit odběr; díly i&nbsp;jejich stav zůstanou.</p>
+<p><b>Proč:</b> slovo se na e-inku přečte vždycky, ikona stavu by se musela učit. Vyřazené díly zůstávají vidět (O21) a&nbsp;jdou vrátit mezi nové.</p>
+</figcaption>
+</figure>
+
+<figure>
+<h3>12. Stránka nového dílu</h3>
+<div class="ph">
+<div class="sb"><span>7:49</span><span>84&nbsp;%</span></div>
+<div class="ab"><span class="ib"><svg class="i"><use href="#back"/></svg></span><span class="tt">Mapa mluví</span></div>
+<div class="ct ep">
+<p class="et">Zmizelé ostrovy</p>
+<p class="st">nový&nbsp;· 47&nbsp;min</p>
+<div class="stack">
+<div class="btn f"><svg class="i s20"><use href="#play"/></svg>Přehrát</div>
+<div class="btn">Přidat do fronty</div>
+<div class="btn">Stáhnout</div>
+<div class="btn">Označit jako přehrané</div>
+<div class="btn">Vyřadit</div>
+<div class="btn">Vyřadit i&nbsp;starší</div>
+</div>
+</div>
+</div>
+<figcaption>
+<p><b>Co je vidět:</b> stránka nového dílu. Hlavní tlačítko je Přehrát a&nbsp;navíc je tu Vyřadit i&nbsp;starší.</p>
+<p><b>Klepnutí:</b> Vyřadit nový nestažený díl vyřadí hned, bez otázky. Vyřadit i&nbsp;starší se zeptá „Vyřadit 6 dílů?“ s&nbsp;větou „Tento a&nbsp;5 starších nových dílů. Rozposlouchané, přehrané a&nbsp;díly ve frontě zůstanou.“ a&nbsp;tlačítky Zrušit a&nbsp;Vyřadit 6 dílů.</p>
+<p><b>Proč:</b> hromadné vyřazení začíná od dílu, který vybereš, a&nbsp;týká se jen nových dílů tohoto podcastu, jak chce specifikace. Je poslední, protože se používá nejméně. Přehraný díl Vyřadit nemá, má jen Vrátit mezi nové.</p>
+</figcaption>
+</figure>
+
+<figure>
+<h3>13. Stažené (bez spojení)</h3>
+<div class="ph">
+<div class="sb"><span>7:50</span><span>84&nbsp;%</span></div>
+<div class="ab"><span class="tt">Stažené</span><svg class="i dd"><use href="#dn"/></svg></div>
+<div class="ct">
+<p class="note"><b>Bez spojení.</b> Pozice se odešlou po připojení.</p>
+<p class="info">119&nbsp;MB, volno 9,1&nbsp;GB</p>
+<div class="r"><div class="t">Co uvidíme v&nbsp;prosinci</div><div class="s">Hvězdy nad Vysočinou</div><div class="s">čeká na <span class="nw">Wi-Fi</span></div></div>
+<div class="r"><div class="t">Jak se kreslí mapa metra</div><div class="s">Mapa mluví</div><div class="s"><b>hraje</b>&nbsp;· 58&nbsp;MB</div></div>
+<div class="r"><div class="t">Chleba z&nbsp;kvásku bez vážení</div><div class="s">Kuchyně bez receptu</div><div class="s">zbývá 19&nbsp;min&nbsp;· 61&nbsp;MB</div></div>
+</div>
+<div class="mini"><div class="mt u">Jak se kreslí mapa metra</div><div class="pp"><svg class="i"><use href="#pause"/></svg>Pauza</div></div>
+</div>
+<figcaption>
+<p><b>Co je vidět:</b> díly v&nbsp;telefonu a&nbsp;ty, které na stažení čekají; nahoře kolik zabírají a&nbsp;kolik je volno. Telefon nemá spojení se serverem, proto je nad seznamem věta v&nbsp;rámečku.</p>
+<p><b>Klepnutí:</b> řádek otevře stránku dílu, kde je Smazat soubor, nebo při stahování Zrušit stahování.</p>
+<p><b>Proč:</b> stav spojení se ukáže, jen když je problém. Stahování píše „Stahuji…“ bez procent, aby se řádek pořád nepřekresloval. Na PC tahle obrazovka není.</p>
+</figcaption>
+</figure>
+
+<figure>
+<h3>14. Nastavení</h3>
+<div class="ph">
+<div class="sb"><span>7:51</span><span>84&nbsp;%</span></div>
+<div class="ab"><span class="ib"><svg class="i"><use href="#back"/></svg></span><span class="tt">Nastavení</span></div>
+<div class="ct">
+<div class="set"><div class="tx"><div class="t">Server</div><div class="s">Spojeno</div></div><svg class="i"><use href="#chev"/></svg></div>
+<div class="set"><div class="tx"><div class="t">Pokračovat frontou</div><div class="s">Po dohrání hraje další díl.</div></div><span class="sw on"></span></div>
+<div class="set"><div class="tx"><div class="t">Rychlost</div><div class="s">1,2×</div></div><svg class="i"><use href="#chev"/></svg></div>
+<div class="set"><div class="tx"><div class="t">Skok zpět</div><div class="seg"><span>10&nbsp;s</span><span class="on">15&nbsp;s</span><span>30&nbsp;s</span></div></div></div>
+<div class="set"><div class="tx"><div class="t">Skok vpřed</div><div class="seg"><span>15&nbsp;s</span><span class="on">30&nbsp;s</span><span>60&nbsp;s</span></div></div></div>
+</div>
+</div>
+<figcaption>
+<p><b>Co je vidět:</b> jeden plochý seznam, pod každým názvem aktuální hodnota, problém tučně. Malý přehrávač tu není. Níž jsou Skok vpřed, Stahování (O12), Řadit podcasty abecedně (přepínač), Stav feedů, Import a&nbsp;export OPML a&nbsp;verze.</p>
+<p><b>Klepnutí:</b> volba skoku i&nbsp;přepínač platí hned, bez ukládání. Rychlost otevře stejný dialog jako v&nbsp;přehrávači. Řádek se šipkou otevře další stránku: server, zařízení a&nbsp;odhlášení, stahování, stav jednotlivých feedů, OPML. Zpět vede tam, odkud jsi Nastavení otevřel.</p>
+<p><b>Proč:</b> hodnoty jsou vidět přímo v&nbsp;řádku jako v&nbsp;EasyDictu. Když se nedaří odesílat stav, napíše to řádek Server tučně.</p>
+</figcaption>
+</figure>
+
+</div>
+
+<h2>Počítač (Linux, okno 1000&nbsp;×&nbsp;620)</h2>
+<div class="dwrap">
+<div class="pc">
+<div class="dn">
+<div class="on">Rozposlouchané</div>
+<div>Fronta</div>
+<div>Nové díly</div>
+<div>Podcasty</div>
+<div class="last">Nastavení</div>
+</div>
+<div class="dl">
+<div class="hd">Rozposlouchané</div>
+<div class="r"><div class="t">Jak se kreslí mapa metra</div><div class="s">Mapa mluví</div><div class="s"><b>hraje</b></div></div>
+<div class="r on"><div class="t">Chleba z&nbsp;kvásku bez vážení</div><div class="s">Kuchyně bez receptu</div><div class="s">zbývá 19&nbsp;min</div></div>
+<div class="r"><div class="t">Komety, které se vracejí</div><div class="s">Hvězdy nad Vysočinou</div><div class="s">zbývá 1&nbsp;h&nbsp;4&nbsp;min</div></div>
+<div class="r"><div class="t">Stará židle jako nová</div><div class="s">Dílna u&nbsp;Nováků</div><div class="s">zbývá 9&nbsp;min</div></div>
+<div class="r"><div class="t">Týden bez spěchu: <span class="nw">9.–15.&nbsp;listopadu</span></div><div class="s">Pomalé zprávy</div><div class="s">zbývá 31&nbsp;min</div></div>
+</div>
+<div class="de">
+<p class="pod">Kuchyně bez receptu</p>
+<p class="et">Chleba z&nbsp;kvásku bez vážení</p>
+<p class="st">zbývá 19&nbsp;min z&nbsp;60</p>
+<div class="stack">
+<div class="btn f"><svg class="i s20"><use href="#play"/></svg>Přehrát od 41:05</div>
+<div class="btn">Přidat do fronty</div>
+<div class="btn">Označit jako přehrané</div>
+<div class="btn">Vyřadit</div>
+</div>
+<p class="meta">Vyšlo 12.&nbsp;11.&nbsp;· 60&nbsp;min</p>
+<p class="desc">Kvásek, mouka, voda a&nbsp;sůl. Pekařka ukazuje, jak poznat správné těsto bez vážení a&nbsp;proč chleba někdy nenaroste. Postup je na <span class="u">kuchyne.example.org</span>.</p>
+</div>
+<div class="dpl">
+<span class="btn">−15&nbsp;s</span>
+<span class="btn f"><svg class="i"><use href="#pause"/></svg>Pauza</span>
+<span class="btn">+30&nbsp;s</span>
+<div class="now"><div class="t u">Jak se kreslí mapa metra</div><div class="s">Mapa mluví&nbsp;· zbývá 23&nbsp;min z&nbsp;55</div></div>
+<span class="btn">Rychlost 1,2×</span>
+</div>
+</div>
+</div>
+<div class="dnote">
+<p><b>Co je vidět:</b> stejná aplikace v&nbsp;okně 1000&nbsp;×&nbsp;620 s&nbsp;písmem z&nbsp;GTK (Liberation Sans 18&nbsp;pt, tedy 24&nbsp;px). Seznamy jsou ve sloupci vlevo, vybraný seznam uprostřed, vybraný díl vpravo se stejnými tlačítky jako v&nbsp;telefonu a&nbsp;dole přehrávač přes celou šířku. Stažené a&nbsp;Spánek tu nejsou.</p>
+<p><b>Klik a&nbsp;klávesy:</b> klik na díl ho vybere (řádek zčerná) a&nbsp;ukáže ho vpravo; Přehrát ho pustí bez přepínání obrazovky. Podtržený název dole ukáže vpravo hrající díl. Mezerník přehraje a&nbsp;pozastaví, šipky vlevo a&nbsp;vpravo skočí o&nbsp;15&nbsp;s zpět a&nbsp;30&nbsp;s vpřed, nahoru a&nbsp;dolů vybírají díl, Esc vede zpět. Mediální klávesy fungují přes MPRIS a&nbsp;prvek s&nbsp;fokusem z&nbsp;klávesnice dostane rámeček 3&nbsp;px.</p>
+<p><b>Proč:</b> žádné nové prvky, jen jiné rozložení stejných, takže samostatný přehrávač na PC odpadá. Prohlížeč neumí ukázat písmo bez vyhlazování, v&nbsp;aplikaci bude ostřejší.</p>
+</div>
+
+<h2>Legenda</h2>
+<div class="leg">
+
+<h3>Stavy dílu</h3>
+<table>
+<tr><th>V&nbsp;řádku</th><th>Znamená</th></tr>
+<tr><td><b>nový</b></td><td>Díl ještě nehrál, nebo hrál méně než minutu. V&nbsp;detailu podcastu tučně, v&nbsp;Nových dílech se nepíše.</td></tr>
+<tr><td>zbývá 23&nbsp;min</td><td>Rozposlouchaný: má pozici aspoň minutu a&nbsp;není přehraný ani vyřazený. Číslo se mění jen po pauze, skoku nebo dohrání.</td></tr>
+<tr><td><b>hraje</b></td><td>Právě hraje. Stojí místo zbývajícího času, aby se seznam během poslechu nepřekresloval; po pauze se zbývající čas zase ukáže.</td></tr>
+<tr><td>přehraný</td><td>Doposlouchaný nebo ručně označený. Počítá se do řazení podcastů. Nedá se vyřadit, jen vrátit mezi nové.</td></tr>
+<tr><td>vyřazený</td><td>„Už nechci poslouchat“: bez pozice, pryč z&nbsp;rozposlouchaných, z&nbsp;fronty i&nbsp;z&nbsp;nových, mezi přehrané se nepočítá. Když ho pustíš, hraje od začátku.</td></tr>
+<tr><td>stažený</td><td>Soubor je v&nbsp;telefonu, píše se za stav. Během stahování „Stahuji…“, bez sítě „čeká na <span class="nw">Wi-Fi</span>“. Na PC se nepíše.</td></tr>
+<tr><td>ve frontě</td><td>Díl je ve frontě. Píše se v&nbsp;Nových dílech a&nbsp;v&nbsp;detailu podcastu.</td></tr>
+</table>
+
+<h3>Jak se pohybuješ</h3>
+<ul>
+<li>Aplikace se otevře na Rozposlouchaných. Nadpis se šipkou přepíná mezi Rozposlouchanými, Frontou, Novými díly, Podcasty a&nbsp;Staženými a&nbsp;otevře Nastavení. Systémové Zpět vede z&nbsp;každého seznamu na Rozposlouchané.</li>
+<li>Řádek dílu otevře v&nbsp;každém seznamu stejnou stránku dílu, řádek podcastu jeho detail. Podstránky mají v&nbsp;liště šipku zpět.</li>
+<li>Malý přehrávač je dole na všech seznamech a&nbsp;v&nbsp;detailu podcastu: tlačítko přehraje nebo pozastaví, podtržený název otevře přehrávač.</li>
+</ul>
+
+<h3>Pravidla, která návrh dodržuje</h3>
+<ul>
+<li><b>Barvy:</b> jen černá a&nbsp;bílá, šedá nikde. Vybrané nebo zapnuté je obrácené: černá plocha a&nbsp;bílé písmo. Stejně vypadá hlavní tlačítko.</li>
+<li><b>Písmo</b> (v&nbsp;aplikaci v&nbsp;sp, v&nbsp;rámečcích v&nbsp;px při 180&nbsp;%): název dílu v&nbsp;seznamu 16&nbsp;sp = 26&nbsp;px, vedlejší řádky 12&nbsp;sp = 21,6&nbsp;px, tlačítka 14&nbsp;sp = 24,4&nbsp;px, nadpis v&nbsp;liště a&nbsp;název na stránce dílu a&nbsp;v&nbsp;přehrávači 18&nbsp;sp = 27,6&nbsp;px tučně. Nadpis v&nbsp;liště zůstává na jednom řádku a&nbsp;dlouhý se zmenší, ostatní text se zalamuje a&nbsp;nezkracuje. Jedinou výjimkou je malý přehrávač: dva řádky a&nbsp;„…“. Tučně jsou jen nadpisy, hodnoty v&nbsp;přehrávači, slova „nový“ a&nbsp;„hraje“ a&nbsp;problémy, bez kurzívy a&nbsp;verzálek. Na PC písmo a&nbsp;velikost z&nbsp;GTK.</li>
+<li><b>Řádek seznamu:</b> celý řádek je jedno místo pro klepnutí, okraj 10&nbsp;px nahoře a&nbsp;dole a&nbsp;12&nbsp;px po stranách, nejméně 56&nbsp;px. Při 180&nbsp;% bývá vysoký 80 až 135&nbsp;px.</li>
+<li><b>Dotykové plochy:</b> nejméně 48&nbsp;×&nbsp;48&nbsp;px. Tlačítka přes celou šířku jsou vysoká 48&nbsp;px, Pauza v&nbsp;přehrávači 64&nbsp;px, tlačítko v&nbsp;malém přehrávači 84&nbsp;×&nbsp;58&nbsp;px a&nbsp;celá horní lišta je jedno místo pro klepnutí.</li>
+<li><b>Čáry:</b> 1&nbsp;px mezi řádky a&nbsp;pod horní lištou, 2&nbsp;px nad malým přehrávačem a&nbsp;kolem dialogů, nabídky a&nbsp;upozornění. Obrys tlačítek 1,5&nbsp;px, rohy 8&nbsp;px. Žádné stíny, přechody ani ztmavení pozadí.</li>
+<li><b>Nic neposkočí:</b> malý přehrávač má pevnou výšku 72&nbsp;px, název v&nbsp;přehrávači vyhrazené tři řádky a&nbsp;tlačítka mění popisek na stejném místě.</li>
+<li><b>Bez pohybu:</b> žádné animace, vlnky po dotyku ani přechody obrazovek. Nabídka a&nbsp;dialogy se objeví naráz a&nbsp;dialog nezavře klepnutí vedle.</li>
+<li><b>Překreslování:</b> během poslechu se mění jen čas v&nbsp;přehrávači, jednou za minutu a&nbsp;po každém klepnutí. Seznamy ukazují „hraje“, stahování „Stahuji…“ bez procent.</li>
+<li><b>Synchronizace</b> je vidět, jen když je co říct: věta „Bez spojení…“ nad seznamem a&nbsp;„Zjišťuji pozici…“ nejvýš 2&nbsp;s před přehráním, v&nbsp;tlačítku nebo v&nbsp;malém přehrávači místo názvu.</li>
+<li><b>Texty:</b> tykání, tlačítka o&nbsp;jednom až třech slovech, zprávy celou větou bez vykřičníku.</li>
+</ul>
+
+<h3>Záměrně chybí</h3>
+<p>Dolní lišta, karty, odznaky a&nbsp;počty v&nbsp;nabídce, obrázky podcastů (O11), ikony a&nbsp;tlačítka v&nbsp;řádcích, menu ⋮, přejetí prstem, dlouhé podržení, tahání a&nbsp;tah dolů pro obnovení, posuvník pozice (O10), procenta stahování, hledání v&nbsp;adresáři podcastů (O14), kapitoly a&nbsp;přeskakování ticha (O8).</p>
+
+<h3>Otázky k&nbsp;návrhu</h3>
+<ol>
+<li><b>Přepínání seznamů:</b> stačí ti nadpis se šipkou nahoře (víc místa pro díly, jiný seznam je o&nbsp;klepnutí dál), nebo chceš dolní lištu ze specifikace? Při 180&nbsp;% by měla dva řádky a&nbsp;„Rozposlouchané“ by se do ní vešlo jen zmenšené.</li>
+<li><b>Nové díly (O7):</b> chceš je jako samostatný seznam, nebo ti stačí detail podcastu?</li>
+<li><b>Vyřazení (O21):</b> sedí ti název Vyřadit a&nbsp;to, že se aplikace ptá, jen když by se ztratila pozice nebo stažený soubor? Mají vyřazené díly zůstat vidět v&nbsp;detailu podcastu?</li>
+<li><b>Čas v&nbsp;přehrávači (O15):</b> stačí „zbývá 23&nbsp;min z&nbsp;55“ po minutách, nebo chceš i&nbsp;sekundy za cenu častějšího překreslování?</li>
+<li><b>Hustota:</b> při 180&nbsp;% se do seznamu vejdou dva až tři díly. Je to tak v&nbsp;pořádku, nebo radši vynechat řádek s&nbsp;názvem podcastu (zůstal by na stránce dílu)?</li>
+<li><b>Přehrát na stránce dílu:</b> díl začne hrát a&nbsp;ty zůstaneš na stránce. Chceš to tak, nebo radši rovnou přejít do přehrávače?</li>
+</ol>
+</div>
+
+</body>
+</html>
