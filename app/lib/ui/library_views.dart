@@ -291,13 +291,17 @@ class EpisodeList extends StatelessWidget {
         title: kind == EpisodeListKind.queue
             ? strings.numberedTitle(index + 1, episode.title)
             : episode.title,
+        overline: kind != EpisodeListKind.podcast && podcast != null
+            ? Text(
+                podcast,
+                style: detailStyle.copyWith(fontWeight: FontWeight.w700),
+              )
+            : null,
         selected: desktop ? episode.id == selectedId : null,
         lifted: lifted,
         desktop: desktop,
         onPressed: () => onOpen(episode),
         details: [
-          if (kind != EpisodeListKind.podcast && podcast != null)
-            Text(podcast, style: detailStyle),
           if (parts.isNotEmpty || downloaded)
             _EpisodeMetadata(
               parts: parts,
@@ -374,7 +378,7 @@ class _EpisodeMetadata extends StatelessWidget {
       builder: (context, bounds) {
         final painter = TextPainter(
           text: TextSpan(
-            style: DefaultTextStyle.of(context).style.merge(detailStyle),
+            style: DefaultTextStyle.of(context).style.merge(metadataStyle),
             children: [
               metadata.textSpan!,
               TextSpan(text: label),
@@ -395,7 +399,7 @@ class _EpisodeMetadata extends StatelessWidget {
               color: inverted ? Colors.white : Colors.black,
               semanticLabel: showLabel ? null : label,
             ),
-            if (showLabel) Text(label, style: detailStyle),
+            if (showLabel) Text(label, style: metadataStyle),
           ],
         );
       },
@@ -459,7 +463,7 @@ class PodcastList extends StatelessWidget {
               details: [
                 Text(
                   strings.playedCount(podcast.playedCount),
-                  style: detailStyle,
+                  style: metadataStyle,
                 ),
                 if (podcast.lastError?.isNotEmpty ?? false)
                   Padding(

@@ -61,6 +61,12 @@ const detailStyle = TextStyle(
   height: 1.25,
   fontWeight: FontWeight.w400,
 );
+const metadataStyle = TextStyle(
+  fontSize: einkBodyFontSize,
+  height: 1.25,
+  fontWeight: FontWeight.w400,
+  fontStyle: FontStyle.italic,
+);
 const buttonLabelStyle = TextStyle(
   fontSize: einkButtonFontSize,
   height: 1.2,
@@ -156,6 +162,7 @@ class EinkRow extends StatelessWidget {
     this.lifted = false,
     this.toggled,
     this.underlined = false,
+    this.overline,
     this.compact = false,
     this.last = false,
     this.desktop = false,
@@ -170,6 +177,7 @@ class EinkRow extends StatelessWidget {
   final bool lifted;
   final bool? toggled;
   final bool underlined;
+  final Widget? overline;
   final bool compact;
   final bool last;
   final bool desktop;
@@ -189,6 +197,7 @@ class EinkRow extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              ?overline,
               Text(
                 title,
                 style: rowTitleStyle.copyWith(

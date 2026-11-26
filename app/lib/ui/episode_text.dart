@@ -131,5 +131,5 @@ Text metadataLine(String first, Iterable<String> rest, {bool bold = false}) =>
           for (final text in rest) TextSpan(text: '$metadataSeparator$text'),
         ],
       ),
-      style: detailStyle,
+      style: metadataStyle,
     );
