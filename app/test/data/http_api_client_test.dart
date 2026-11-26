@@ -370,6 +370,43 @@ void main() {
     expect(watch.elapsed, lessThan(const Duration(milliseconds: 150)));
   });
 
+  testWidgets('feed operations and large reads get their full time budget', (
+    tester,
+  ) async {
+    final api = HttpApiClient(
+      serverUrl: 'https://podcasts.example.test',
+      token: 'abc',
+      client: MockClient((_) => Completer<http.Response>().future),
+    );
+    final expired = <String>[];
+    Future<void> watch(String name, Future<Object?> request) async {
+      try {
+        await request;
+      } on OfflineException {
+        expired.add(name);
+      }
+    }
+
+    final done = Future.wait([
+      watch('subscribe', api.subscribe('https://feeds.example.test/3.xml')),
+      watch('import', api.importOpml('<opml/>')),
+      watch('episodes', api.episodes(3)),
+      watch('state', api.fetchState()),
+    ]);
+    await tester.pump(const Duration(seconds: 29));
+    expect(expired, isEmpty);
+    await tester.pump(const Duration(seconds: 1));
+    expect(expired, unorderedEquals(['episodes', 'state']));
+    await tester.pump(const Duration(seconds: 59));
+    expect(expired, hasLength(2));
+    await tester.pump(const Duration(seconds: 1));
+    expect(
+      expired,
+      unorderedEquals(['episodes', 'state', 'subscribe', 'import']),
+    );
+    await done;
+  });
+
   test('OPML import sends the document and parses failures', () async {
     handler = (_) async => json({
       'added': 2,

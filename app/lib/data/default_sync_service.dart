@@ -226,23 +226,18 @@ class DefaultSyncService with WidgetsBindingObserver implements SyncService {
   Future<void> freshStateBeforePlay(int episodeId) async {
     if (!isLoggedIn || _loggingOut) return;
     final session = _session;
-    final watch = Stopwatch()..start();
     try {
-      await _flushPending(session, freshStateTimeout, watch);
-      final remaining = freshStateTimeout - watch.elapsed;
-      if (remaining <= Duration.zero || !_inSession(session) || _loggingOut) {
-        return;
-      }
       final remote = await _api
-          .episodeState(episodeId, timeout: remaining)
-          .timeout(remaining);
+          .episodeState(episodeId, timeout: freshStateTimeout)
+          .timeout(freshStateTimeout);
       if (remote == null ||
           remote.episodeId != episodeId ||
           !_inSession(session) ||
           _loggingOut) {
         return;
       }
-      await _applyRemote(session, [remote], null);
+      final missing = await _library.applyRemote([remote], null);
+      if (missing && _inSession(session) && !_loggingOut) _pullWanted = true;
     } on ApiException catch (e) {
       if (e.statusCode == 401 && _inSession(session)) handleUnauthorized();
     } on Object catch (error) {
@@ -400,12 +395,9 @@ class DefaultSyncService with WidgetsBindingObserver implements SyncService {
     await _library.repairRejectedTimes();
     if (!_inSession(session)) return;
     if (!_identityConfirmed) {
-      await _fetchState(
-        session,
-        ifNoneMatch: _store.meta(MetaKey.stateEtag),
-        timeout: timeLeft?.call(),
-      );
+      final state = await _pullState(session, timeout: timeLeft?.call());
       if (!_inSession(session)) return;
+      _pullWanted |= state?.missing ?? false;
     }
     final changes = _sendableChanges();
     if (changes.states.isEmpty && changes.queue == null) return;
@@ -534,7 +526,7 @@ class DefaultSyncService with WidgetsBindingObserver implements SyncService {
     }
   }
 
-  Future<StateSnapshot?> _refreshStatesAndQueue() async {
+  Future<List<EpisodeState>?> _refreshStatesAndQueue() async {
     if (!isLoggedIn || _loggingOut) return null;
     final session = _session;
     final watch = Stopwatch()..start();
@@ -544,16 +536,11 @@ class DefaultSyncService with WidgetsBindingObserver implements SyncService {
       if (remaining <= Duration.zero || !_inSession(session) || _loggingOut) {
         return null;
       }
-      final fetched = await _fetchState(session, timeout: remaining);
-      if (fetched == null || !_inSession(session) || _loggingOut) return null;
-      final snapshot = fetched.value;
-      await _applyRemote(session, snapshot.episodes, snapshot.queue);
-      if (watch.elapsed > queueRefreshTimeout ||
-          !_inSession(session) ||
-          _loggingOut) {
-        return null;
-      }
-      return snapshot;
+      final state = await _pullState(session, timeout: remaining);
+      if (!_inSession(session) || _loggingOut) return null;
+      _pullWanted |= state?.missing ?? false;
+      if (watch.elapsed > queueRefreshTimeout) return null;
+      return state?.episodes ?? const [];
     } on ApiException catch (e) {
       if (e.statusCode == 401 && _inSession(session)) handleUnauthorized();
       return null;
@@ -568,32 +555,9 @@ class DefaultSyncService with WidgetsBindingObserver implements SyncService {
     }
   }
 
-  Future<void> _applyRemote(
-    int session,
-    List<EpisodeState> states,
-    QueueState? queue,
-  ) async {
-    final missing = await _library.applyRemote(states, queue);
-    if (missing && _inSession(session) && !_loggingOut) _request(pull: true);
-  }
-
   Future<void> _pull(int session) async {
     bool isCurrent() => _inSession(session) && !_loggingOut;
-    final state = await _fetchState(
-      session,
-      ifNoneMatch: _store.meta(MetaKey.stateEtag),
-    );
-    if (!isCurrent()) return;
-    if (state != null) {
-      final snapshot = state.value;
-      final playing = _library.playingEpisodeId;
-      await _library.applyRemote(snapshot.episodes, snapshot.queue);
-      if (!isCurrent()) return;
-      // A protected playing episode can still need the same snapshot later.
-      if (!snapshot.episodes.any((item) => item.episodeId == playing)) {
-        await _store.setMeta(MetaKey.stateEtag, state.etag);
-      }
-    }
+    await _pullState(session);
     if (!isCurrent()) return;
     final fetched = await _api.podcasts(
       ifNoneMatch: _store.meta(MetaKey.podcastsEtag),
@@ -604,26 +568,35 @@ class DefaultSyncService with WidgetsBindingObserver implements SyncService {
       if (!isCurrent()) return;
       await _store.setMeta(MetaKey.podcastsEtag, fetched.etag);
     }
+    Exception? listError;
     for (final podcast in _library.knownPodcasts.toList()) {
       if (!isCurrent()) return;
       if (_send.running != null || (!_send.waiting && _hasSendablePending)) {
         await _sendPending();
         if (!isCurrent()) return;
       }
-      await _library.refreshEpisodes(podcast, isCurrent: isCurrent);
+      try {
+        await _library.refreshEpisodes(podcast, isCurrent: isCurrent);
+      } on OfflineException catch (error) {
+        listError = error;
+      } on TimeoutException catch (error) {
+        listError = error;
+      }
     }
+    if (listError != null) throw listError;
     if (isCurrent()) await _recordSuccess();
   }
 
-  Future<Fetched<StateSnapshot>?> _fetchState(
+  Future<({List<EpisodeState> episodes, bool missing})?> _pullState(
     int session, {
-    String? ifNoneMatch,
     Duration? timeout,
   }) async {
     if (timeout != null && timeout <= Duration.zero) {
       throw TimeoutException('State check deadline expired');
     }
-    final request = _api.fetchState(ifNoneMatch: ifNoneMatch);
+    final request = _api.fetchState(
+      ifNoneMatch: _store.meta(MetaKey.stateEtag),
+    );
     final fetched = await (timeout == null
         ? request
         : request.timeout(timeout));
@@ -633,8 +606,20 @@ class DefaultSyncService with WidgetsBindingObserver implements SyncService {
     }
     if (!_inSession(session)) return null;
     _identityConfirmed = true;
-    if (fetched != null) _checkClock(fetched.value.serverTime);
-    return fetched;
+    if (fetched == null) return null;
+    final snapshot = fetched.value;
+    _checkClock(snapshot.serverTime);
+    final playing = _library.playingEpisodeId;
+    final missing = await _library.applyRemote(
+      snapshot.episodes,
+      snapshot.queue,
+    );
+    // A protected playing episode can still need the same snapshot later.
+    if (_inSession(session) &&
+        !snapshot.episodes.any((item) => item.episodeId == playing)) {
+      await _store.setMeta(MetaKey.stateEtag, fetched.etag);
+    }
+    return (episodes: snapshot.episodes, missing: missing);
   }
 
   Future<bool> _rememberServer(

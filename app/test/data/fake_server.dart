@@ -197,7 +197,6 @@ class FakeApiClient implements HttpApiClient {
   int stateCalls = 0;
   int stateNotModified = 0;
   int podcastsCalls = 0;
-  int episodeStateCalls = 0;
   final Map<int, int> episodesCalls = {};
   final Map<int, int> episodesNotModified = {};
   final List<List<EpisodeState>> pushedStates = [];
@@ -346,7 +345,7 @@ class FakeApiClient implements HttpApiClient {
   @override
   Future<EpisodeState?> episodeState(int episodeId, {Duration? timeout}) async {
     _check();
-    episodeStateCalls++;
+    syncCalls.add('episode:$episodeId');
     episodeStateTimeout = timeout;
     if (episodeStateDelay case final delay?) await Future<void>.delayed(delay);
     return server.states[episodeId];

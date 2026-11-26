@@ -571,6 +571,38 @@ void main() {
   );
 
   test(
+    'a timed-out episode list retries after the other list is saved',
+    () async {
+      final phone = await device(
+        'phone',
+        initialBackoff: const Duration(milliseconds: 150),
+      );
+      final slow = server.addEpisodes(1, 1).single;
+      final other = server.addEpisodes(2, 1).single;
+      final retry = Completer<void>();
+      phone.api.beforeEpisodes = (id) async {
+        if (id != 1) return;
+        if (phone.api.episodesCalls[id] == 2) {
+          throw OfflineException(TimeoutException('slow episode list'));
+        }
+        retry.complete();
+      };
+
+      await phone.sync.syncNow();
+      expect(phone.library.episode(slow), isNull);
+      expect(phone.library.episode(other), isNotNull);
+      expect(phone.sync.status.value.phase, SyncPhase.offline);
+      expect(phone.sync.retryScheduled, isTrue);
+
+      await retry.future.timeout(const Duration(seconds: 2));
+      await phone.sync.whenIdle();
+      expect(phone.library.episode(slow), isNotNull);
+      expect(phone.api.episodesCalls, {1: 3, 2: 2});
+      expect(phone.sync.status.value.phase, SyncPhase.idle);
+    },
+  );
+
+  test(
     'an unchanged list behind a new version keeps the local copy (304)',
     () async {
       final phone = await device('phone');
@@ -609,6 +641,19 @@ void main() {
     await pc.sync.whenIdle();
     expect(server.queue!.episodeIds, [third, second]);
   });
+
+  test(
+    'queue edits and bulk dismiss accept a 304 for the cached state',
+    () async {
+      final phone = await device('phone');
+      await phone.library.dequeue(episodes.last);
+      expect(phone.api.stateNotModified, 1);
+      await phone.library.dismissOlder(episodes.first);
+      await phone.sync.whenIdle();
+      expect(phone.api.stateNotModified, 2);
+      expect(server.states[episodes.first]?.isDismissed, isTrue);
+    },
+  );
 
   test(
     'quick add, move and remove commands preserve their issue order',
@@ -1003,13 +1048,19 @@ void main() {
     });
 
     test('keeps a newer local state', () async {
-      final phone = await device('phone');
+      const retry = Duration(seconds: 30);
+      final phone = await device(
+        'phone',
+        initialBackoff: retry,
+        maxBackoff: retry,
+      );
       phone.api.online = false;
       later();
       await phone.library.recordPosition(
         episodes[0],
         const Duration(minutes: 9),
       );
+      await phone.sync.whenIdle();
       server.states[episodes[0]] = EpisodeState(
         episodeId: episodes[0],
         positionMs: 1000,
@@ -1017,78 +1068,44 @@ void main() {
         updatedAt: clock.now.subtract(const Duration(minutes: 1)),
       );
       phone.api.online = true;
+      phone.api.syncCalls.clear();
       await phone.sync.freshStateBeforePlay(episodes[0]);
+      expect(phone.api.syncCalls, ['episode:${episodes[0]}']);
       expect(phone.library.stateOf(episodes[0]).positionMs, 540000);
+      expect(phone.library.pendingCount, 1);
     });
 
     test(
-      'flushes offline listening before requesting the episode state',
+      'reads only the episode while an unrelated upload is stalled',
       () async {
-        final phone = await device(
-          'phone',
-          initialBackoff: const Duration(seconds: 5),
-          maxBackoff: const Duration(seconds: 5),
-          freshStateTimeout: const Duration(milliseconds: 500),
-        );
+        final phone = await device('phone');
         final id = episodes.first;
-        phone.api.online = false;
-        await phone.library.recordPosition(id, const Duration(minutes: 13));
-        await phone.sync.whenIdle();
-        final offline = phone.library.stateOf(id);
-
-        phone.api.online = true;
+        server.states[id] = EpisodeState(
+          episodeId: id,
+          positionMs: 500000,
+          status: EpisodeStatus.none,
+          updatedAt: clock.now,
+        );
         final sending = Completer<void>();
         final release = Completer<void>();
         phone.api.beforePush = () {
           sending.complete();
           return release.future;
         };
-        final check = phone.sync.freshStateBeforePlay(id);
         try {
-          await sending.future.timeout(const Duration(seconds: 1));
-          expect(phone.api.episodeStateCalls, 0);
+          await phone.library.markPlayed(episodes.last);
+          await sending.future.timeout(const Duration(seconds: 2));
+          phone.api.syncCalls.clear();
+          await phone.sync.freshStateBeforePlay(id);
+          expect(phone.api.syncCalls, ['episode:$id']);
+          expect(phone.api.episodeStateTimeout, phone.sync.freshStateTimeout);
+          expect(phone.library.stateOf(id).positionMs, 500000);
+          expect(phone.library.pendingCount, 1);
         } finally {
           release.complete();
-          await check;
+          await phone.sync.whenIdle();
         }
-        expect(phone.api.episodeStateCalls, 1);
-        expect(phone.library.pendingCount, 0);
-        expect(server.states[id]?.toJson(), offline.toJson());
-      },
-    );
-
-    test(
-      'a delayed flush leaves only the remaining pre-play time for the GET',
-      () async {
-        const limit = Duration(milliseconds: 500);
-        final phone = await device(
-          'phone',
-          initialBackoff: const Duration(seconds: 5),
-          maxBackoff: const Duration(seconds: 5),
-          freshStateTimeout: limit,
-        );
-        phone.api.online = false;
-        await phone.library.recordPosition(
-          episodes[0],
-          const Duration(minutes: 2),
-        );
-        await phone.sync.whenIdle();
-        phone.api.online = true;
-        phone.api.beforePush = () => settle(const Duration(milliseconds: 120));
-        phone.api.episodeStateDelay = const Duration(seconds: 1);
-
-        final elapsed = Stopwatch()..start();
-        await phone.sync.freshStateBeforePlay(episodes[1]);
-        expect(phone.api.episodeStateCalls, 1);
-        expect(
-          phone.api.episodeStateTimeout,
-          lessThan(limit - const Duration(milliseconds: 100)),
-        );
-        expect(
-          elapsed.elapsed,
-          lessThan(limit + const Duration(milliseconds: 120)),
-        );
-        expect(phone.library.pendingCount, 0);
+        expect(server.states[episodes.last]?.isPlayed, isTrue);
       },
     );
 
@@ -1129,6 +1146,8 @@ void main() {
       );
       await sync.syncNow();
       expect(sync.clockSkewWarning, ahead);
+      later();
+      server.queue = QueueState(episodeIds: [], updatedAt: clock.now);
       deviceClock.now = clock.now.subtract(ahead);
       await phone.library.enqueue(episodes[0]);
       await phone.sync.whenIdle();

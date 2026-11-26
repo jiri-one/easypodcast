@@ -49,7 +49,7 @@ class SqfliteLibrary extends Library {
   int? playingEpisodeId;
 
   void Function({bool force})? onPendingSend;
-  Future<StateSnapshot?> Function()? refreshStatesAndQueue;
+  Future<List<EpisodeState>?> Function()? refreshStatesAndQueue;
 
   void _loadFrom(LocalSnapshot snapshot) {
     _podcasts
@@ -404,11 +404,11 @@ class SqfliteLibrary extends Library {
   @override
   Future<void> dismissOlder(int episodeId) async {
     final serverId = _store.meta(MetaKey.serverId);
-    final snapshot = await refreshStatesAndQueue?.call();
+    final refreshed = await refreshStatesAndQueue?.call();
     if (!_sameServer(serverId)) return;
-    if (snapshot == null) throw BulkDismissNeedsConnection();
+    if (refreshed == null) throw BulkDismissNeedsConnection();
     final protectedIds = {
-      for (final state in snapshot.episodes)
+      for (final state in refreshed)
         if (!state.isNew && state.isNewerThan(stateOf(state.episodeId)))
           state.episodeId,
     };

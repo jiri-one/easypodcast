@@ -13,12 +13,16 @@ class HttpApiClient implements ApiClient {
     required String serverUrl,
     this.token,
     http.Client? client,
-    this.timeout = const Duration(seconds: 10),
+    Duration? timeout,
   }) : _serverUrl = normalizeServerUrl(serverUrl),
+       timeout = timeout ?? const Duration(seconds: 10),
+       _listTimeout = timeout ?? const Duration(seconds: 30),
        _client = client ?? http.Client();
 
+  static const _feedTimeout = Duration(seconds: 90);
   final http.Client _client;
   final Duration timeout;
+  final Duration _listTimeout;
   String _serverUrl;
   String? token;
 
@@ -176,7 +180,7 @@ class HttpApiClient implements ApiClient {
       'POST',
       '/api/podcasts',
       json: {'feed_url': feedUrl},
-      timeout: const Duration(seconds: 30),
+      timeout: _feedTimeout,
     );
     return Podcast.fromJson(_object(response));
   }
@@ -195,6 +199,7 @@ class HttpApiClient implements ApiClient {
       'GET',
       '/api/podcasts/$podcastId/episodes',
       ifNoneMatch: ifNoneMatch,
+      timeout: _listTimeout,
     );
     if (response.statusCode == 304) return null;
     return Fetched([
@@ -215,7 +220,12 @@ class HttpApiClient implements ApiClient {
   Future<StateSnapshot> state() async => (await fetchState())!.value;
 
   Future<Fetched<StateSnapshot>?> fetchState({String? ifNoneMatch}) async {
-    final response = await _send('GET', '/api/state', ifNoneMatch: ifNoneMatch);
+    final response = await _send(
+      'GET',
+      '/api/state',
+      ifNoneMatch: ifNoneMatch,
+      timeout: _listTimeout,
+    );
     if (response.statusCode == 304) {
       if (ifNoneMatch == null) throw const FormatException('Unexpected 304');
       return null;
@@ -297,7 +307,7 @@ class HttpApiClient implements ApiClient {
         '/api/opml',
         body: opml,
         contentType: 'text/x-opml; charset=utf-8',
-        timeout: const Duration(minutes: 5),
+        timeout: _feedTimeout,
       ),
     );
     return OpmlImportResult(

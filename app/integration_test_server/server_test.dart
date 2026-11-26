@@ -509,10 +509,16 @@ void main() {
         expect(check.request.method, 'GET');
         expect(check.request.url.path, '/api/state');
         expect(check.request.headers['if-none-match'], isNotEmpty);
-        final retry = b.wire.exchanges[start + 1];
-        expect(retry.request.method, 'POST');
-        expect(retry.request.url.path, '/api/state');
-        expect(jsonDecode(retry.requestBody)['episodes'], [offline.toJson()]);
+        check.expectStatus(200);
+        final tag = check.response.headers['etag'];
+        expect(b.store.meta(MetaKey.stateEtag), tag);
+        for (final exchange in b.wire.exchanges.skip(start + 1)) {
+          expect(exchange.request.method, 'GET');
+          if (exchange.request.url.path == '/api/state') {
+            expect(exchange.request.headers['if-none-match'], tag);
+            exchange.expectStatus(304);
+          }
+        }
         expect((await a.data.api.episodeState(id))?.toJson(), aState.toJson());
         expect(b.data.library.stateOf(id).toJson(), aState.toJson());
         expect(b.sync.status.value.pending, 0);
