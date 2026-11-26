@@ -12,7 +12,7 @@ fi
 
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 work="$root/.ai/e2e"
-feed="$work/feed"
+feed="$root/tools/e2e-feed"
 logs="$work/logs"
 binary="$work/bin/easypodcast"
 mkdir -p "$work/bin" "$logs"

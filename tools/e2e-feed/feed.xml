@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
+  <channel>
+    <title>Tichý testovací podcast</title>
+    <link>https://example.org/</link>
+    <description>Vymyšlený podcast pro testy EasyPodcastu, díly jsou jen ticho.</description>
+    <itunes:author>EasyPodcast test</itunes:author>
+    <item>
+      <title>Díl 1: Ticho na úvod</title>
+      <guid isPermaLink="false">e2e-silence-1</guid>
+      <pubDate>Wed, 21 Nov 2026 07:00:00 +0000</pubDate>
+      <description><![CDATA[<p>Testovací díl bez zvuku. <a href="https://example.org/1">Odkaz</a></p>]]></description>
+      <enclosure url="http://127.0.0.1:18081/ep1.mp3" length="600520" type="audio/mpeg"/>
+      <itunes:duration>150</itunes:duration>
+    </item>
+    <item>
+      <title>Díl 2: Ještě tišší</title>
+      <guid isPermaLink="false">e2e-silence-2</guid>
+      <pubDate>Wed, 22 Nov 2026 07:00:00 +0000</pubDate>
+      <description><![CDATA[<p>Testovací díl bez zvuku. <a href="https://example.org/2">Odkaz</a></p>]]></description>
+      <enclosure url="http://127.0.0.1:18081/ep2.mp3" length="840533" type="audio/mpeg"/>
+      <itunes:duration>210</itunes:duration>
+    </item>
+    <item>
+      <title>Díl 3: Úplné ticho</title>
+      <guid isPermaLink="false">e2e-silence-3</guid>
+      <pubDate>Wed, 23 Nov 2026 07:00:00 +0000</pubDate>
+      <description><![CDATA[<p>Testovací díl bez zvuku. <a href="https://example.org/3">Odkaz</a></p>]]></description>
+      <enclosure url="http://127.0.0.1:18081/ep3.mp3" length="1080442" type="audio/mpeg"/>
+      <itunes:duration>270</itunes:duration>
+    </item>
+  </channel>
+</rss>

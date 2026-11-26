@@ -28,7 +28,7 @@ See [server/README.md](server/README.md) for the full configuration, command, AP
   - **Podcasts**: sorted by played count or alphabetically, with feed status, add-by-URL, and unsubscribe/resubscribe.
   - **Downloads**: offline files and total storage used.
 - **Episode actions**: mark played or new, dismiss (hides from active lists and deletes downloads without counting as played), bulk "Dismiss older too" for new unqueued episodes, and plain-text episode descriptions with clickable links.
-- **Search**: search inside a podcast or across all subscribed podcasts; title matching works offline and description matches are merged from the server, ignoring case and diacritics.
+- **Search**: search inside a podcast or across all subscribed podcasts; titles match offline at once and description matches from the server are added below them, ignoring case and diacritics.
 - **Offline downloads**: manual per-episode downloads plus Settings options for Wi-Fi-only downloads, automatic deletion after playback (dismissed episodes are always deleted), and keeping the first two queued episodes downloaded on Wi-Fi.
 - **Player**: configurable skip back (10, 15, or 30 s) and skip forward (15, 30, or 60 s). Playback speed (0.8×–2.0×) and sleep timer (15, 30, 45, or 60 min, or end of episode) are hidden by default and enabled with one switch in Settings. Episodes are marked played only when playback reaches the actual end.
 - **Offline cache and handoff**: local SQLite store caches the library and pending changes, checks the server for a newer position before starting playback or resuming after a pause longer than 30 s, and sends pending updates on pause, seek, completion, queue edits, periodically while playing, and on network recovery.
@@ -295,7 +295,7 @@ Server–client end-to-end tests (`tools/e2e-server.sh`):
 ./tools/e2e-server.sh --test
 ```
 
-This script builds the server, resets the `easypodcast_e2e` database on a local test PostgreSQL listening on `127.0.0.1:55432` (user `easypodcast`, password `test`, database `easypodcast_test`, or a container named `easypodcast-test-pg` when `psql` is absent), serves a local fixture feed from `.ai/e2e/feed/feed.xml` on `127.0.0.1:18081`, starts the server on `127.0.0.1:18080`, and runs the Flutter integration suite in `app/integration_test_server/`. Without `--test`, it leaves the test server running for manual checks.
+This script builds the server, resets the `easypodcast_e2e` database on a local test PostgreSQL listening on `127.0.0.1:55432` (user `easypodcast`, password `test`, database `easypodcast_test`, or a container named `easypodcast-test-pg` when `psql` is absent), serves the silent fixture feed in `tools/e2e-feed/` on `127.0.0.1:18081`, starts the server on `127.0.0.1:18080`, and runs the Flutter integration suite in `app/integration_test_server/`. Without `--test`, it leaves the test server running for manual checks.
 
 ### Specification and contract
 
