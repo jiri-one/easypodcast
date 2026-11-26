@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=EasyPodcast
+GenericName=Podcast Player
+GenericName[cs]=Přehrávač podcastů
+Exec=easypodcast
+Icon=one.jiri.easypodcast
+Terminal=false
+StartupNotify=true
+Categories=AudioVideo;Audio;Player;

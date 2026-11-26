@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:audio_service/audio_service.dart';
+import 'package:audio_service_mpris/audio_service_mpris.dart';
 // ignore: depend_on_referenced_packages
 import 'package:audio_session/audio_session.dart';
 import 'package:flutter/foundation.dart';
@@ -17,6 +18,7 @@ import '../core/settings.dart';
 import '../core/sync.dart';
 
 part 'android_audio.dart';
+part 'linux_audio.dart';
 part 'playback_engine.dart';
 
 Future<PlayerController> openPlayer({
@@ -39,6 +41,8 @@ Future<PlayerController> openPlayer({
   try {
     if (Platform.isAndroid) {
       await _openAndroidAudio(controller, library, downloads, settings);
+    } else if (Platform.isLinux) {
+      await connectMpris(controller);
     }
     WidgetsBinding.instance.addObserver(controller);
     return controller;

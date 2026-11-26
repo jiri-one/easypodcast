@@ -57,6 +57,14 @@ pkg_check_modules(GTK REQUIRED IMPORTED_TARGET gtk+-3.0)
 # Application build; see runner/CMakeLists.txt.
 add_subdirectory("runner")
 
+if(BUILD_TESTING)
+  enable_testing()
+  add_executable(desktop_font_test "../test/platform/desktop_font_test.cc" "runner/desktop_font.cc")
+  target_include_directories(desktop_font_test PRIVATE runner)
+  target_link_libraries(desktop_font_test PRIVATE flutter)
+  add_test(NAME desktop_font COMMAND desktop_font_test)
+endif()
+
 # Run the Flutter tool portions of the build. This must not be removed.
 add_dependencies(${BINARY_NAME} flutter_assemble)
 
@@ -92,6 +100,11 @@ set(INSTALL_BUNDLE_DATA_DIR "${CMAKE_INSTALL_PREFIX}/data")
 set(INSTALL_BUNDLE_LIB_DIR "${CMAKE_INSTALL_PREFIX}/lib")
 
 install(TARGETS ${BINARY_NAME} RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}"
+  COMPONENT Runtime)
+
+install(FILES "${APPLICATION_ID}.desktop" DESTINATION "${CMAKE_INSTALL_PREFIX}/share/applications"
+  COMPONENT Runtime)
+install(DIRECTORY "icons" DESTINATION "${CMAKE_INSTALL_PREFIX}/share"
   COMPONENT Runtime)
 
 install(FILES "${FLUTTER_ICU_DATA_FILE}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"

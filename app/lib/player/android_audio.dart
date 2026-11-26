@@ -45,16 +45,20 @@ class _EpisodeAudioHandler extends BaseAudioHandler {
     MediaItem(id: _podcasts, title: 'Podcasty', playable: false),
   ];
 
-  MediaItem _item(Episode episode, {Duration? duration}) => MediaItem(
-    id: '$_episodePrefix${episode.id}',
-    title: episode.title,
-    album: _library.podcast(episode.podcastId)?.title,
-    duration:
-        duration ??
-        (episode.durationS == null
-            ? null
-            : Duration(seconds: episode.durationS!)),
-  );
+  MediaItem _item(Episode episode, {Duration? duration}) {
+    final podcast = _library.podcast(episode.podcastId);
+    return MediaItem(
+      id: '$_episodePrefix${episode.id}',
+      title: episode.title,
+      album: podcast?.title,
+      artist: Platform.isLinux ? podcast?.author : null,
+      duration:
+          duration ??
+          (episode.durationS == null
+              ? null
+              : Duration(seconds: episode.durationS!)),
+    );
+  }
 
   MediaItem _podcastItem(Podcast podcast) => MediaItem(
     id: '$_podcastPrefix${podcast.id}',
