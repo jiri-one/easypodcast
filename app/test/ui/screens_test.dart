@@ -477,7 +477,7 @@ Future<Finder> _showInNewEpisodesRow(UiHarness app) async {
     app.services.library.podcast(2)!.title,
     find.byType(PodcastList),
   );
-  await app.tap(find.bySemanticsLabel(app.strings.aboutPodcast));
+  await app.tap(find.byTooltip(app.strings.aboutPodcast));
   final row = find.widgetWithText(EinkRow, app.strings.showInNewEpisodes);
   await app.scrollTo(row, find.byType(AboutPodcastPage));
   return row;
