@@ -25,8 +25,10 @@ abstract class PlayerController extends ChangeNotifier {
 
   bool get isBuffering;
 
-  /// The episode whose saved position is being checked.
+  /// Brief checks leave this null to avoid flashing the label.
   int? get checkingPosition => null;
+
+  bool get isCheckingPosition => checkingPosition != null;
 
   ValueListenable<Duration> get position;
 

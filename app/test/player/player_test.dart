@@ -137,14 +137,7 @@ void main() {
     tester,
   ) async {
     openPlayer();
-    final initialCheck = Completer<void>();
-    sync.onRefresh = (_) => initialCheck.future;
-    final starting = player.play(_second.id);
-    await tester.pump();
-    expect(player.checkingPosition, _second.id);
-    initialCheck.complete();
-    await starting;
-    expect(player.checkingPosition, isNull);
+    await player.play(_second.id);
     await player.pause();
     await tester.pump(const Duration(seconds: 30));
     calls.clear();
@@ -154,16 +147,43 @@ void main() {
     await player.pause();
     await tester.pump(const Duration(seconds: 31));
     calls.clear();
-    final resumeCheck = Completer<void>();
-    sync.onRefresh = (_) => resumeCheck.future;
-    final resuming = player.resume();
-    await tester.pump();
-    expect(player.checkingPosition, _second.id);
-    resumeCheck.complete();
-    await resuming;
-    expect(player.checkingPosition, isNull);
+    await player.resume();
     expect(calls, ['refresh:2', 'play', 'playing:2']);
   });
+
+  for (final (description, slow) in [
+    ('a quick resume check never publishes the label', false),
+    ('a slow resume check publishes the label after one second', true),
+  ]) {
+    testWidgets(description, (tester) async {
+      openPlayer();
+      await player.play(_second.id);
+      await player.pause();
+      await tester.pump(const Duration(seconds: 31));
+      final check = Completer<void>();
+      sync.onRefresh = (_) => check.future;
+      final published = <int?>[];
+      player.addListener(() => published.add(player.checkingPosition));
+
+      final resuming = player.resume();
+      await tester.pump();
+      expect(player.isCheckingPosition, isTrue);
+      await tester.pump(const Duration(milliseconds: 999));
+      expect(published, isEmpty);
+      if (slow) {
+        await tester.pump(const Duration(milliseconds: 1));
+        expect(published, [_second.id]);
+      }
+
+      check.complete();
+      await resuming;
+      await tester.pump(const Duration(milliseconds: 1));
+      expect(player.isPlaying, isTrue);
+      expect(player.isCheckingPosition, isFalse);
+      expect(published.whereType<int>(), slow ? [_second.id] : isEmpty);
+      expect(published.last, isNull);
+    });
+  }
 
   testWidgets('resume restarts an episode dismissed remotely during a pause', (
     tester,

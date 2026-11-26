@@ -60,7 +60,7 @@ class PlaybackActions extends ChangeNotifier {
       services.player.current?.id == episodeId &&
       !services.library.stateOf(episodeId).isFinished &&
       services.player.lastPlaybackError == null &&
-      services.player.checkingPosition == null &&
+      !services.player.isCheckingPosition &&
       !services.player.isBuffering;
 
   void showSeekUnavailable() {

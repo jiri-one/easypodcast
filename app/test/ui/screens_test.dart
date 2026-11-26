@@ -95,6 +95,8 @@ void main() {
       final mini = find.byType(MiniPlayer);
       final original = tester.getRect(mini);
       await app.mini(l.play);
+      expect(find.text(l.checkingPosition), findsNothing);
+      await tester.pump(const Duration(seconds: 1));
       expect(find.text(l.checkingPosition), findsOneWidget);
       expect(player.isPlaying, isFalse);
 

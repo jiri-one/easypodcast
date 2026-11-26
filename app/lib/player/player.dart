@@ -87,6 +87,7 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
   final _commands = CommandQueue();
   Episode? _current;
   int? _checkingPosition;
+  Timer? _positionCheckTimer;
   DateTime? _pausedAt;
   DateTime? _endObservedAt;
   PlaybackError? _lastPlaybackError;
@@ -148,6 +149,9 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
 
   @override
   int? get checkingPosition => _checkingPosition;
+
+  @override
+  bool get isCheckingPosition => _positionCheckTimer != null;
 
   @override
   ValueListenable<Duration> get position => _position;
@@ -383,13 +387,19 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
   }
 
   Future<void> _checkPosition(int id) async {
-    _checkingPosition = id;
-    _publish(forceMediaUpdate: false);
+    final timer = _positionCheckTimer = Timer(const Duration(seconds: 1), () {
+      _checkingPosition = id;
+      _publish(forceMediaUpdate: false);
+    });
     try {
       await _sync.freshStateBeforePlay(id);
     } finally {
-      _checkingPosition = null;
-      _publish(forceMediaUpdate: false);
+      timer.cancel();
+      _positionCheckTimer = null;
+      if (_checkingPosition != null) {
+        _checkingPosition = null;
+        _publish(forceMediaUpdate: false);
+      }
     }
   }
 
@@ -916,6 +926,7 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
   @override
   void dispose() {
     final settled = _commands.close();
+    _positionCheckTimer?.cancel();
     if (_downloads case final EpisodeDownloads downloads) {
       downloads.setCurrentEpisode(null);
     }

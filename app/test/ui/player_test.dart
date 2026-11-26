@@ -196,10 +196,10 @@ void main() {
       await app.mini(app.episode(101));
       final original = tester.getRect(button);
       await app.tap(button);
-      expect(
-        find.text(app.strings.checkingPosition).hitTestable(),
-        findsOneWidget,
-      );
+      final label = find.text(app.strings.checkingPosition).hitTestable();
+      expect(label, findsNothing);
+      await tester.pump(const Duration(seconds: 1));
+      expect(label, findsOneWidget);
       expect(tester.getRect(button), original);
     } finally {
       check.complete();
