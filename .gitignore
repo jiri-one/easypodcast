@@ -1,0 +1,16 @@
+# Agents and private data
+.ai/
+private/
+
+# Go
+/server/bin/
+
+# Flutter / Dart
+.dart_tool/
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+*.iml
+.idea/
+.vscode/
+*.swp

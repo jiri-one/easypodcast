@@ -1,0 +1,214 @@
+# EasyPodcast: architecture and contracts
+
+This is the contract for the first build. Several agents work in parallel against it, so treat it
+as binding: if you need to change it, say so in your report instead of silently diverging. The
+product specification (in Czech) is `docs/specifikace.md`; this file turns it into interfaces.
+
+EasyPodcast is a personal podcast system for one listener: a Go server on a small ARM64 home server
+and a Flutter client for Android (two e-ink devices) and Linux. Episodes stream straight from the
+publisher; the server keeps subscriptions, episode lists and listening state, and the client
+keeps a local copy so that it works offline.
+
+## Repository layout and ownership
+
+| Path | Content | Owner |
+|---|---|---|
+| `server/` | Go module `github.com/jiri-one/easypodcast/server` | WP-S |
+| `.github/workflows/server.yml` | server CI and image build | WP-S |
+| `app/pubspec.yaml`, `app/lib/main.dart`, `app/lib/app.dart`, `app/lib/core/` | dependencies, entry point, shared models and interfaces | orchestrator |
+| `app/lib/data/`, `app/test/data/` | API client, local database, repository, sync | WP-D |
+| `app/lib/player/`, `app/lib/downloads/`, `app/test/player/`, `app/test/downloads/` | audio, notification, headset, Android Auto, downloads | WP-P |
+| `app/android/`, `app/linux/`, `.github/workflows/app.yml` | platform configuration, app CI | WP-P |
+| `app/lib/ui/`, `app/lib/l10n/`, `app/l10n.yaml`, `app/test/ui/` | screens, theme, texts | WP-U |
+| `docs/` | specification, this contract, GUI mockups | orchestrator |
+
+Rules for every agent:
+
+- Edit only the paths you own. If something outside them blocks you, describe the change you
+  need in your report.
+- Do not run git commands that write (commit, checkout, switch, stash, reset, branch, merge,
+  rebase, push). Reading (`git status`, `git diff`, `git log`) is fine. The orchestrator commits.
+- `app/pubspec.yaml` already lists the planned packages. Do not edit it; if you need another
+  package, finish what you can and name the package and the reason in your report.
+- Comments and docstrings explain only a non-obvious why, in the shortest useful sentence. Never
+  narrate what the code does.
+- No secrets, home IP addresses or real personal data in the repository. Test data uses invented
+  podcast names.
+- Finish with a report: what you built, how to run and test it, what is missing or uncertain.
+
+## Domain model
+
+Identical in the server, the API and the client.
+
+- **Podcast**: `id` (int), `feed_url`, `title`, `author`, `description` (plain text), `image_url`
+  (nullable), `link` (nullable), `subscribed` (bool), `episode_count` (int), `played_count`
+  (int, episodes with status `played`), `episodes_version` (string, changes whenever the episode
+  list of this podcast changes), `last_success_at` (nullable time), `last_error` (nullable string).
+- **Episode**: `id` (int), `podcast_id`, `guid`, `title`, `published_at` (nullable time),
+  `duration_s` (nullable int, from the feed, often wrong), `enclosure_url`, `enclosure_type`
+  (nullable), `enclosure_length` (nullable int), `link` (nullable), `image_url` (nullable),
+  `removed_from_feed` (bool). The description is fetched separately.
+- **EpisodeState**: `episode_id`, `position_ms` (int ≥ 0), `status` (`""`, `"played"` or
+  `"dismissed"`), `updated_at` (time set by the device that made the change).
+- **Queue**: `episode_ids` (ordered list of int), `updated_at` (time set by a device).
+
+Times are RFC 3339 strings in UTC with milliseconds, for example `2026-11-26T14:03:07.120Z`.
+
+Derived values, the same everywhere:
+
+- **In progress** (rozposlouchaný): `status == ""` and `position_ms >= 60000`. Sorted by
+  `updated_at`, newest first.
+- **New** (nový): no state, or `status == ""` and `position_ms < 60000`.
+- **Played** and **dismissed**: the status says so. Only `played` counts into `played_count`.
+- An episode without a state behaves as `{position_ms: 0, status: ""}` with the oldest possible
+  `updated_at`.
+
+## Synchronisation rules
+
+1. The server owns podcasts and episodes; ids come from the server. The client never parses feeds.
+2. Every change made on a device produces a complete EpisodeState (or a complete Queue) with
+   `updated_at` = the device clock now.
+3. The server stores an incoming EpisodeState or Queue only if its `updated_at` is strictly later
+   than the stored one. It answers with the stored record either way.
+4. The server rejects (HTTP 400) a request with any `updated_at` more than 24 hours ahead of its own
+   clock. The client keeps such changes and retries later; this also covers a server whose clock is
+   wrong right after boot.
+5. The client sends its pending changes (the latest state per episode, the latest queue) as soon as
+   it can: on every pause including automatic ones (headphones unplugged, call, audio focus loss),
+   on seek and skip, on completion, on any status or queue change, every 30 s while playing, and
+   when the app goes to the background or closes. Without network it keeps them and retries with
+   backoff (5 s doubling to 5 min) and whenever the app comes to the foreground.
+6. The client fetches `GET /api/state` at start, when it comes to the foreground, after a successful
+   send that followed an offline period, and every 15 minutes while in the foreground. It applies
+   remote records with the same rule as the server (newer `updated_at` wins), except for the
+   episode that is playing right now, whose position is never changed from outside.
+7. Before playback of an episode starts, the client asks `GET /api/episodes/{id}/state` with a 2 s
+   timeout and applies a newer remote state first. Offline it starts from the local state.
+8. Episode lists: the client compares `episodes_version` from `GET /api/podcasts` with its local
+   copy and refetches `GET /api/podcasts/{id}/episodes` only for changed podcasts.
+9. Transitions (all produce a new state with the device time):
+   - playback reaches the end: `status = "played"`, `position_ms = 0`, the episode leaves the queue,
+     and the next queue item starts;
+   - dismiss: `status = "dismissed"`, `position_ms = 0`, the episode leaves the queue and its
+     download is deleted;
+   - mark as played: `status = "played"`, `position_ms = 0`, leaves the queue;
+   - return to new: `status = ""`, `position_ms = 0`;
+   - starting a played or dismissed episode: `status = ""`, playback from 0.
+10. "The end" means the player reports completion, or the position is within 30 s of the actual
+    duration reported by the player (never the feed duration).
+
+## HTTP API v1
+
+Base URL `https://easypodcast.jiri.one/api` in production, `http://localhost:8080/api` locally.
+JSON in UTF-8. Every endpoint except `POST /api/login` and `GET /health` needs
+`Authorization: Bearer <token>`; without a valid token it answers 401. Errors have the body
+`{"error": "<message>"}` with status 400, 401, 404, 409, 413, 422, 429 or 500.
+
+| Method and path | Request | Response |
+|---|---|---|
+| `POST /api/login` | `{"username", "password", "device_name"}` | 200 `{"token", "device_id"}`; 401 wrong credentials; 429 after 5 failed attempts per minute from one address |
+| `POST /api/logout` | – | 204, revokes the token used |
+| `GET /api/podcasts` | – | 200 `[Podcast]`, all known podcasts (subscribed or not) with at least one state or a subscription; supports `ETag`/`If-None-Match` |
+| `POST /api/podcasts` | `{"feed_url"}` | 201 Podcast after a synchronous fetch (max 20 s); 200 if it existed (it is subscribed again); 422 if the URL is not a usable feed |
+| `DELETE /api/podcasts/{id}` | – | 204, unsubscribes and keeps everything |
+| `GET /api/podcasts/{id}/episodes` | – | 200 `[Episode]`, newest first; `ETag` |
+| `GET /api/episodes/{id}` | – | 200 Episode plus `"description"` (plain text, links written as URLs) |
+| `GET /api/state` | – | 200 `{"episodes": [EpisodeState], "queue": Queue or null, "server_time"}` |
+| `POST /api/state` | `{"episodes": [EpisodeState], "queue": Queue}`, both optional | 200 `{"episodes": [EpisodeState as stored], "queue": Queue or null, "unknown": [episode ids the server does not know]}` |
+| `GET /api/episodes/{id}/state` | – | 200 `{"state": EpisodeState or null}` |
+| `POST /api/refresh` | – | 202, starts fetching all subscribed feeds now |
+| `GET /api/opml` | – | 200 OPML of subscribed podcasts |
+| `POST /api/opml` | OPML document as the body | 200 `{"added", "existing", "failed": [{"feed_url", "error"}]}` |
+| `GET /health` | – | 200 `{"status": "ok"}` if the database answers, otherwise 503 |
+
+A `POST /api/state` with an episode id the server does not know stores nothing for it and lists the
+id under `unknown`; the client then drops the pending change. A body over 1 MiB gets 413.
+
+## Server (WP-S)
+
+- Go 1.27 (the toolchain on the build PC is 1.27.4), standard `net/http` routing, `pgx` v5
+  (`pgxpool`), `github.com/mmcdole/gofeed`, `golang.org/x/crypto/argon2` for passwords,
+  `golang.org/x/net/html` to turn descriptions into plain text. Few other dependencies.
+- Configuration from the environment: `EASYPODCAST_DATABASE_URL` (required),
+  `EASYPODCAST_LISTEN` (default `:8080`), `EASYPODCAST_REFRESH_INTERVAL` (default `1h`),
+  `EASYPODCAST_USER_AGENT` (default `EasyPodcast/<version> (+https://github.com/jiri-one/easypodcast)`).
+- Commands of the single binary `easypodcast`: `serve` (runs migrations first), `migrate`,
+  `user set-password <name>` (asks twice without echo, creates the user if missing; nothing is
+  generated), `import-opml <file>`, `import-pinepods` (see WP-S, part 2).
+- PostgreSQL in a shared server: the role owns only its own database. Migrations must not need a
+  superuser, extensions, `CREATE DATABASE` or the `postgres` database. Embedded SQL migrations
+  with a `schema_migrations` table.
+- Single user: a `users` table exists only for the login; devices have their own tokens (32 random
+  bytes, stored as SHA-256), revocable one by one.
+- Feeds: each subscribed podcast is fetched every refresh interval with jitter, at most 4 at a
+  time, with `ETag`/`Last-Modified`; on errors the interval doubles up to 24 h. A permanent
+  redirect updates `feed_url`. Items without an enclosure are skipped. Episodes are matched by
+  GUID, without GUID by enclosure URL; changed fields are updated; episodes gone from the feed are
+  marked `removed_from_feed`, never deleted. `episodes_version` changes with every change of the
+  list.
+- Description: HTML turned into plain text, a link written as `text (url)` when the text differs
+  from the URL, at most 20 000 characters.
+- Logs: plain text via `log/slog`; never passwords, tokens or full request bodies.
+- Container: multi-stage `server/Dockerfile`, static binary, non-root, CA certificates included,
+  `linux/arm64` and `linux/amd64`. Image `ghcr.io/jiri-one/easypodcast`.
+- CI `.github/workflows/server.yml`: `go vet`, tests against a PostgreSQL service, multi-arch
+  image pushed to ghcr.io on `main` (tag `main`) and on tags `v*` (tag = version).
+- Tests: the state rules (newer wins, equal or older ignored, 24 h guard, unknown ids), every
+  endpoint with `httptest`, feed parsing on fixture feeds (missing GUIDs, changed enclosure URLs,
+  odd dates, HTML descriptions), migrations on a real PostgreSQL when
+  `EASYPODCAST_TEST_DATABASE_URL` is set (otherwise those tests skip).
+
+## Client (Flutter)
+
+- Flutter 3.50, Dart 3.14, `material_ui` (Material as a package, like the listener's other apps),
+  Android and Linux. Android package `one.jiri.easypodcast`.
+- Packages already in `pubspec.yaml`: `just_audio`, `audio_service`, `just_audio_media_kit` and
+  `media_kit_libs_linux` (Linux audio), `sqflite` and `sqflite_common_ffi` (Linux), `path`,
+  `path_provider`, `http`, `shared_preferences`, `background_downloader`, `url_launcher`, `intl`,
+  `flutter_localizations`.
+- State management as in the listener's apps: plain `ChangeNotifier` and `ValueNotifier`, no
+  framework. One `AppServices` object built in `main.dart` holds the services.
+- `app/lib/core/` holds the shared models and the interfaces below; the implementations live in
+  the owners' folders. The UI depends only on `core/`.
+- Texts in Czech and English via `flutter gen-l10n` (`app/lib/l10n/app_cs.arb`, `app_en.arb`).
+
+### Interfaces in `app/lib/core/`
+
+- `models.dart`: `Podcast`, `Episode`, `EpisodeState`, `QueueState`, `EpisodeStatus`, with
+  `fromJson`/`toJson` matching the API.
+- `api.dart`: `ApiClient`, one method per endpoint, throwing `ApiException` (with the HTTP status)
+  or `OfflineException`.
+- `library.dart`: `Library extends ChangeNotifier`, the local view of everything: podcasts, episodes
+  of a podcast, in progress, queue, new episodes, downloaded episodes, and the commands
+  (subscribe, unsubscribe, play bookkeeping, dismiss, mark played, return to new, enqueue,
+  dequeue, move in queue). Commands change the local database at once and schedule a send.
+- `sync.dart`: `SyncService` (start, stop, `syncNow()`, `freshStateBeforePlay(episodeId)`,
+  `ValueListenable<SyncStatus>` for the UI).
+- `player.dart`: `PlayerController extends ChangeNotifier` (current episode, playing, position,
+  duration, speed, sleep timer; `play(episodeId)`, `pause()`, `seekBy`, `seekTo`, `setSpeed`,
+  `setSleepTimer`).
+- `downloads.dart`: `DownloadService extends ChangeNotifier` (`download`, `delete`,
+  `statusOf(episodeId)`, `localFileOf(episodeId)`).
+- `settings.dart`: `Settings` (server URL, device name, skip back/forward seconds, speed, keep
+  screen updates sparse on e-ink) persisted in `shared_preferences`.
+
+## Work packages
+
+- **WP-S, server** (Codex): everything under `server/` and the server CI. Part 2, after the core
+  works: `easypodcast import-pinepods`, a one-off import from a PinePods 0.9.2 PostgreSQL database
+  (subscriptions, episodes matched by GUID or enclosure URL, positions with their times, completed
+  episodes as `played` with their times, the queue).
+- **WP-D, data and sync** (Gemini): `app/lib/data/`: the API client, the local database (sqflite;
+  `sqflite_common_ffi` on Linux), the `Library` and `SyncService` implementations, with unit tests
+  of the rules above against a fake server.
+- **WP-P, player and platform** (Codex): `app/lib/player/`, `app/lib/downloads/`, Android and Linux
+  configuration: background playback with `audio_service` (notification, lock screen, headset and
+  Bluetooth buttons, audio focus, becoming noisy), Android Auto browse tree (Rozposlouchané,
+  Fronta, Stažené, Podcasty), skip back/forward in the car and on headsets, the position reports
+  required by rule 5, completion and queue advance, downloads with `background_downloader`, Linux
+  audio and MPRIS, app CI building the APK and the Linux bundle.
+- **WP-U, user interface** (Claude): `app/lib/ui/` and texts, following the GUI mockup in
+  `docs/gui/` and the e-ink rules in the specification (section 8.1), against the `core/`
+  interfaces with fakes in widget tests.
+- **Orchestrator** (Claude): this contract, `core/`, `main.dart`, integration, reviews, deployment
+  to the home server, data import and installation on the devices.
