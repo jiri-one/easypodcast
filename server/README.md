@@ -62,6 +62,9 @@ description. Matching ignores case and diacritics. The response is `{"episode_id
 in episode list order, with up to 200 IDs. A query with fewer than two characters after
 trimming whitespace returns 400. An unknown podcast returns 404.
 
+`GET /api/search?q=tomas+roud` applies the same rules to all subscribed podcasts and returns
+up to 100 episode IDs, newest first, with undated episodes last.
+
 `GET /api/state`, `POST /api/state`, and `GET /api/episodes/{id}/state` carry `duration_ms`
 as an integer or `null`. The duration comes from the player. A strictly newer state replaces
 the entire record, including its duration. Requests that omit the field supply `null`.

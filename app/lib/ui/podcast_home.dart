@@ -81,7 +81,6 @@ class _LibraryHomeState extends State<_LibraryHome> {
   PageStorageBucket _searchScrollPositions = PageStorageBucket();
   int? _searchPodcastId;
   final _searchTitles = <String, String>{};
-  List<Episode>? _globalEpisodeMatches;
 
   LibrarySection _section = LibrarySection.inProgress;
   LibrarySection _searchOrigin = LibrarySection.inProgress;
@@ -104,15 +103,7 @@ class _LibraryHomeState extends State<_LibraryHome> {
   ];
 
   @override
-  void initState() {
-    super.initState();
-    widget.services.library.addListener(_invalidateGlobalMatches);
-    _globalSearch.addListener(_invalidateGlobalMatches);
-  }
-
-  @override
   void dispose() {
-    widget.services.library.removeListener(_invalidateGlobalMatches);
     _podcastSearch.dispose();
     _globalSearch.dispose();
     _searchScroll.dispose();
@@ -162,7 +153,6 @@ class _LibraryHomeState extends State<_LibraryHome> {
 
   void _openEpisode(Episode episode) {
     final wide = _wide;
-    _globalSearch.focus.unfocus();
     setState(() {
       if (wide) _pages.removeWhere((page) => page.screen != _Screen.podcast);
       _pages.add((screen: _Screen.episode, id: episode.id));
@@ -192,7 +182,6 @@ class _LibraryHomeState extends State<_LibraryHome> {
   }
 
   void _openPodcast(Podcast podcast) => setState(() {
-    _globalSearch.focus.unfocus();
     _closePodcastSearch();
     _pages.removeWhere((page) => page.screen == _Screen.add);
     _pages.add((screen: _Screen.podcast, id: podcast.id));
@@ -230,15 +219,13 @@ class _LibraryHomeState extends State<_LibraryHome> {
     _globalSearch.change(input, widget.services.api.searchAll);
   }
 
-  void _invalidateGlobalMatches() => _globalEpisodeMatches = null;
-
   List<Episode> _globalEpisodes() {
     final library = widget.services.library;
-    return _globalEpisodeMatches ??= matchLibraryEpisodes(
+    return matchLibraryEpisodes(
       library.podcasts.expand((podcast) => library.episodesOf(podcast.id)),
       _globalSearch.words,
       _globalSearch.matches,
-      normalizedTitles: _searchTitles,
+      _searchTitles,
     );
   }
 
@@ -351,7 +338,11 @@ class _LibraryHomeState extends State<_LibraryHome> {
             if (!didPop) _back();
           },
           child: _linux
-              ? Focus(autofocus: true, onKeyEvent: _desktopKey, child: content)
+              ? FocusScope(
+                  autofocus: true,
+                  onKeyEvent: _desktopKey,
+                  child: content,
+                )
               : content,
         );
       },
@@ -453,36 +444,10 @@ class _LibraryHomeState extends State<_LibraryHome> {
     final listPage = settings ?? podcast;
     final last = _pages.lastOrNull;
     final detail = last == listPage ? null : last;
-    final searchOnly =
-        _section == LibrarySection.search && listPage == null && detail == null;
     final width = MediaQuery.sizeOf(context).width;
     final navWidth = _desktopNavWidth(context).clamp(220.0, width - 480);
     final listWidth = math.min(360.0, (width - navWidth) * 0.46);
     final strings = context.strings;
-    final listPanel = Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        EinkHeader(
-          listPage == null
-              ? _section.label(context)
-              : _title(context, listPage),
-          onBack: listPage == null
-              ? (_section == LibrarySection.search
-                    ? () => setState(_closeGlobalSearch)
-                    : null)
-              : () => setState(() {
-                  if (!_closePodcastSearchOn(listPage)) {
-                    _pages.removeRange(_pages.indexOf(listPage), _pages.length);
-                  }
-                }),
-        ),
-        Expanded(
-          child: listPage == null
-              ? _sectionBody(context, desktop: true)
-              : _pageBody(context, listPage, desktop: true),
-        ),
-      ],
-    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -527,30 +492,57 @@ class _LibraryHomeState extends State<_LibraryHome> {
                   ),
                 ),
               ),
-              if (searchOnly)
-                Expanded(child: listPanel)
-              else ...[
-                SizedBox(width: listWidth, child: _columnDivider(listPanel)),
-                Expanded(
-                  child: detail == null
-                      ? (settings != null ||
-                                (_section == LibrarySection.podcasts &&
-                                    podcast == null)
-                            ? const SizedBox.shrink()
-                            : PageMessage(strings.selectEpisode))
-                      : detail.screen == _Screen.episode
-                      ? _pageBody(context, detail, desktop: true)
-                      : Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            EinkHeader(_title(context, detail), onBack: _back),
-                            Expanded(
-                              child: _pageBody(context, detail, desktop: true),
-                            ),
-                          ],
-                        ),
+              SizedBox(
+                width: listWidth,
+                child: _columnDivider(
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      EinkHeader(
+                        listPage == null
+                            ? _section.label(context)
+                            : _title(context, listPage),
+                        onBack: listPage == null
+                            ? (_section == LibrarySection.search
+                                  ? () => setState(_closeGlobalSearch)
+                                  : null)
+                            : () => setState(() {
+                                if (!_closePodcastSearchOn(listPage)) {
+                                  _pages.removeRange(
+                                    _pages.indexOf(listPage),
+                                    _pages.length,
+                                  );
+                                }
+                              }),
+                      ),
+                      Expanded(
+                        child: listPage == null
+                            ? _sectionBody(context, desktop: true)
+                            : _pageBody(context, listPage, desktop: true),
+                      ),
+                    ],
+                  ),
                 ),
-              ],
+              ),
+              Expanded(
+                child: detail == null
+                    ? (settings != null ||
+                              (_section == LibrarySection.podcasts &&
+                                  podcast == null)
+                          ? const SizedBox.shrink()
+                          : PageMessage(strings.selectEpisode))
+                    : detail.screen == _Screen.episode
+                    ? _pageBody(context, detail, desktop: true)
+                    : Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          EinkHeader(_title(context, detail), onBack: _back),
+                          Expanded(
+                            child: _pageBody(context, detail, desktop: true),
+                          ),
+                        ],
+                      ),
+              ),
             ],
           ),
         ),
@@ -706,8 +698,6 @@ class _LibraryHomeState extends State<_LibraryHome> {
                     ),
                   ],
                   _searchHeading(strings.episodes),
-                  if (_globalSearch.loading && episodes.isNotEmpty)
-                    SliverToBoxAdapter(child: PageMessage(strings.syncLoading)),
                 ],
               ),
             ),

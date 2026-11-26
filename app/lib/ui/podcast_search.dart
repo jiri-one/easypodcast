@@ -12,22 +12,15 @@ bool podcastTitleMatches(String title, List<String> words) =>
     words.every(_fold(title).contains);
 
 List<Episode> matchPodcastEpisodes(
-  Iterable<Episode> episodes,
+  List<Episode> episodes,
   List<String> words,
-  Set<int> descriptionMatches, {
-  Map<String, String>? normalizedTitles,
-}) {
-  if (words.isEmpty) {
-    return episodes is List<Episode> ? episodes : episodes.toList();
-  }
+  Set<int> descriptionMatches,
+) {
+  if (words.isEmpty) return episodes;
   final titles = <Episode>[];
   final descriptions = <Episode>[];
   for (final episode in episodes) {
-    var title = normalizedTitles?[episode.title];
-    if (title == null) {
-      title = _fold(episode.title);
-      normalizedTitles?[episode.title] = title;
-    }
+    final title = _fold(episode.title);
     if (words.every(title.contains)) {
       titles.add(episode);
     } else if (descriptionMatches.contains(episode.id)) {
@@ -40,18 +33,27 @@ List<Episode> matchPodcastEpisodes(
 List<Episode> matchLibraryEpisodes(
   Iterable<Episode> episodes,
   List<String> words,
-  Set<int> descriptionMatches, {
-  Map<String, String>? normalizedTitles,
-}) {
+  Set<int> descriptionMatches,
+  Map<String, String> foldedTitles,
+) {
   if (words.isEmpty) return const [];
-  final matches = matchPodcastEpisodes(
-    episodes,
-    words,
-    descriptionMatches,
-    normalizedTitles: normalizedTitles,
-  )..sort(_comparePublication);
-  if (matches.length > 100) matches.length = 100;
-  return matches;
+  final titles = <Episode>[];
+  final descriptions = <Episode>[];
+  for (final episode in episodes) {
+    if (words.every(
+      (foldedTitles[episode.title] ??= _fold(episode.title)).contains,
+    )) {
+      titles.add(episode);
+    } else if (descriptionMatches.contains(episode.id)) {
+      descriptions.add(episode);
+    }
+  }
+  // Description matches arrive later; adding them below keeps the rows
+  // already drawn on e-ink in place.
+  return [
+    ...(titles..sort(_comparePublication)),
+    ...(descriptions..sort(_comparePublication)),
+  ].take(100).toList();
 }
 
 int _comparePublication(Episode a, Episode b) {

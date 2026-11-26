@@ -58,6 +58,7 @@ void main() {
           episodes,
           podcastSearchWords('title'),
           const {},
+          {},
         ).map((episode) => episode.id),
         [for (var id = 101; id >= 2; id--) id],
       );
@@ -216,7 +217,7 @@ void main() {
               .every((id) => app.services.library.episode(id)!.podcastId != 4),
           isTrue,
         );
-        expect(find.text(app.strings.syncLoading), findsOneWidget);
+        expect(find.text(app.strings.syncLoading), findsNothing);
         expect(api.globalRequests, isEmpty);
         await tester.pump(const Duration(milliseconds: 400));
         api.globalRequests.single.$2.completeError(OfflineException());
@@ -254,7 +255,8 @@ void main() {
         api.globalRequests.last.$2.complete([104, 101, 201, 104, 9999]);
         await tester.pumpAndSettle();
         final matched = _episodeIds(tester);
-        expect(matched.take(5), [201, 101, 203, 104, 406]);
+        expect(matched.take(3), [101, 203, 406]);
+        expect(matched.skipWhile((id) => id != 201), [201, 104]);
 
         final title = app.services.library.podcast(1)!.title;
         await app.tap(_titledRow(title));
@@ -265,6 +267,10 @@ void main() {
         await app.back();
         expect(tester.widget<TextField>(field).controller!.text, query);
         expect(_episodeIds(tester), matched);
+        await app.scrollTo(
+          _titledRow(app.episode(201)),
+          find.byType(EpisodeList),
+        );
         await app.tap(
           _titledRow(app.episode(201)),
           within: find.byType(EpisodeList),

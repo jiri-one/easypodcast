@@ -95,6 +95,18 @@ func TestEpisodeSearch(t *testing.T) {
 	search(global, " ROUD\tTOMÁŠ ", []int64{otherID, items[1].ID})
 	search(global, "tech guys", append([]int64{otherID, items[1].ID, items[0].ID}, ordered[2:99]...))
 	search(global, "tech roud missing", nil)
+	var undated, dated int64
+	for _, row := range []struct {
+		id        *int64
+		published any
+	}{{&undated, nil}, {&dated, "2021-01-01T00:00:00Z"}} {
+		if err := s.db.QueryRow(ctx, `INSERT INTO episodes (podcast_id, guid, title, enclosure_url, published_at, description, search_text)
+			SELECT id, '', 'Zebra', '/zebra/' || gen_random_uuid(), $1::timestamptz, '', 'zebra'
+			FROM podcasts WHERE feed_url = 'https://fixture.invalid/other' RETURNING id`, row.published).Scan(row.id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	search(global, "zebra", []int64{dated, undated})
 
 	target, err := s.feedTarget(ctx, podcastID)
 	if err != nil {
