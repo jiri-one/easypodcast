@@ -467,7 +467,12 @@ Future<void> tourDesktop(
   await app.dialog(l.close);
   await app.section(LibrarySection.queue);
   await visit('pc-queue');
-  await app.holdRow(l.numberedTitle(2, app.episode(401)), rightClick: true);
+  final queueTitle = l.numberedTitle(2, app.episode(401));
+  await app.scrollTo(
+    find.widgetWithText(EinkRow, queueTitle),
+    find.byType(EpisodeQueue),
+  );
+  await app.holdRow(queueTitle, rightClick: true);
   await visit('pc-episode-actions');
   await app.dialog(l.close);
   await app.section(LibrarySection.newEpisodes);

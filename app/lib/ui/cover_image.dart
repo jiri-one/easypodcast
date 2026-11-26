@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
@@ -8,12 +9,57 @@ import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
 
+const coverGrayscale = ui.ColorFilter.matrix([
+  0.2126,
+  0.7152,
+  0.0722,
+  0,
+  0,
+  0.2126,
+  0.7152,
+  0.0722,
+  0,
+  0,
+  0.2126,
+  0.7152,
+  0.0722,
+  0,
+  0,
+  0,
+  0,
+  0,
+  1,
+  0,
+]);
+
+String? validCoverUrl(String? url) {
+  final trimmed = url?.trim();
+  if (trimmed == null) return null;
+  final uri = Uri.tryParse(trimmed);
+  return uri != null &&
+          uri.hasAuthority &&
+          (uri.scheme == 'https' || uri.scheme == 'http')
+      ? trimmed
+      : null;
+}
+
 class CoverImage extends ImageProvider<CoverImage> {
   const CoverImage(this.url);
 
   static const _maxCacheBytes = 64 * 1024 * 1024;
+  static Future<void> _cacheWrites = Future.value();
 
   final String url;
+
+  ResizeImage resized(double side, double devicePixelRatio) {
+    final pixels = math.max(1, (side * devicePixelRatio).round());
+    return ResizeImage(
+      this,
+      width: pixels,
+      height: pixels,
+      policy: ResizeImagePolicy.fit,
+    );
+  }
 
   @override
   Future<CoverImage> obtainKey(ImageConfiguration configuration) =>
@@ -35,7 +81,7 @@ class CoverImage extends ImageProvider<CoverImage> {
     final bytes = await _download();
     final image = await _decode(bytes, decode);
     if (file != null && bytes.length <= _maxCacheBytes) {
-      await _save(file, bytes);
+      await (_cacheWrites = _cacheWrites.then((_) => _save(file, bytes)));
     }
     return image;
   }
@@ -85,21 +131,34 @@ class CoverImage extends ImageProvider<CoverImage> {
   }
 
   Future<void> _save(File file, Uint8List bytes) async {
+    final directory = file.parent;
+    final pending = File(path.join(directory.path, 'cover.tmp'));
     try {
-      await file.parent.create(recursive: true);
-      await file.writeAsBytes(bytes);
-      final directory = file.parent;
+      await directory.create(recursive: true);
+      await pending.writeAsBytes(bytes);
+      await pending.rename(file.path);
+      final cached = <(File, FileStat)>[];
       var total = 0;
       await for (final entry in directory.list(followLinks: false)) {
-        if (entry is! File) continue;
-        total += await entry.length();
-        if (total > _maxCacheBytes) {
-          await directory.delete(recursive: true);
-          break;
-        }
+        if (entry is! File || path.extension(entry.path) != '.img') continue;
+        final stat = await entry.stat();
+        if (stat.type != FileSystemEntityType.file) continue;
+        total += stat.size;
+        if (entry.path != file.path) cached.add((entry, stat));
+      }
+      if (total <= _maxCacheBytes) return;
+      cached.sort((a, b) => a.$2.modified.compareTo(b.$2.modified));
+      for (final (entry, stat) in cached) {
+        await entry.delete();
+        total -= stat.size;
+        if (total <= _maxCacheBytes) break;
       }
     } on FileSystemException {
-      return;
+      try {
+        await pending.delete();
+      } on FileSystemException {
+        return;
+      }
     }
   }
 

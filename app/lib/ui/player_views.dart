@@ -345,13 +345,10 @@ class PlayerPage extends StatelessWidget {
   }
 }
 
-List<String> _coverUrls(Episode episode, Podcast? podcast) => [
-  for (final url in {?episode.imageUrl?.trim(), ?podcast?.imageUrl?.trim()})
-    if (Uri.tryParse(url) case final Uri uri
-        when uri.hasAuthority &&
-            (uri.scheme == 'https' || uri.scheme == 'http'))
-      url,
-];
+List<String> _coverUrls(Episode episode, Podcast? podcast) => {
+  ?validCoverUrl(episode.imageUrl),
+  ?validCoverUrl(podcast?.imageUrl),
+}.toList();
 
 class _PlayerCover extends StatelessWidget {
   const _PlayerCover({required this.urls, this.bottomGap = 0});
@@ -359,45 +356,14 @@ class _PlayerCover extends StatelessWidget {
   final List<String> urls;
   final double bottomGap;
 
-  static const _grayscale = ColorFilter.matrix([
-    0.2126,
-    0.7152,
-    0.0722,
-    0,
-    0,
-    0.2126,
-    0.7152,
-    0.0722,
-    0,
-    0,
-    0.2126,
-    0.7152,
-    0.0722,
-    0,
-    0,
-    0,
-    0,
-    0,
-    1,
-    0,
-  ]);
-
   @override
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, bounds) {
       final side = math.min(bounds.maxWidth, bounds.maxHeight - bottomGap);
       if (side < 1) return const SizedBox.shrink();
-      final pixels = math.max(
-        1,
-        (side * MediaQuery.devicePixelRatioOf(context)).round(),
-      );
       Widget cover(int index) => Image(
-        image: ResizeImage(
-          CoverImage(urls[index]),
-          width: pixels,
-          height: pixels,
-          policy: ResizeImagePolicy.fit,
-        ),
+        image: CoverImage(urls[index])
+            .resized(side, MediaQuery.devicePixelRatioOf(context)),
         width: side,
         height: side,
         fit: BoxFit.cover,
@@ -409,7 +375,7 @@ class _PlayerCover extends StatelessWidget {
             decoration: const BoxDecoration(
               border: Border.fromBorderSide(BorderSide()),
             ),
-            child: ColorFiltered(colorFilter: _grayscale, child: child),
+            child: ColorFiltered(colorFilter: coverGrayscale, child: child),
           ),
         ),
         errorBuilder: (context, error, stack) => index + 1 < urls.length

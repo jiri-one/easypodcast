@@ -16,29 +16,8 @@ void main() {
   test(
     'each cover decodes at the requested size and can load again offline',
     () async {
-      final parent = Directory(path.join(Directory.current.parent.path, '.ai'));
-      await parent.create(recursive: true);
-      final root = await parent.createTemp('cover-test-');
-      const channel = MethodChannel('plugins.flutter.io/path_provider');
-      final messenger = binding.defaultBinaryMessenger;
-      messenger.setMockMethodCallHandler(channel, (call) async {
-        expect(call.method, 'getApplicationCacheDirectory');
-        return root.path;
-      });
-      addTearDown(() async {
-        messenger.setMockMethodCallHandler(channel, null);
-        await root.delete(recursive: true);
-      });
-
-      final recorder = ui.PictureRecorder();
-      ui.Canvas(recorder)
-          .drawPaint(ui.Paint()..color = const ui.Color(0xff383838));
-      final picture = recorder.endRecording();
-      final image = await picture.toImage(192, 192);
-      final bitmap = (await image.toByteData(format: ui.ImageByteFormat.png))!;
-      image.dispose();
-      picture.dispose();
-
+      final cache = await _coverCache(binding);
+      final bytes = await _coverBytes();
       var requests = 0;
       await http.runWithClient(
         () async {
@@ -62,17 +41,74 @@ void main() {
           expect(await _imageSize(thumbnail), const ui.Size.square(52));
           expect(await _imageSize(playerCover), const ui.Size.square(104));
           expect(requests, 1);
-          final cache = Directory(path.join(root.path, 'podcast-covers'));
           expect(await cache.list().length, 1);
         },
         () => MockClient((_) async {
           requests++;
           if (requests > 1) throw const SocketException('Offline');
-          return http.Response.bytes(bitmap.buffer.asUint8List(), 200);
+          return http.Response.bytes(bytes, 200);
         }),
       );
     },
   );
+
+  test(
+    'cover cache evicts only the oldest file needed to stay under its limit',
+    () async {
+      final cache = await _coverCache(binding);
+      final bytes = await _coverBytes();
+      final older = File(path.join(cache.path, 'older.img'));
+      final newer = File(path.join(cache.path, 'newer.img'));
+      for (final (file, size, year) in [(older, 31, 2024), (newer, 33, 2025)]) {
+        final handle = await file.open(mode: FileMode.write);
+        try {
+          await handle.truncate(size * 1024 * 1024);
+        } finally {
+          await handle.close();
+        }
+        await file.setLastModified(DateTime.utc(year));
+      }
+
+      const cover = CoverImage('https://podcast.example/new-cover.png');
+      addTearDown(cover.evict);
+      await http.runWithClient(
+        () async => expect(await _imageSize(cover), const ui.Size.square(192)),
+        () => MockClient((_) async => http.Response.bytes(bytes, 200)),
+      );
+
+      expect(await older.exists(), isFalse);
+      expect(await newer.exists(), isTrue);
+      expect(await cache.list().length, 2);
+    },
+  );
+}
+
+Future<Directory> _coverCache(TestWidgetsFlutterBinding binding) async {
+  final parent = Directory(path.join(Directory.current.parent.path, '.ai'));
+  await parent.create(recursive: true);
+  final root = await parent.createTemp('cover-test-');
+  const channel = MethodChannel('plugins.flutter.io/path_provider');
+  final messenger = binding.defaultBinaryMessenger;
+  messenger.setMockMethodCallHandler(channel, (call) async {
+    expect(call.method, 'getApplicationCacheDirectory');
+    return root.path;
+  });
+  addTearDown(() async {
+    messenger.setMockMethodCallHandler(channel, null);
+    await root.delete(recursive: true);
+  });
+  return Directory(path.join(root.path, 'podcast-covers')).create();
+}
+
+Future<Uint8List> _coverBytes() async {
+  final recorder = ui.PictureRecorder();
+  ui.Canvas(recorder).drawPaint(ui.Paint()..color = const ui.Color(0xff383838));
+  final picture = recorder.endRecording();
+  final image = await picture.toImage(192, 192);
+  final bitmap = (await image.toByteData(format: ui.ImageByteFormat.png))!;
+  image.dispose();
+  picture.dispose();
+  return bitmap.buffer.asUint8List();
 }
 
 Future<ui.Size> _imageSize(ImageProvider provider) async {

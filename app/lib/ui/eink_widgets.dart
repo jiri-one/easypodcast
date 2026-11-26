@@ -156,6 +156,7 @@ class EinkRow extends StatelessWidget {
     required this.title,
     this.details = const [],
     this.leading,
+    this.topAligned = false,
     this.trailing,
     this.onPressed,
     this.selected,
@@ -171,6 +172,7 @@ class EinkRow extends StatelessWidget {
   final String title;
   final List<Widget> details;
   final Widget? leading;
+  final bool topAligned;
   final Widget? trailing;
   final VoidCallback? onPressed;
   final bool? selected;
@@ -190,8 +192,14 @@ class EinkRow extends StatelessWidget {
       vertical: compact ? 6 : 10,
     );
     final content = Row(
+      crossAxisAlignment: topAligned
+          ? CrossAxisAlignment.start
+          : CrossAxisAlignment.center,
       children: [
-        if (leading case final Widget icon) ...[icon, const SizedBox(width: 6)],
+        if (leading case final Widget start) ...[
+          start,
+          const SizedBox(width: 6),
+        ],
         Expanded(
           child: Column(
             mainAxisSize: MainAxisSize.min,

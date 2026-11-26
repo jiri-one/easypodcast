@@ -5,6 +5,7 @@ import '../core/downloads.dart';
 import '../core/models.dart';
 import '../core/services.dart';
 import '../core/sync.dart';
+import 'cover_image.dart';
 import 'eink_widgets.dart';
 import 'episode_queue.dart';
 import 'episode_text.dart';
@@ -246,7 +247,13 @@ class EpisodeList extends StatelessWidget {
     final playing = playback.playing(episode.id);
     final duration = episodeDuration(episode, state);
     final length = duration == null ? null : minuteLength(strings, duration);
-    final podcast = library.podcast(episode.podcastId)?.title;
+    final podcast = library.podcast(episode.podcastId);
+    final showPodcast = kind != EpisodeListKind.podcast;
+    final hasRemainingTime =
+        !playing &&
+        state.isInProgress &&
+        duration != null &&
+        state.resumePosition <= duration;
     final status = episodeStatusText(
       strings,
       state,
@@ -291,9 +298,11 @@ class EpisodeList extends StatelessWidget {
         title: kind == EpisodeListKind.queue
             ? strings.numberedTitle(index + 1, episode.title)
             : episode.title,
-        overline: kind != EpisodeListKind.podcast && podcast != null
+        leading: showPodcast ? _PodcastThumbnail(podcast?.imageUrl) : null,
+        topAligned: showPodcast,
+        overline: showPodcast && podcast != null
             ? Text(
-                podcast,
+                podcast.title,
                 style: detailStyle.copyWith(fontWeight: FontWeight.w700),
               )
             : null,
@@ -309,6 +318,7 @@ class EpisodeList extends StatelessWidget {
                   parts.isNotEmpty &&
                   ((playing && parts.first == status) ||
                       (kind == EpisodeListKind.podcast && state.isNew)),
+              remaining: hasRemainingTime && parts.firstOrNull == status,
               downloaded: downloaded,
               inverted: inverted,
             ),
@@ -358,51 +368,92 @@ class _EpisodeMetadata extends StatelessWidget {
   const _EpisodeMetadata({
     required this.parts,
     required this.bold,
+    required this.remaining,
     required this.downloaded,
     required this.inverted,
   });
 
   final List<String> parts;
   final bool bold;
+  final bool remaining;
   final bool downloaded;
   final bool inverted;
 
   @override
   Widget build(BuildContext context) {
+    const iconSize = 16.0;
+    const gap = 4.0;
     final first = parts.firstOrNull ?? '';
     final rest = parts.skip(1);
-    final metadata = metadataLine(first, rest, bold: bold);
-    if (!downloaded) return metadata;
+    final text = metadataLine(first, rest, bold: bold);
+    final color = inverted ? Colors.white : Colors.black;
     final label = context.strings.stateDownloaded;
+    Widget line(bool showLabel) => Row(
+      crossAxisAlignment: CrossAxisAlignment.baseline,
+      textBaseline: TextBaseline.alphabetic,
+      spacing: gap,
+      children: [
+        if (remaining) Icon(Icons.schedule, size: iconSize, color: color),
+        if (parts.isNotEmpty) Flexible(child: text),
+        if (downloaded)
+          Icon(
+            Icons.download_outlined,
+            size: iconSize,
+            color: color,
+            semanticLabel: showLabel ? null : label,
+          ),
+        if (showLabel) Text(label, style: metadataStyle),
+      ],
+    );
+
+    if (!downloaded) return remaining ? line(false) : text;
     return LayoutBuilder(
       builder: (context, bounds) {
         final painter = TextPainter(
           text: TextSpan(
             style: DefaultTextStyle.of(context).style.merge(metadataStyle),
             children: [
-              metadata.textSpan!,
+              text.textSpan!,
               TextSpan(text: label),
             ],
           ),
           textDirection: Directionality.of(context),
           textScaler: MediaQuery.textScalerOf(context),
         )..layout();
-        final showLabel = painter.width + 24 <= bounds.maxWidth;
+        final markerWidth = iconSize + gap;
+        final labelWidth =
+            painter.width + markerWidth + gap + (remaining ? markerWidth : 0);
         painter.dispose();
-        return Row(
-          spacing: 4,
-          children: [
-            if (parts.isNotEmpty) Flexible(child: metadata),
-            Icon(
-              Icons.download_outlined,
-              size: 16,
-              color: inverted ? Colors.white : Colors.black,
-              semanticLabel: showLabel ? null : label,
-            ),
-            if (showLabel) Text(label, style: metadataStyle),
-          ],
-        );
+        return line(labelWidth <= bounds.maxWidth);
       },
+    );
+  }
+}
+
+class _PodcastThumbnail extends StatelessWidget {
+  const _PodcastThumbnail(this.imageUrl);
+
+  static const _side = 52.0;
+
+  final String? imageUrl;
+
+  @override
+  Widget build(BuildContext context) {
+    final url = validCoverUrl(imageUrl);
+    return SizedBox.square(
+      dimension: _side,
+      child: url == null
+          ? null
+          : ColorFiltered(
+              colorFilter: coverGrayscale,
+              child: Image(
+                image: CoverImage(url)
+                    .resized(_side, MediaQuery.devicePixelRatioOf(context)),
+                fit: BoxFit.cover,
+                excludeFromSemantics: true,
+                errorBuilder: (_, _, _) => const SizedBox.shrink(),
+              ),
+            ),
     );
   }
 }
@@ -458,6 +509,8 @@ class PodcastList extends StatelessWidget {
             return EinkRow(
               key: ValueKey(podcast.id),
               title: podcast.title,
+              leading: _PodcastThumbnail(podcast.imageUrl),
+              topAligned: true,
               desktop: desktop,
               onPressed: () => onOpen(podcast),
               details: [

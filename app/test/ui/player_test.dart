@@ -128,14 +128,17 @@ void main() {
       desktopFont: font,
       playerCover: true,
     );
+    final player = find.byType(DesktopPlayer);
     try {
       await app.tap(
-        find.descendant(
-          of: find.byType(DesktopPlayer),
-          matching: find.text(app.strings.play),
-        ),
+        find.descendant(of: player, matching: find.text(app.strings.play)),
       );
-      expect(tester.getSize(find.byType(ColorFiltered)), const Size.square(52));
+      expect(
+        tester.getSize(
+          find.descendant(of: player, matching: find.byType(ColorFiltered)),
+        ),
+        const Size.square(52),
+      );
       expect(
         tester.getSize(find.byKey(PlaybackTimeline.trackKey)).width,
         greaterThan(900),
