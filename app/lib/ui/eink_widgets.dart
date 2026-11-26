@@ -13,22 +13,22 @@ extension UiLocalizations on BuildContext {
 }
 
 const headingStyle = TextStyle(
-  fontSize: 18,
+  fontSize: 22,
   height: 1.2,
   fontWeight: FontWeight.w700,
 );
 const rowTitleStyle = TextStyle(
-  fontSize: 16,
+  fontSize: 18,
   height: 1.2,
   fontWeight: FontWeight.w400,
 );
 const detailStyle = TextStyle(
-  fontSize: 12,
+  fontSize: einkBodyFontSize,
   height: 1.25,
   fontWeight: FontWeight.w400,
 );
 const buttonLabelStyle = TextStyle(
-  fontSize: 14,
+  fontSize: einkButtonFontSize,
   height: 1.2,
   fontWeight: FontWeight.w400,
 );
@@ -158,7 +158,6 @@ class EinkRow extends StatelessWidget {
               Text(
                 title,
                 style: rowTitleStyle.copyWith(
-                  fontSize: compact || desktop ? 14 : 16,
                   decoration: underlined ? TextDecoration.underline : null,
                 ),
               ),
@@ -373,7 +372,7 @@ class PageMessage extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.all(12),
-    child: Text(message, style: const TextStyle(fontSize: 14, height: 1.25)),
+    child: Text(message, style: detailStyle),
   );
 }
 
@@ -537,7 +536,7 @@ class LabeledField extends StatelessWidget {
             enabled: enabled,
             minLines: lines,
             maxLines: lines,
-            style: const TextStyle(color: Colors.black, fontSize: 14),
+            style: const TextStyle(color: Colors.black),
             decoration: InputDecoration(
               isDense: true,
               hintText: hint,

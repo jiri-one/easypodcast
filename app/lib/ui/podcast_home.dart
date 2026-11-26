@@ -626,8 +626,7 @@ class _LibraryHomeState extends State<_LibraryHome> {
   }
 
   double _desktopNavWidth(BuildContext context) {
-    final style = Theme.of(context).textTheme.labelLarge!
-        .merge(rowTitleStyle.copyWith(fontSize: 14));
+    final style = Theme.of(context).textTheme.labelLarge!.merge(rowTitleStyle);
     final painter = TextPainter(
       textDirection: Directionality.of(context),
       textScaler: MediaQuery.textScalerOf(context),

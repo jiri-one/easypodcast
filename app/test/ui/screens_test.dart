@@ -8,6 +8,7 @@ import 'package:easypodcast/ui/episode_page.dart';
 import 'package:easypodcast/ui/library_views.dart';
 import 'package:easypodcast/ui/player_views.dart';
 import 'package:easypodcast/ui/theme.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
@@ -20,12 +21,13 @@ void main() {
   setUpAll(() async => font = await loadTestFonts());
 
   for (final locale in const [Locale('cs'), Locale('en')]) {
-    for (final (size, desktop) in const [
-      (Size(392, 785), false),
-      (Size(360, 720), false),
-      (Size(760, 700), true),
-      (Size(950, 700), true),
-      (Size(1000, 700), true),
+    for (final (size, desktop, textScale) in const [
+      (Size(392, 785), false, 1.8),
+      (Size(360, 720), false, 1.8),
+      (palmaSize, false, palmaTextScale),
+      (Size(760, 700), true, 1.8),
+      (Size(950, 700), true, 1.8),
+      (Size(1000, 700), true, 1.8),
     ]) {
       testWidgets('all $locale screens fit at ${size.width} × ${size.height}', (
         tester,
@@ -34,11 +36,13 @@ void main() {
           tester,
           size: size,
           locale: locale,
+          textScale: textScale,
           desktopFont: desktop ? font : null,
           playerCover: true,
         );
         Future<void> check(String name) async {
           expect(tester.takeException(), isNull, reason: name);
+          _checkTextLayout(name);
         }
 
         try {
@@ -50,7 +54,7 @@ void main() {
             final scale = MediaQuery.textScalerOf(tester.element(heading));
             expect(
               tester.getSize(heading).height,
-              lessThan(scale.scale(14) * 1.5),
+              lessThan(scale.scale(rowTitleStyle.fontSize!) * 1.5),
             );
             await tourDesktop(app, check);
           } else {
@@ -384,6 +388,34 @@ void main() {
       await app.finish();
     }
   });
+}
+
+void _checkTextLayout(String screen) {
+  final labels = find.descendant(
+    of: find.byType(Text),
+    matching: find.byType(RichText),
+  );
+  for (final element in labels.evaluate()) {
+    final paragraph = element.renderObject! as RenderParagraph;
+    final reason = '$screen: ${paragraph.text.toPlainText()}';
+    expect(
+      paragraph.text.style?.fontSize,
+      greaterThanOrEqualTo(16),
+      reason: reason,
+    );
+    expect(
+      paragraph.size.height,
+      greaterThanOrEqualTo(
+        paragraph.getMaxIntrinsicHeight(paragraph.size.width) - 1,
+      ),
+      reason: reason,
+    );
+  }
+  expect(
+    find.descendant(of: find.byType(FittedBox), matching: find.byType(Text)),
+    findsNothing,
+    reason: screen,
+  );
 }
 
 Future<UiHarness> _phone(WidgetTester tester, {bool loggedIn = true}) =>

@@ -9,6 +9,7 @@ import 'package:easypodcast/ui/eink_widgets.dart';
 import 'package:easypodcast/ui/episode_page.dart';
 import 'package:easypodcast/ui/episode_text.dart';
 import 'package:easypodcast/ui/library_views.dart';
+import 'package:easypodcast/ui/settings_pages.dart';
 import 'package:easypodcast/ui/theme.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -312,7 +313,7 @@ void main() {
       await tester.enterText(find.byType(TextField), '<opml><body/></opml>');
       await app.tapText(l.opmlImport);
       final reason = find.text('HTTP 401 for https://feed.example/rss');
-      await tester.ensureVisible(reason);
+      await app.scrollTo(reason, find.byType(OpmlPage));
       expect(reason, findsOneWidget);
       expect(find.text('https://feed.example/rss'), findsOneWidget);
       expect(find.textContaining('test-user'), findsNothing);

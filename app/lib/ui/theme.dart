@@ -1,6 +1,9 @@
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
+const einkBodyFontSize = 16.0;
+const einkButtonFontSize = 18.0;
+
 const einkSystemOverlayStyle = SystemUiOverlayStyle(
   statusBarColor: Colors.white,
   statusBarIconBrightness: Brightness.dark,
@@ -111,14 +114,21 @@ ThemeData einkTheme({String? fontFamily}) {
     iconTheme: const IconThemeData(color: Colors.black),
     textTheme: const TextTheme(
       titleLarge: TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
-      bodyLarge: TextStyle(height: 1.35),
-      bodyMedium: TextStyle(height: 1.35),
-      labelLarge: TextStyle(fontWeight: FontWeight.w600),
+      titleSmall: TextStyle(fontSize: 18),
+      bodyLarge: TextStyle(fontSize: einkBodyFontSize, height: 1.35),
+      bodyMedium: TextStyle(fontSize: einkBodyFontSize, height: 1.35),
+      bodySmall: TextStyle(fontSize: einkBodyFontSize),
+      labelLarge: TextStyle(
+        fontSize: einkButtonFontSize,
+        fontWeight: FontWeight.w600,
+      ),
+      labelMedium: TextStyle(fontSize: einkBodyFontSize),
+      labelSmall: TextStyle(fontSize: einkBodyFontSize),
     ),
     dividerTheme: const DividerThemeData(color: Colors.black, thickness: 1),
     tooltipTheme: const TooltipThemeData(
       decoration: BoxDecoration(color: Colors.black),
-      textStyle: TextStyle(color: Colors.white),
+      textStyle: TextStyle(color: Colors.white, fontSize: einkBodyFontSize),
     ),
     filledButtonTheme: FilledButtonThemeData(style: filledButton),
     elevatedButtonTheme: ElevatedButtonThemeData(style: filledButton),
@@ -187,6 +197,7 @@ ThemeData einkTheme({String? fontFamily}) {
       focusedErrorBorder: _inputBorder.copyWith(borderSide: _errorBorder),
       errorStyle: const TextStyle(
         color: Colors.black,
+        fontSize: einkBodyFontSize,
         fontWeight: FontWeight.w700,
       ),
       floatingLabelBehavior: FloatingLabelBehavior.never,

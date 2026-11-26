@@ -25,6 +25,28 @@ class MiniPlayer extends StatelessWidget {
     final strings = context.strings;
     final playing = playback.playing(episode.id);
     final checking = !playing && playback.checkingId != null;
+    final playPause = FilledButton(
+      onPressed: () => playback.toggle(),
+      style: const ButtonStyle(
+        minimumSize: WidgetStatePropertyAll(Size(84, 58)),
+        padding: WidgetStatePropertyAll(EdgeInsets.all(4)),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(playing ? Icons.pause : Icons.play_arrow, size: 24),
+          IndexedStack(
+            alignment: Alignment.center,
+            index: playing ? 1 : 0,
+            children: [
+              Text(strings.play, style: buttonLabelStyle),
+              Text(strings.pause, style: buttonLabelStyle),
+            ],
+          ),
+        ],
+      ),
+    );
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -33,67 +55,46 @@ class MiniPlayer extends StatelessWidget {
         RepaintBoundary(
           child: Stack(
             children: [
-              SizedBox(
-                height: 72,
+              ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 72),
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: TextButton(
-                          onPressed: onOpen,
-                          style: const ButtonStyle(
-                            alignment: AlignmentDirectional.centerStart,
-                            padding: WidgetStatePropertyAll(
-                              EdgeInsets.symmetric(horizontal: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  child: LayoutBuilder(
+                    builder: (context, bounds) => Row(
+                      spacing: 8,
+                      children: [
+                        Expanded(
+                          child: TextButton(
+                            onPressed: onOpen,
+                            style: const ButtonStyle(
+                              alignment: AlignmentDirectional.centerStart,
+                              padding: WidgetStatePropertyAll(
+                                EdgeInsets.symmetric(horizontal: 4),
+                              ),
+                            ),
+                            child: Text(
+                              checking
+                                  ? strings.checkingPosition
+                                  : !playing && playback.loading(episode.id)
+                                  ? strings.loadingPlayback
+                                  : episode.title,
+                              style: buttonLabelStyle.merge(underlineStyle),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
                             ),
                           ),
-                          child: Text(
-                            checking
-                                ? strings.checkingPosition
-                                : !playing && playback.loading(episode.id)
-                                ? strings.loadingPlayback
-                                : episode.title,
-                            style: buttonLabelStyle.merge(underlineStyle),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          ),
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      SizedBox(
-                        width: 84,
-                        height: 58,
-                        child: FilledButton(
-                          onPressed: () => playback.toggle(),
-                          style: const ButtonStyle(
-                            padding: WidgetStatePropertyAll(
-                              EdgeInsets.symmetric(horizontal: 4),
-                            ),
-                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ConstrainedBox(
+                          constraints: BoxConstraints(
+                            maxWidth: bounds.maxWidth * 0.4,
                           ),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                playing ? Icons.pause : Icons.play_arrow,
-                                size: 24,
-                              ),
-                              Flexible(
-                                child: FittedBox(
-                                  fit: BoxFit.scaleDown,
-                                  child: Text(
-                                    playing ? strings.pause : strings.play,
-                                    style: detailStyle,
-                                    maxLines: 1,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
+                          child: playPause,
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -257,8 +258,6 @@ class PlayerPage extends StatelessWidget {
                     child: Text(
                       episode.title,
                       style: headingStyle.merge(underlineStyle),
-                      maxLines: 3,
-                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
                   if (services.player.lastPlaybackError != null ||
@@ -313,7 +312,7 @@ class PlayerPage extends StatelessWidget {
                   Text(
                     playText,
                     textAlign: TextAlign.center,
-                    style: detailStyle,
+                    style: buttonLabelStyle,
                   ),
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -348,8 +347,6 @@ class PlayerPage extends StatelessWidget {
                       child: Text(
                         strings.nextInQueue(next.title),
                         style: buttonLabelStyle.merge(underlineStyle),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
                       ),
                     ),
                 ],
@@ -574,6 +571,9 @@ class DesktopPlayer extends StatelessWidget {
     final podcast = episode == null
         ? null
         : playback.services.library.podcast(episode.podcastId);
+    final labelScale =
+        MediaQuery.textScalerOf(context).scale(einkButtonFontSize) /
+        einkButtonFontSize;
     final covers = episode == null
         ? const <String>[]
         : _coverUrls(episode, podcast);
@@ -680,7 +680,7 @@ class DesktopPlayer extends StatelessWidget {
                 ),
               LayoutBuilder(
                 builder: (context, bounds) {
-                  if (bounds.maxWidth < 800) {
+                  if (bounds.maxWidth < 800 * math.max(1.0, labelScale)) {
                     return Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       spacing: 4,

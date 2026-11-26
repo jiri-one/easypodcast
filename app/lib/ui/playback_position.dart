@@ -299,49 +299,41 @@ class _PlaybackTimelineState extends State<PlaybackTimeline> {
               ),
             ),
           ),
-          SizedBox(
-            height: MediaQuery.textScalerOf(context).scale(18) * 1.2,
-            child: Row(
-              children: [
-                _timeLabel(
+          Row(
+            spacing: 4,
+            crossAxisAlignment: CrossAxisAlignment.baseline,
+            textBaseline: TextBaseline.alphabetic,
+            children: [
+              Expanded(
+                child: Text(
                   positionText(elapsed, padMinutes: true),
-                  Alignment.centerLeft,
+                  style: rowTitleStyle,
                 ),
-                _timeLabel(
+              ),
+              Expanded(
+                child: Text(
                   _preview == null
                       ? ''
                       : positionText(displayed, padMinutes: true),
-                  Alignment.center,
-                  preview: true,
+                  key: PlaybackTimeline.previewKey,
+                  textAlign: TextAlign.center,
+                  style: headingStyle,
                 ),
-                _timeLabel(
+              ),
+              Expanded(
+                child: Text(
                   remaining == null
                       ? '—'
                       : '−${positionText(remaining, padMinutes: true)}',
-                  Alignment.centerRight,
+                  textAlign: TextAlign.end,
+                  style: rowTitleStyle,
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ],
       );
     },
-  );
-
-  Widget _timeLabel(
-    String value,
-    Alignment alignment, {
-    bool preview = false,
-  }) => Expanded(
-    child: FittedBox(
-      fit: BoxFit.scaleDown,
-      alignment: alignment,
-      child: Text(
-        value,
-        key: preview ? PlaybackTimeline.previewKey : null,
-        style: preview ? headingStyle : detailStyle,
-      ),
-    ),
   );
 }
 

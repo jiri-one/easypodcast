@@ -65,6 +65,25 @@ void main() {
     }
   });
 
+  testWidgets('Palma PNGs at 440 × 879 with 130% text', (tester) async {
+    final app = await UiHarness.open(
+      tester,
+      size: palmaSize,
+      locale: const Locale('cs'),
+      textScale: palmaTextScale,
+      playerCover: true,
+    );
+    try {
+      await write(app, '28-palma-in-progress');
+      await app.services.player.setSpeed(1.2);
+      await app.mini(app.strings.play);
+      await app.mini(app.episode(101));
+      await write(app, '29-palma-player');
+    } finally {
+      await app.finish();
+    }
+  });
+
   testWidgets('Linux PNG at 1000 × 700 with 18 point GTK font', (tester) async {
     final app = await UiHarness.open(
       tester,

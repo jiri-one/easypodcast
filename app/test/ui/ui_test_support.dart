@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 import 'package:easypodcast/core/downloads.dart';
 import 'package:easypodcast/core/services.dart';
 import 'package:easypodcast/l10n/app_localizations.dart';
+import 'package:easypodcast/ui/account_pages.dart';
 import 'package:easypodcast/ui/app_root.dart';
 import 'package:easypodcast/ui/cover_image.dart';
 import 'package:easypodcast/ui/demo/demo_api.dart';
@@ -17,11 +18,15 @@ import 'package:easypodcast/ui/library_views.dart';
 import 'package:easypodcast/ui/playback_position.dart';
 import 'package:easypodcast/ui/player_views.dart';
 import 'package:easypodcast/ui/podcast_home.dart';
+import 'package:easypodcast/ui/settings_pages.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
+
+const palmaSize = Size(440, 879);
+const palmaTextScale = 1.3;
 
 Future<String> loadTestFonts() async {
   final icons = FontLoader('MaterialIcons')
@@ -72,6 +77,7 @@ class UiHarness {
     WidgetTester tester, {
     required Size size,
     required Locale locale,
+    double textScale = 1.8,
     String? desktopFont,
     bool loggedIn = true,
     DemoLibrary? library,
@@ -92,7 +98,7 @@ class UiHarness {
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1;
     tester.platformDispatcher.localesTestValue = [locale];
-    tester.platformDispatcher.textScaleFactorTestValue = 1.8;
+    tester.platformDispatcher.textScaleFactorTestValue = textScale;
     debugDefaultTargetPlatformOverride = desktop
         ? TargetPlatform.linux
         : TargetPlatform.android;
@@ -132,14 +138,21 @@ class UiHarness {
     await tester.pump();
   }
 
-  Future<void> tap(Finder finder) async {
-    await tester.ensureVisible(finder);
-    await tester.pumpAndSettle();
+  Future<void> tap(Finder finder, {Finder? within}) async {
+    if (finder.hitTestable().evaluate().isEmpty) {
+      if (within == null) {
+        await tester.ensureVisible(finder);
+      } else {
+        await scrollTo(finder, within);
+      }
+      await tester.pumpAndSettle();
+    }
     await tester.tap(finder);
     await tester.pumpAndSettle();
   }
 
-  Future<void> tapText(String text) => tap(find.text(text));
+  Future<void> tapText(String text, {Finder? within}) =>
+      tap(find.text(text), within: within);
 
   Future<void> row(String title) => tap(find.widgetWithText(EinkRow, title));
 
@@ -170,13 +183,18 @@ class UiHarness {
     double delta = 150,
   }) async {
     final target = find.widgetWithText(EinkRow, title);
-    await tester.scrollUntilVisible(
-      target,
-      delta,
-      scrollable: find.descendant(of: view, matching: find.byType(Scrollable)),
-    );
+    await scrollTo(target, view, delta: delta);
     await tap(target);
   }
+
+  Future<void> scrollTo(Finder finder, Finder view, {double delta = 150}) =>
+      tester.scrollUntilVisible(
+        finder,
+        delta,
+        scrollable: find
+            .descendant(of: view, matching: find.byType(Scrollable))
+            .first,
+      );
 
   Future<void> menu() => tap(find.byType(EinkHeader).first);
 
@@ -219,7 +237,7 @@ class UiHarness {
     ]) {
       await tester.enterText(_loginField(key), text);
     }
-    await tapText(strings.signIn);
+    await tapText(strings.signIn, within: find.byType(LoginPage));
   }
 
   Finder _loginField(String key) => find.descendant(
@@ -409,7 +427,7 @@ Future<void> tourPhone(UiHarness app, VisitScreen visit) async {
     delta: -150,
   );
   await visit('21-server');
-  await app.tapText(l.logout);
+  await app.tapText(l.logout, within: find.byType(ServerPage));
   await visit('16-login');
   await app.login(reject: true);
   await visit('17-login-error');
@@ -471,7 +489,7 @@ Future<void> tourDesktop(
   await visit('pc-opml');
   await app.scrollToRow(l.server, settings, delta: -150);
   await visit('pc-server');
-  await app.tapText(l.logout);
+  await app.tapText(l.logout, within: find.byType(ServerPage));
   await visit('pc-login');
   await app.login(reject: true);
   await visit('pc-login-error');
