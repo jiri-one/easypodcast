@@ -10,13 +10,15 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:path/path.dart' as path;
 
+import 'fixtures/cover_cache.dart';
+
 void main() {
   final binding = TestWidgetsFlutterBinding.ensureInitialized();
 
   test(
     'prefetch stores the raw bytes and only touches a cached cover',
     () async {
-      final cache = await _coverCache(binding);
+      final cache = await coverCache(binding);
       const url = 'https://podcast.example/episode.png';
       const bytes = [1, 2, 3];
       var requests = 0;
@@ -42,7 +44,7 @@ void main() {
   );
 
   test('prefetch ignores an address that the HTTP client rejects', () async {
-    await _coverCache(binding);
+    await coverCache(binding);
     await http.runWithClient(
       () => CoverImage.prefetch('https:///cover.png'),
       () => MockClient((_) => throw ArgumentError('No host specified')),
@@ -52,7 +54,7 @@ void main() {
   for (final prefetchFirst in [true, false]) {
     test('a prefetch and a display that overlap share one request, '
         '${prefetchFirst ? 'prefetch' : 'display'} first', () async {
-      final cache = await _coverCache(binding);
+      final cache = await coverCache(binding);
       final bytes = await _coverBytes();
       final cover = CoverImage('https://podcast.example/$prefetchFirst.png');
       addTearDown(cover.evict);
@@ -81,7 +83,7 @@ void main() {
   }
 
   test('a prefetched cover can be displayed offline', () async {
-    await _coverCache(binding);
+    await coverCache(binding);
     final bytes = await _coverBytes();
     const cover = CoverImage('https://podcast.example/offline-episode.png');
     addTearDown(cover.evict);
@@ -98,7 +100,7 @@ void main() {
   test(
     'each cover decodes at the requested size and can load again offline',
     () async {
-      final cache = await _coverCache(binding);
+      final cache = await coverCache(binding);
       final bytes = await _coverBytes();
       var requests = 0;
       await http.runWithClient(
@@ -137,7 +139,7 @@ void main() {
   test(
     'cover cache evicts only the oldest file needed to stay under its limit',
     () async {
-      final cache = await _coverCache(binding);
+      final cache = await coverCache(binding);
       final bytes = await _coverBytes();
       final older = File(path.join(cache.path, 'older.img'));
       final newer = File(path.join(cache.path, 'newer.img'));
@@ -163,23 +165,6 @@ void main() {
       expect(await cache.list().length, 2);
     },
   );
-}
-
-Future<Directory> _coverCache(TestWidgetsFlutterBinding binding) async {
-  final parent = Directory(path.join(Directory.current.parent.path, '.ai'));
-  await parent.create(recursive: true);
-  final root = await parent.createTemp('cover-test-');
-  const channel = MethodChannel('plugins.flutter.io/path_provider');
-  final messenger = binding.defaultBinaryMessenger;
-  messenger.setMockMethodCallHandler(channel, (call) async {
-    expect(call.method, 'getApplicationCacheDirectory');
-    return root.path;
-  });
-  addTearDown(() async {
-    messenger.setMockMethodCallHandler(channel, null);
-    await root.delete(recursive: true);
-  });
-  return Directory(path.join(root.path, 'podcast-covers')).create();
 }
 
 Future<Uint8List> _coverBytes() async {

@@ -61,23 +61,26 @@ class CoverImage extends ImageProvider<CoverImage> {
 
   final String url;
 
-  static Future<void> prefetch(String url) async {
+  static Future<File?> prefetch(String url) async {
     final cover = CoverImage(url);
     try {
       final file = await cover._cacheFile();
-      if (file == null) return;
-      if (await file.exists()) return await _touch(file);
+      if (file == null) return null;
+      if (await file.exists()) {
+        await _touch(file);
+        return file;
+      }
       await cover._cache(file, await cover._sharedDownload());
+      return await file.exists() ? file : null;
     } on Object {
       // Artwork is optional.
+      return null;
     }
   }
 
   static Future<Uri?> artwork(Episode episode, Podcast? podcast) async {
     for (final url in coverUrls(episode, podcast)) {
-      await prefetch(url);
-      final file = await CoverImage(url)._cacheFile();
-      if (file != null && await file.exists()) return file.uri;
+      if (await prefetch(url) case final file?) return file.uri;
     }
     return null;
   }

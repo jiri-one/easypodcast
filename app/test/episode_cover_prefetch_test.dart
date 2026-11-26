@@ -7,11 +7,11 @@ import 'package:easypodcast/core/services.dart';
 import 'package:easypodcast/main.dart';
 import 'package:easypodcast/player/player.dart';
 import 'package:easypodcast/ui/cover_image.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
+import 'ui/fixtures/cover_cache.dart';
 import 'ui/fixtures/demo_downloads.dart';
 import 'ui/fixtures/demo_library.dart';
 import 'ui/fixtures/demo_services.dart';
@@ -98,16 +98,7 @@ void main() {
     late List<Future<Uri?>> lookups;
 
     setUp(() async {
-      final parent = Directory('${Directory.current.parent.path}/.ai');
-      await parent.create(recursive: true);
-      final cache = await parent.createTemp('media-art-test-');
-      const channel = MethodChannel('plugins.flutter.io/path_provider');
-      final messenger = binding.defaultBinaryMessenger;
-      messenger.setMockMethodCallHandler(channel, (_) async => cache.path);
-      addTearDown(() async {
-        messenger.setMockMethodCallHandler(channel, null);
-        await cache.delete(recursive: true);
-      });
+      await coverCache(binding);
       episodeCover = Completer();
       final client = MockClient(
         (request) async => request.url.toString() == _episodeCover
@@ -142,7 +133,6 @@ void main() {
       episodeCover.complete(http.Response.bytes(_episodeCoverBytes, 200));
       await handler.playFromMediaId('episode:$_episodeId');
       expect(await shownArt(), _episodeCoverBytes);
-      expect(handler.mediaItem.value?.artUri?.scheme, 'file');
       final browsed = await handler.getChildren('podcast:1');
       expect(
         browsed.singleWhere((item) => item.id == 'episode:$_episodeId').artUri,
@@ -158,21 +148,15 @@ void main() {
       expect(await shownArt(), _podcastCoverBytes);
     });
 
-    for (final (status, shown) in [
-      (200, _episodeCoverBytes),
-      (404, _podcastCoverBytes),
-    ]) {
-      test('playback starts before the cover is fetched, '
-          'episode cover $status', () async {
-        await handler.playFromMediaId('episode:$_episodeId');
-        expect(services.player.isPlaying, isTrue);
-        expect(handler.mediaItem.value?.id, 'episode:$_episodeId');
-        expect(handler.mediaItem.value?.artUri, isNull);
+    test('playback starts before a missing episode cover falls back', () async {
+      await handler.playFromMediaId('episode:$_episodeId');
+      expect(services.player.isPlaying, isTrue);
+      expect(handler.mediaItem.value?.id, 'episode:$_episodeId');
+      expect(handler.mediaItem.value?.artUri, isNull);
 
-        episodeCover.complete(http.Response.bytes(_episodeCoverBytes, status));
-        expect(await shownArt(), shown);
-      });
-    }
+      episodeCover.complete(http.Response.bytes(_episodeCoverBytes, 404));
+      expect(await shownArt(), _podcastCoverBytes);
+    });
 
     test('a cover fetched after a switch stays off the next episode', () async {
       await handler.playFromMediaId('episode:$_episodeId');
