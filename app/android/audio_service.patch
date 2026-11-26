@@ -6,7 +6,13 @@
 +    private boolean playbackForeground;
      private MediaSessionCompat mediaSession;
      private MediaSessionCallback mediaSessionCallback;
-@@ -354,4 +355,10 @@
+@@ -284,4 +285,5 @@
+     private boolean notificationCreated;
+     private final Handler handler = new Handler(Looper.getMainLooper());
++    private final Runnable releasePausedWakeLock = this::releaseWakeLock;
+     private VolumeProviderCompat volumeProvider;
+
+@@ -354,4 +356,10 @@
 
      public void stop() {
 +        if (playbackForeground) {
@@ -17,7 +23,7 @@
 +        releaseWakeLock();
          deactivateMediaSession();
          stopSelf();
-@@ -703,23 +710,28 @@
+@@ -703,23 +711,40 @@
      }
 
 +    boolean ensurePlaybackForeground() {
@@ -42,36 +48,59 @@
 -        acquireWakeLock();
 -        mediaSession.setSessionActivity(contentIntent);
 -        internalStartForeground();
-+        if (ensurePlaybackForeground()) acquireWakeLock();
++        handler.removeCallbacks(releasePausedWakeLock);
++        if (playbackForeground) acquireWakeLock();
      }
 
      private void exitPlayingState() {
-+        releaseWakeLock();
-         if (config.androidStopForegroundOnPause) {
+-        if (config.androidStopForegroundOnPause) {
 -            exitForegroundState();
 -        }
--    }
--
--    private void exitForegroundState() {
--        ServiceCompat.stopForeground(this, STOP_FOREGROUND_DETACH);
--        releaseWakeLock();
-+            ServiceCompat.stopForeground(this, STOP_FOREGROUND_DETACH);
-+            playbackForeground = false;
-+        }
++        handler.postDelayed(releasePausedWakeLock, 5000);
++        if (config.androidStopForegroundOnPause) exitForegroundState();
++    }
++
++    void pauseReportFinished() {
++        if (!playing) releaseWakeLock();
++    }
++
++    void stopPlaybackForeground() {
++        if (playbackForeground) exitForegroundState();
++        releaseWakeLock();
      }
 
+     private void exitForegroundState() {
+         ServiceCompat.stopForeground(this, STOP_FOREGROUND_DETACH);
+-        releaseWakeLock();
++        playbackForeground = false;
+     }
+
+@@ -735,4 +760,5 @@
+
+     private void releaseWakeLock() {
++        handler.removeCallbacks(releasePausedWakeLock);
+         if (wakeLock.isHeld())
+             wakeLock.release();
 --- a/com/ryanheise/audioservice/AudioServicePlugin.java
 +++ b/com/ryanheise/audioservice/AudioServicePlugin.java
-@@ -107,4 +107,20 @@
+@@ -107,4 +107,28 @@
                  initialRoute = "/";
              }
 +            final Context appContext = context.getApplicationContext();
 +            new MethodChannel(flutterEngine.getDartExecutor(), "one.jiri.easypodcast/platform")
 +                    .setMethodCallHandler((call, result) -> {
++                        final AudioService service = AudioService.instance;
 +                        switch (call.method) {
 +                        case "startForeground":
-+                            final AudioService service = AudioService.instance;
 +                            result.success(service != null && service.ensurePlaybackForeground());
++                            break;
++                        case "stopForeground":
++                            if (service != null) service.stopPlaybackForeground();
++                            result.success(null);
++                            break;
++                        case "pauseReportFinished":
++                            if (service != null) service.pauseReportFinished();
++                            result.success(null);
 +                            break;
 +                        case "availableBytes":
 +                            result.success(new android.os.StatFs(appContext.getFilesDir().getPath())

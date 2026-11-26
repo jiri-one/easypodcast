@@ -96,7 +96,7 @@ class _JustAudioEngine implements PlaybackEngine {
   Future<void> load(Uri uri, Duration position) async {
     await _audio.setAudioSource(
       AudioSource.uri(uri),
-      initialPosition: position,
+      initialPosition: _session == null ? null : position,
     );
   }
 
@@ -124,7 +124,18 @@ class _JustAudioEngine implements PlaybackEngine {
   }
 
   @override
-  Future<void> seek(Duration position) => _audio.seek(position);
+  Future<void> seek(Duration position) async {
+    if (_session == null &&
+        position > Duration.zero &&
+        (_audio.duration?.inSeconds ?? 0) == 0) {
+      // MediaKit defers seeks until it knows the duration.
+      await _audio.durationStream
+          .where((duration) => (duration?.inSeconds ?? 0) > 0)
+          .timeout(const Duration(seconds: 4))
+          .first;
+    }
+    await _audio.seek(position);
+  }
 
   @override
   Future<void> setSpeed(double speed) => _audio.setSpeed(speed);

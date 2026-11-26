@@ -71,15 +71,18 @@ void main() {
     }
   }
 
-  Future<File> saveDownload(int id) async {
-    await downloads.download(id);
-    final task = downloader.enqueued.last;
+  Future<File> completeDownload(int id, DownloadTask task) async {
     final file = File(path.join(documents.path, task.directory, task.filename));
     await file.create(recursive: true);
     await file.writeAsBytes([1, 2, 3]);
     downloader.emitStatus(task, TaskStatus.complete);
     await waitFor(() => downloads.statusOf(id).status == DownloadStatus.done);
     return file;
+  }
+
+  Future<File> saveDownload(int id) async {
+    await downloads.download(id);
+    return completeDownload(id, downloader.enqueued.last);
   }
 
   test(
@@ -197,9 +200,6 @@ void main() {
       await downloads.download(1);
       expect(downloads.statusOf(1).status, DownloadStatus.queued);
       expect(downloads.statusOf(1).waitingForWifi, isTrue);
-      settings.downloadOnWifiOnly = false;
-      await downloads.download(2);
-      expect(downloads.statusOf(2).waitingForWifi, isFalse);
 
       wifiChanges.add(true);
       await waitFor(() => !downloads.statusOf(1).waitingForWifi);
@@ -214,6 +214,36 @@ void main() {
       expect(downloads.statusOf(1).status, DownloadStatus.queued);
     },
   );
+
+  test('turning off Wi-Fi only replaces waiting manual downloads', () async {
+    settings.keepQueueDownloaded = true;
+    library.updateQueue([2]);
+    await waitFor(() => downloads.statusOf(2).status == DownloadStatus.queued);
+    final automatic = downloader.enqueued.single;
+    wifiChanges.add(false);
+    await waitFor(() => downloads.statusOf(2).waitingForWifi);
+    await downloads.download(1);
+    final waiting = downloader.enqueued.last;
+    expect(downloads.statusOf(1).waitingForWifi, isTrue);
+
+    settings.downloadOnWifiOnly = false;
+    await waitFor(
+      () =>
+          downloads.statusOf(1).status == DownloadStatus.queued &&
+          !downloads.statusOf(1).waitingForWifi &&
+          downloader.enqueued.length == 3,
+    );
+    final replacement = downloader.enqueued.last;
+    expect(replacement.taskId, isNot(waiting.taskId));
+    expect(replacement.requiresWiFi, isFalse);
+    expect(downloader.canceled, [waiting.taskId]);
+    expect(automatic.requiresWiFi, isTrue);
+    expect(downloads.statusOf(2).waitingForWifi, isTrue);
+
+    downloader.emitStatus(waiting, TaskStatus.canceled);
+    downloader.emitStatus(replacement, TaskStatus.running);
+    await waitFor(() => downloads.statusOf(1).status == DownloadStatus.running);
+  });
 
   test(
     'queue download fills two slots on Wi-Fi and preserves manual copies',
@@ -249,6 +279,40 @@ void main() {
       await waitFor(() => downloads.statusOf(4).status == DownloadStatus.none);
       expect(downloads.statusOf(2).status, DownloadStatus.queued);
       expect(await manual.exists(), isTrue);
+    },
+  );
+
+  test(
+    'queue prefetch keeps the current and in-progress files outside the window',
+    () async {
+      settings.keepQueueDownloaded = true;
+      library.updateQueue([1, 2, 3]);
+      await waitFor(
+        () => downloads.statusOf(2).status == DownloadStatus.queued,
+      );
+      final first = await completeDownload(1, downloader.enqueued.first);
+      final second = await completeDownload(2, downloader.enqueued[1]);
+      library.states[2] = EpisodeState(
+        episodeId: 2,
+        positionMs: 10000,
+        status: EpisodeStatus.none,
+        updatedAt: DateTime.utc(2026),
+      );
+      downloads.setCurrentEpisode(1);
+      library.updateQueue([3, 4]);
+      await waitFor(
+        () => downloads.statusOf(4).status == DownloadStatus.queued,
+      );
+      expect(await first.exists(), isTrue);
+      expect(await second.exists(), isTrue);
+
+      downloads.setCurrentEpisode(null);
+      await waitFor(() => downloads.localFileOf(1) == null);
+      expect(await first.exists(), isFalse);
+      expect(await second.exists(), isTrue);
+      library.finish(2, EpisodeStatus.played);
+      await waitFor(() => downloads.localFileOf(2) == null);
+      expect(await second.exists(), isFalse);
     },
   );
 

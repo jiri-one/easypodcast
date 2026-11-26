@@ -10,6 +10,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:just_audio_media_kit/just_audio_media_kit.dart';
+// ignore: depend_on_referenced_packages
+import 'package:rxdart/rxdart.dart';
 
 import '../core/downloads.dart';
 import '../core/library.dart';
@@ -17,6 +19,7 @@ import '../core/models.dart';
 import '../core/player.dart';
 import '../core/settings.dart';
 import '../core/sync.dart';
+import '../downloads/downloads.dart';
 import '../platform/android_platform.dart';
 
 part 'android_audio.dart';
@@ -76,13 +79,18 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
   final PlaybackEngine _engine;
   final DateTime Function() _clock;
   final _position = ValueNotifier(Duration.zero);
-  final _mediaChanges = StreamController<bool>.broadcast(sync: true);
+  final _mediaChanges =
+      StreamController<({bool force, DateTime? pauseReport})>.broadcast(
+        sync: true,
+      );
   late final StreamSubscription<void> _engineEvents;
   late final StreamSubscription<PlaybackInterruption> _interruptions;
   Future<void> _commands = Future.value();
   Episode? _current;
   DateTime? _pausedAt;
   DateTime? _endObservedAt;
+  Duration? _durationBeforeEnd;
+  Duration _lastPlaybackPosition = Duration.zero;
   PlaybackError? _lastPlaybackError;
   bool _finishedSinceStart = false;
   bool _loaded = false;
@@ -140,11 +148,14 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
   ValueListenable<Duration> get position => _position;
 
   @override
-  Duration? get duration {
-    final realDuration = _loaded ? _measuredDuration : null;
+  Duration? get duration =>
+      (_loaded ? _measuredDuration : null) ?? _feedDuration;
+
+  Duration? get _feedDuration {
     final feedDuration = _current?.durationS;
-    return realDuration ??
-        (feedDuration == null ? null : Duration(seconds: feedDuration));
+    return feedDuration == null || feedDuration <= 0
+        ? null
+        : Duration(seconds: feedDuration);
   }
 
   @override
@@ -184,7 +195,10 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
   }
 
   @override
-  Future<void> resume({int? preferredEpisodeId}) {
+  Future<void> resume({
+    int? preferredEpisodeId,
+    Future<void> Function()? refreshLibrary,
+  }) {
     _cancelFocusResume();
     return _run(() async {
       if (isPlaying) return;
@@ -199,6 +213,7 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
         }
         return;
       }
+      await refreshLibrary?.call();
       final preferred = preferredEpisodeId == null
           ? null
           : _library.episode(preferredEpisodeId);
@@ -295,12 +310,14 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
     _loaded = false;
     _pausedAt = null;
     _endObservedAt = null;
+    _durationBeforeEnd = null;
+    _lastPlaybackPosition = Duration.zero;
     _lastPlaybackError = null;
     _playAttempt = null;
     _failureAttempt = null;
     _finishedSinceStart = false;
-    var applied = _startPosition(_library.stateOf(id));
-    _position.value = applied;
+    final initialPosition = _startPosition(_library.stateOf(id));
+    _position.value = initialPosition;
     _publish();
     var reason = PlaybackErrorReason.loadFailed;
     try {
@@ -309,7 +326,10 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
       final uri = file == null
           ? Uri.parse(episode.enclosureUrl)
           : Uri.file(file);
-      await _engine.load(uri, applied).timeout(const Duration(seconds: 30));
+      await _engine
+          .load(uri, initialPosition)
+          .timeout(const Duration(seconds: 30));
+      var applied = Duration(milliseconds: _engine.position.inMilliseconds);
       await _engine.setSpeed(_speed);
       while (!_disposed && !_exiting) {
         if (eligible?.call() == false) {
@@ -377,7 +397,6 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
 
   Future<void> _resumeLoaded({int? focusRevision}) async {
     try {
-      await _engine.prepareToPlay();
       if (!await _preparePaused(resuming: focusRevision == null) ||
           _sleepExpired) {
         await _engine.releaseFocus();
@@ -391,6 +410,7 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
         if (!_resumeOnFocus) await _engine.releaseFocus();
         return;
       }
+      if (focusRevision == null) await _engine.prepareToPlay();
       await _startEngine(state);
     } on _AudioFocusUnavailable {
       await _fail(PlaybackErrorReason.audioFocusUnavailable);
@@ -402,6 +422,7 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
   Future<void> _startEngine(EpisodeState state) async {
     _pausedAt = null;
     _endObservedAt = null;
+    _trackPlaybackSample();
     _finishedSinceStart = false;
     final attempt = _playAttempt = Object();
     final id = state.episodeId;
@@ -459,15 +480,16 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
   }
 
   Future<void> _pause({bool keepFocus = false}) async {
+    DateTime? pausedAt;
     try {
       if (!_loaded || _pausedAt != null) return;
-      _pausedAt = _clock();
+      pausedAt = _pausedAt = _clock();
       await _engine.pause().timeout(const Duration(seconds: 5));
       await _report();
     } finally {
       _library.requestPendingSend();
       _setSyncEpisode(null);
-      _publish();
+      _publish(pauseReport: pausedAt);
       if (!keepFocus) await _engine.releaseFocus();
     }
   }
@@ -493,6 +515,7 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
     _seeking = true;
     try {
       await _engine.seek(target).timeout(const Duration(seconds: 5));
+      _lastPlaybackPosition = target;
     } finally {
       _seeking = false;
     }
@@ -608,6 +631,15 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
     }
   }
 
+  void _trackPlaybackSample() {
+    final duration = _measuredDuration;
+    if (duration != null && duration > (_durationBeforeEnd ?? Duration.zero)) {
+      _durationBeforeEnd = duration;
+    }
+    final position = _engine.position;
+    if (position > _lastPlaybackPosition) _lastPlaybackPosition = position;
+  }
+
   void _onEngineChanged() {
     if (_disposed) return;
     final attempt = _playAttempt;
@@ -615,6 +647,23 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
       switch (_engine.processingState) {
         case ProcessingState.completed when _failureAttempt == null:
           if (_endObservedAt == null) {
+            final position = _engine.position;
+            final sample = position > _lastPlaybackPosition
+                ? position
+                : _lastPlaybackPosition;
+            final savedDuration =
+                _library.stateOf(_current!.id).durationMs ?? 0;
+            final knownEnd =
+                _durationBeforeEnd ??
+                (savedDuration > 0
+                    ? Duration(milliseconds: savedDuration)
+                    : _feedDuration) ??
+                _measuredDuration;
+            if (knownEnd != null &&
+                sample + const Duration(seconds: 3) < knownEnd) {
+              _observeStreamFailure(attempt, sample: sample);
+              return;
+            }
             final endedAt = _endObservedAt = _playbackEventTime();
             _background(
               _run(() async {
@@ -628,6 +677,7 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
         case ProcessingState.idle:
           _observeStreamFailure(attempt);
         default:
+          if (_engine.playing && !_seeking) _trackPlaybackSample();
           if (!_engine.playing && _pausedAt == null) {
             _background(
               _run(() async {
@@ -644,7 +694,7 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
     _publish(updatePosition: !isPlaying && !_seeking, forceMediaUpdate: false);
   }
 
-  void _observeStreamFailure(Object attempt) {
+  void _observeStreamFailure(Object attempt, {Duration? sample}) {
     if (_disposed ||
         !identical(_playAttempt, attempt) ||
         _failureAttempt != null ||
@@ -653,7 +703,7 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
     }
     _failureAttempt = attempt;
     final observedAt = _playbackEventTime();
-    final sample = _seeking ? null : _engine.position;
+    sample ??= _seeking ? null : _engine.position;
     _publish(updatePosition: false);
     _background(
       _run(() async {
@@ -674,7 +724,7 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
     DateTime? observedAt,
   }) async {
     final episode = _current!;
-    final duration = _measuredDuration;
+    final duration = _durationBeforeEnd ?? _measuredDuration;
     _cancelFocusResume();
     _lastPlaybackError = PlaybackError(episode, reason);
     _loading = false;
@@ -686,11 +736,11 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
     _failureAttempt = null;
     _setSyncEpisode(null);
     final state = _library.stateOf(episode.id);
+    if (sample != null && sample > Duration.zero) _position.value = sample;
     if (sample != null &&
         sample > Duration.zero &&
         sample.inMilliseconds != state.positionMs &&
         !_finishedSinceStart) {
-      _position.value = sample;
       await _library.recordPositionAt(
         episode.id,
         sample,
@@ -801,11 +851,35 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
   Future<AppExitResponse> didRequestAppExit() async {
     _exiting = true;
     await pause();
-    await _sync.syncNow().timeout(const Duration(seconds: 2), onTimeout: () {});
+    await _waitForPendingSend(const Duration(seconds: 2));
     return AppExitResponse.exit;
   }
 
-  void _publish({bool updatePosition = true, bool forceMediaUpdate = true}) {
+  Future<void> _waitForPendingSend(Duration timeout) async {
+    final status = _sync.status;
+    final sent = Completer<void>();
+    void check() {
+      final state = status.value;
+      if (!sent.isCompleted &&
+          (state.pending == 0 || state.phase != SyncPhase.syncing)) {
+        sent.complete();
+      }
+    }
+
+    status.addListener(check);
+    try {
+      check();
+      await sent.future.timeout(timeout, onTimeout: () {});
+    } finally {
+      status.removeListener(check);
+    }
+  }
+
+  void _publish({
+    bool updatePosition = true,
+    bool forceMediaUpdate = true,
+    DateTime? pauseReport,
+  }) {
     if (_disposed) return;
     final state = (
       _current,
@@ -817,14 +891,18 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
       _lastPlaybackError,
     );
     if (state != _visibleState) {
+      if (_downloads case final EpisodeDownloads downloads) {
+        downloads.setCurrentEpisode(_current?.id);
+      }
       _visibleState = state;
       notifyListeners();
     }
     if (isPlaying) {
-      _positionTimer ??= Timer.periodic(
-        const Duration(seconds: 1),
-        (_) => _position.value = _engine.position,
-      );
+      _positionTimer ??= Timer.periodic(const Duration(seconds: 1), (_) {
+        if (_seeking || !isPlaying) return;
+        _trackPlaybackSample();
+        _position.value = _engine.position;
+      });
       _reportTimer ??= Timer.periodic(
         const Duration(seconds: 30),
         (_) => _background(
@@ -836,10 +914,13 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
     } else {
       _stopTimers();
     }
-    if (updatePosition && (_loaded || _current == null)) {
+    if (updatePosition &&
+        _failureAttempt == null &&
+        _endObservedAt == null &&
+        (_loaded || _current == null)) {
       _position.value = _loaded ? _engine.position : Duration.zero;
     }
-    _mediaChanges.add(forceMediaUpdate);
+    _mediaChanges.add((force: forceMediaUpdate, pauseReport: pauseReport));
   }
 
   void _stopTimers() {
@@ -860,6 +941,9 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
   @override
   void dispose() {
     _disposed = true;
+    if (_downloads case final EpisodeDownloads downloads) {
+      downloads.setCurrentEpisode(null);
+    }
     _library.removeListener(_onLibraryChanged);
     WidgetsBinding.instance.removeObserver(this);
     _setSyncEpisode(null);

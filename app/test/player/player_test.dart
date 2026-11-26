@@ -2,6 +2,9 @@ import 'dart:async';
 import 'dart:ui' show AppExitResponse;
 
 import 'package:audio_service/audio_service.dart';
+import 'package:audio_service_mpris/audio_service_mpris.dart';
+// ignore: depend_on_referenced_packages
+import 'package:audio_service_platform_interface/audio_service_platform_interface.dart';
 import 'package:easypodcast/core/api.dart';
 import 'package:easypodcast/core/downloads.dart';
 import 'package:easypodcast/core/library.dart';
@@ -9,7 +12,9 @@ import 'package:easypodcast/core/models.dart';
 import 'package:easypodcast/core/player.dart';
 import 'package:easypodcast/core/settings.dart';
 import 'package:easypodcast/core/sync.dart';
+import 'package:easypodcast/platform/android_platform.dart';
 import 'package:easypodcast/player/player.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -50,7 +55,9 @@ void main() {
   late _Engine engine;
   late EpisodePlayer player;
   late List<String> calls;
+  late List<String> platformCalls;
   late EpisodeAudioHandler handler;
+  late _Downloads downloads;
 
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
@@ -59,10 +66,17 @@ void main() {
 
   void openPlayer({bool android = true, String languageCode = 'en'}) {
     calls = [];
+    platformCalls = [];
     library = _Library(calls);
     sync = _Sync(calls);
     engine = _Engine(calls);
-    final downloads = _Downloads();
+    downloads = _Downloads();
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(androidPlatform, (call) async {
+      platformCalls.add(call.method);
+      return null;
+    });
     player = EpisodePlayer(
       library: library,
       sync: sync,
@@ -81,10 +95,41 @@ void main() {
     );
     addTearDown(() {
       player.dispose();
+      sync.status.dispose();
       library.dispose();
+      downloads.dispose();
       settings.dispose();
+      messenger.setMockMethodCallHandler(androidPlatform, null);
     });
   }
+
+  testWidgets(
+    'Linux waits for an explicit resume seek before playing or reporting',
+    (tester) async {
+      openPlayer(android: false);
+      const saved = Duration(minutes: 3);
+      library.change(1, position: saved);
+      engine.onLoad = () => engine.position = Duration.zero;
+      final landing = Completer<void>();
+      engine.onSeek = (_) {
+        engine.position = Duration.zero;
+        engine.events.add(null);
+        return landing.future;
+      };
+      final starting = player.play(1);
+      final reporting = player.reportBeforeBackground();
+      await tester.pump();
+      expect(calls, ['refresh:1', 'load', 'seek:180000']);
+      expect(handler.playbackState.value.updatePosition, saved);
+      expect(player.isPlaying, isFalse);
+      engine.position = saved;
+      landing.complete();
+      await starting;
+      await reporting;
+      expect(calls, containsAllInOrder(['play', 'record:1:180000']));
+      expect(library.stateOf(1).positionMs, saved.inMilliseconds);
+    },
+  );
 
   testWidgets('a 10-second pause resumes the loaded source', (tester) async {
     openPlayer();
@@ -305,7 +350,7 @@ void main() {
     expect(library.completed, isEmpty);
     expect(player.current?.id, 1);
     await player.resume();
-    engine.complete();
+    engine.complete(at: Duration.zero);
     await player.reportBeforeBackground();
 
     expect(library.completed, [1]);
@@ -322,6 +367,38 @@ void main() {
     expect(player.current?.id, 2);
     expect(engine.uri, Uri.parse(_second.enclosureUrl));
   });
+
+  testWidgets(
+    'premature EOF keeps the last position and retries the same episode',
+    (tester) async {
+      openPlayer();
+      await player.play(1);
+      const lastPosition = Duration(minutes: 4);
+      engine.position = lastPosition;
+      await tester.pump(const Duration(seconds: 1));
+      engine.duration = lastPosition;
+      engine.events.add(null);
+      engine.complete(at: Duration.zero);
+      await player.reportBeforeBackground();
+
+      expect(library.completed, isEmpty);
+      expect(library.stateOf(1).positionMs, lastPosition.inMilliseconds);
+      expect(library.reportedDurations.last, const Duration(minutes: 10));
+      expect(player.position.value, lastPosition);
+      expect(handler.playbackState.value.updatePosition, lastPosition);
+      expect(
+        player.lastPlaybackError?.reason,
+        PlaybackErrorReason.streamFailed,
+      );
+      expect(player.current?.id, 1);
+      expect(calls, isNot(contains('refresh:2')));
+
+      engine.duration = const Duration(minutes: 10);
+      await handler.play();
+      expect(engine.position, lastPosition);
+      expect(player.isPlaying, isTrue);
+    },
+  );
 
   for (final status in [EpisodeStatus.played, EpisodeStatus.dismissed]) {
     testWidgets('autoplay skips a remotely ${status.name} queue item', (
@@ -398,9 +475,9 @@ void main() {
   ) async {
     openPlayer();
     settings.autoplayQueue = false;
-    await player.play(_first.id);
     engine.duration = null;
-    expect(player.duration, const Duration(seconds: 60));
+    await player.play(_third.id);
+    expect(player.duration, isNull);
 
     await player.seekTo(const Duration(seconds: 60));
     expect(library.completed, isEmpty);
@@ -408,7 +485,7 @@ void main() {
     engine.complete();
     await tester.pump();
 
-    expect(library.completed, [1]);
+    expect(library.completed, [3]);
     expect(calls, isNot(contains('refresh:2')));
     expect(player.isPlaying, isFalse);
     expect(player.current, isNull);
@@ -566,6 +643,118 @@ void main() {
   });
 
   testWidgets(
+    'failed Android loads and denied focus publish a retryable error',
+    (_) async {
+      openPlayer();
+      engine.onLoad = () => throw OfflineException();
+      await handler.playFromMediaId('episode:1');
+      expect(engine.foregroundStarts, 1);
+      expect(platformCalls, ['stopForeground']);
+      expect(
+        handler.playbackState.value.processingState,
+        AudioProcessingState.error,
+      );
+      expect(player.lastPlaybackError?.reason, PlaybackErrorReason.loadFailed);
+
+      engine.onLoad = null;
+      engine.focusAvailable = false;
+      await handler.play();
+      expect(engine.foregroundStarts, 2);
+      expect(platformCalls, ['stopForeground', 'stopForeground']);
+      expect(
+        handler.playbackState.value.processingState,
+        AudioProcessingState.error,
+      );
+      expect(
+        player.lastPlaybackError?.reason,
+        PlaybackErrorReason.audioFocusUnavailable,
+      );
+      expect(handler.playbackState.value.playing, isFalse);
+
+      engine.focusAvailable = true;
+      await handler.play();
+      expect(engine.foregroundStarts, 3);
+      expect(player.isPlaying, isTrue);
+    },
+  );
+
+  for (final outcome in ['succeeds', 'fails', 'times out']) {
+    testWidgets('Android releases the pause wake lock when the send $outcome', (
+      tester,
+    ) async {
+      openPlayer();
+      await player.play(1);
+      engine.position = const Duration(seconds: 42);
+      library.onPendingSend = () => sync.status.value = const SyncStatus(
+        phase: SyncPhase.syncing,
+        pending: 1,
+      );
+      await handler.pause();
+      expect(library.stateOf(1).positionMs, 42000);
+      expect(handler.playbackState.value.playing, isFalse);
+      expect(platformCalls, isEmpty);
+      await tester.pump(const Duration(seconds: 4));
+      expect(platformCalls, isEmpty);
+
+      switch (outcome) {
+        case 'succeeds':
+          sync.status.value = const SyncStatus(phase: SyncPhase.syncing);
+        case 'fails':
+          sync.status.value = const SyncStatus(
+            phase: SyncPhase.offline,
+            pending: 1,
+          );
+        default:
+          await tester.pump(const Duration(seconds: 1));
+      }
+      await tester.pump();
+      expect(platformCalls, ['pauseReportFinished']);
+    });
+  }
+
+  testWidgets(
+    'cold Android Auto Play waits for a fresh library and updates browse lists',
+    (tester) async {
+      openPlayer();
+      final inProgress = <Map<String, dynamic>>[];
+      final changes = handler
+          .subscribeToChildren('in-progress')
+          .listen(inProgress.add);
+      addTearDown(changes.cancel);
+      final refreshing = Completer<void>();
+      sync.onSync = () async {
+        await refreshing.future;
+        library.change(1, status: EpisodeStatus.played);
+        library.change(2, position: const Duration(minutes: 2));
+      };
+      final playing = handler.play();
+      await tester.pump();
+      expect(sync.fullSyncs, 1);
+      expect(calls, isEmpty);
+      expect(player.current, isNull);
+      refreshing.complete();
+      await playing;
+      await tester.pump();
+      expect(player.current, _second);
+      expect(calls.first, 'refresh:2');
+      expect(inProgress, isNotEmpty);
+      final entries = await handler.getChildren('in-progress');
+      expect(entries.map((item) => item.id), ['episode:2']);
+
+      final downloaded = <Map<String, dynamic>>[];
+      final updates = handler
+          .subscribeToChildren('downloaded')
+          .listen(downloaded.add);
+      addTearDown(updates.cancel);
+      await tester.pump();
+      final before = downloaded.length;
+      downloads.changed();
+      await tester.pump();
+      expect(downloaded, hasLength(before + 1));
+    },
+  );
+
+  testWidgets(
     'cold Recent and empty search share the newest sub-minute candidate',
     (_) async {
       openPlayer();
@@ -603,7 +792,7 @@ void main() {
     (_) async {
       openPlayer();
       library.change(2, position: const Duration(seconds: 15));
-      await handler.playFromSearch(' FIELD   NOTES ');
+      await handler.playFromSearch(' NOTES  FÍELD ');
       expect(player.current, _second);
       expect(calls.first, 'refresh:2');
       await handler.stop();
@@ -632,6 +821,7 @@ void main() {
       engine.interruptionEvents.add(PlaybackInterruption.regained);
       await tester.pump();
       expect(calls, ['refresh:1', 'seek:35000', 'play', 'playing:1']);
+      expect(engine.foregroundStarts, 1);
       expect(player.isPlaying, isTrue);
     },
   );
@@ -725,15 +915,68 @@ void main() {
     openPlayer(android: false);
     await player.play(1);
     engine.position = const Duration(seconds: 45);
-    final sending = Completer<void>();
-    sync.onSync = () => sending.future;
+    library.onPendingSend = () => sync.status.value = const SyncStatus(
+      phase: SyncPhase.syncing,
+      pending: 1,
+    );
     calls.clear();
-    final closing = player.didRequestAppExit();
+    var closed = false;
+    final closing = player.didRequestAppExit().then((response) {
+      closed = true;
+      return response;
+    });
     await tester.pump();
-    expect(calls, ['record:1:45000', 'playing:null', 'sync']);
-    await tester.pump(const Duration(seconds: 2));
+    expect(calls, ['record:1:45000', 'playing:null']);
+    await tester.pump(const Duration(seconds: 1));
+    expect(closed, isFalse);
+    sync.status.value = const SyncStatus(phase: SyncPhase.idle);
     expect(await closing, AppExitResponse.exit);
-    sending.complete();
+    expect(sync.fullSyncs, 0);
+  });
+
+  testWidgets(
+    'Linux exit bounds a stuck send and skips waiting when already sent',
+    (tester) async {
+      openPlayer(android: false);
+      sync.status.value = const SyncStatus(
+        phase: SyncPhase.syncing,
+        pending: 1,
+      );
+      final closing = player.didRequestAppExit();
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 2));
+      expect(await closing, AppExitResponse.exit);
+      sync.status.value = const SyncStatus(phase: SyncPhase.syncing);
+      expect(await player.didRequestAppExit(), AppExitResponse.exit);
+      expect(sync.fullSyncs, 0);
+    },
+  );
+
+  testWidgets('Linux keeps MPRIS after stop and publishes the playback rate', (
+    tester,
+  ) async {
+    openPlayer(android: false);
+    final previousPlatform = AudioServicePlatform.instance;
+    final platform = _MprisPlatform();
+    AudioServicePlatform.instance = platform;
+    addTearDown(() => AudioServicePlatform.instance = previousPlatform);
+    await connectMpris(player);
+    expect(Mpris().minimumRate, lessThanOrEqualTo(0.8));
+    expect(Mpris().maximumRate, greaterThanOrEqualTo(2.0));
+
+    await platform.callbacks.play(const PlayRequest());
+    await player.setSpeed(1.7);
+    await tester.pump();
+    expect(platform.states.last.speed, 1.7);
+    await platform.callbacks.stop(const StopRequest());
+    await tester.pump();
+    expect(platform.stops, 0);
+    expect(
+      platform.states.last.processingState,
+      AudioProcessingStateMessage.ready,
+    );
+    await platform.callbacks.play(const PlayRequest());
+    expect(player.isPlaying, isTrue);
   });
 
   group('player with two synced libraries', () {
@@ -774,41 +1017,57 @@ void main() {
       addTearDown(activePlayer.dispose);
     });
 
-    for (final action in ['background', 'stop', 'switch']) {
-      test('$action flushes the original offline pause', () async {
+    test(
+      'closing sends the paused position without refreshing state',
+      () async {
         final id = ids.first;
         await activePlayer.play(id);
-        local.api.online = false;
-        clock.advance(const Duration(minutes: 10));
         decoder.position = const Duration(minutes: 10);
-        await activePlayer.pause();
-        await local.sync.whenIdle();
-        final paused = local.library.stateOf(id);
-        expect(local.library.pendingCount, 1);
+        final stateCalls = local.api.stateCalls;
+        final podcastsCalls = local.api.podcastsCalls;
+        final closing = activePlayer.didRequestAppExit();
+        expect(await closing, AppExitResponse.exit);
+        expect(server.states[id]?.positionMs, 600000);
+        expect(local.api.stateCalls, stateCalls);
+        expect(local.api.podcastsCalls, podcastsCalls);
+      },
+    );
 
-        clock.advance(const Duration(minutes: 25));
-        await remote.library.recordPosition(id, const Duration(minutes: 35));
-        await remote.sync.whenIdle();
-        final newer = remote.library.stateOf(id);
+    for (final action in ['background', 'stop', 'switch']) {
+      test(
+        '$action reconciles an offline pause with a newer remote position',
+        () async {
+          final id = ids.first;
+          await activePlayer.play(id);
+          local.api.online = false;
+          clock.advance(const Duration(minutes: 10));
+          decoder.position = const Duration(minutes: 10);
+          await activePlayer.pause();
+          await local.sync.whenIdle();
+          final paused = local.library.stateOf(id);
+          expect(paused.positionMs, 600000);
+          expect(paused.updatedAt, clock.now);
+          expect(local.library.pendingCount, 1);
 
-        clock.advance(const Duration(hours: 1));
-        local.api.online = true;
-        await switch (action) {
-          'background' => activePlayer.reportBeforeBackground(),
-          'stop' => activePlayer.stop(),
-          _ => activePlayer.play(ids[1]),
-        };
-        await local.sync.whenIdle();
-        expect(
-          local.api.pushedStates
-              .expand((states) => states)
-              .map((state) => state.toJson()),
-          [paused.toJson()],
-        );
-        expect(local.library.pendingCount, 0);
-        expect(local.library.stateOf(id).toJson(), newer.toJson());
-        expect(server.states[id]?.toJson(), newer.toJson());
-      });
+          clock.advance(const Duration(minutes: 25));
+          await remote.library.recordPosition(id, const Duration(minutes: 35));
+          await remote.sync.whenIdle();
+          final newer = remote.library.stateOf(id);
+
+          clock.advance(const Duration(hours: 1));
+          local.api.online = true;
+          await switch (action) {
+            'background' => activePlayer.reportBeforeBackground(),
+            'stop' => activePlayer.stop(),
+            _ => activePlayer.play(ids[1]),
+          };
+          await local.sync.whenIdle();
+          expect(local.api.pushedStates, isEmpty);
+          expect(local.library.pendingCount, 0);
+          expect(local.library.stateOf(id).toJson(), newer.toJson());
+          expect(server.states[id]?.toJson(), newer.toJson());
+        },
+      );
     }
 
     for (final terminal in [false, true]) {
@@ -1097,6 +1356,8 @@ class _Engine implements PlaybackEngine {
   final events = StreamController<void>.broadcast(sync: true);
   final interruptionEvents = StreamController<PlaybackInterruption>.broadcast();
   int focusReleases = 0;
+  int foregroundStarts = 0;
+  bool focusAvailable = true;
   Uri? uri;
   @override
   bool playing = false;
@@ -1115,7 +1376,7 @@ class _Engine implements PlaybackEngine {
   Stream<PlaybackInterruption> get interruptions => interruptionEvents.stream;
 
   @override
-  Future<void> prepareToPlay() async {}
+  Future<void> prepareToPlay() async => foregroundStarts++;
 
   @override
   Future<void> load(Uri uri, Duration position) async {
@@ -1132,7 +1393,8 @@ class _Engine implements PlaybackEngine {
   @override
   Future<void> releaseFocus() async => focusReleases++;
 
-  void complete() {
+  void complete({Duration? at}) {
+    position = at ?? duration ?? position;
     playing = false;
     processingState = ProcessingState.completed;
     events.add(null);
@@ -1144,7 +1406,7 @@ class _Engine implements PlaybackEngine {
   }) async {
     calls.add('play');
     if (onPlay case final hook?) await hook();
-    playing = true;
+    playing = focusAvailable;
   }
 
   @override
@@ -1180,11 +1442,12 @@ class _Library extends Library {
   final reportedDurations = <Duration?>[];
   final _states = <int, EpisodeState>{};
   final queued = [_first, _second];
+  VoidCallback? onPendingSend;
   int _revision = 0;
 
   static const _podcast = Podcast(
     id: 1,
-    title: 'Field Notes',
+    title: 'Fíeld Notes — The Nature Podcast',
     feedUrl: 'https://example.test/feed',
   );
 
@@ -1263,6 +1526,9 @@ class _Library extends Library {
   }
 
   @override
+  void requestPendingSend() => onPendingSend?.call();
+
+  @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
@@ -1271,6 +1537,12 @@ class _Sync implements SyncService {
   final List<String> calls;
   void Function(int)? onRefresh;
   Future<void> Function()? onSync;
+  int fullSyncs = 0;
+
+  @override
+  final ValueNotifier<SyncStatus> status = ValueNotifier(
+    const SyncStatus(phase: SyncPhase.idle),
+  );
 
   @override
   Future<void> freshStateBeforePlay(int id) async {
@@ -1283,7 +1555,7 @@ class _Sync implements SyncService {
 
   @override
   Future<void> syncNow() async {
-    calls.add('sync');
+    fullSyncs++;
     await onSync?.call();
   }
 
@@ -1291,7 +1563,35 @@ class _Sync implements SyncService {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
+class _MprisPlatform extends AudioServicePlatform {
+  late AudioHandlerCallbacks callbacks;
+  final states = <PlaybackStateMessage>[];
+  int stops = 0;
+
+  @override
+  void setHandlerCallbacks(AudioHandlerCallbacks callbacks) =>
+      this.callbacks = callbacks;
+
+  @override
+  Future<void> configure(ConfigureRequest request) async {}
+
+  @override
+  Future<void> setState(SetStateRequest request) async =>
+      states.add(request.state);
+
+  @override
+  Future<void> setMediaItem(SetMediaItemRequest request) async {}
+
+  @override
+  Future<void> setQueue(SetQueueRequest request) async {}
+
+  @override
+  Future<void> stopService(StopServiceRequest request) async => stops++;
+}
+
 class _Downloads extends DownloadService {
+  void changed() => notifyListeners();
+
   @override
   String? localFileOf(int id) =>
       id == _first.id ? '/downloads/episode.mp3' : null;

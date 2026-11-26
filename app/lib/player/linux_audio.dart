@@ -8,6 +8,8 @@ Future<void> connectMpris(EpisodePlayer player) async {
     canControl: true,
     canPlay: true,
   );
+  mpris.minimumRate = 0.5;
+  mpris.maximumRate = 2.5;
   try {
     final handler = await AudioService.init(
       builder: () => EpisodeAudioHandler(

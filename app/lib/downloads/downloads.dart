@@ -106,6 +106,7 @@ class EpisodeDownloads extends DownloadService {
         service._restoring = false;
         service._window = service._queueWindow;
         service._autoEnabled = settings.keepQueueDownloaded;
+        service._wifiOnly = settings.downloadOnWifiOnly;
         service._library.addListener(service._onQueueChanged);
         service._settings.addListener(service._onSettingsChanged);
         service._wifiChanges = wifiChanges?.listen(service._onWifiChanged);
@@ -137,7 +138,9 @@ class EpisodeDownloads extends DownloadService {
   Future<void> _commands = Future.value();
   Timer? _storageRetry;
   List<int> _window = const [];
+  int? _currentEpisodeId;
   bool _autoEnabled = false;
+  late bool _wifiOnly;
   bool _restoring = true;
   bool _wifi = true;
   bool _disposed = false;
@@ -145,6 +148,13 @@ class EpisodeDownloads extends DownloadService {
   List<int> get _queueWindow => [
     for (final episode in _library.queue.take(2)) episode.id,
   ];
+
+  void setCurrentEpisode(int? id) {
+    final previous = _currentEpisodeId;
+    if (id == previous) return;
+    _currentEpisodeId = id;
+    if (previous != null) _background(_run(_reconcile));
+  }
 
   @override
   DownloadInfo statusOf(int episodeId) {
@@ -315,9 +325,29 @@ class EpisodeDownloads extends DownloadService {
 
   void _onSettingsChanged() {
     final enabled = _settings.keepQueueDownloaded;
-    if (enabled == _autoEnabled) return;
-    _autoEnabled = enabled;
-    _background(_run(_reconcile));
+    if (enabled != _autoEnabled) {
+      _autoEnabled = enabled;
+      _background(_run(_reconcile));
+    }
+    final wifiOnly = _settings.downloadOnWifiOnly;
+    if (_wifiOnly && !wifiOnly) _background(_run(_requeueWithoutWifi));
+    _wifiOnly = wifiOnly;
+  }
+
+  Future<void> _requeueWithoutWifi() async {
+    for (final entry in _entries.entries.toList()) {
+      if (_settings.downloadOnWifiOnly) return;
+      final download = entry.value;
+      if (download.info.status != DownloadStatus.queued ||
+          !download.task.requiresWiFi ||
+          _isAutomatic(download.task)) {
+        continue;
+      }
+      final episode = _library.episode(entry.key);
+      if (episode == null) continue;
+      await _delete(episode.id);
+      await _enqueue(episode, automatic: false);
+    }
   }
 
   void _onWifiChanged(bool wifi) {
@@ -352,11 +382,12 @@ class EpisodeDownloads extends DownloadService {
     final window = _window;
     await _pruneSuppressed(window);
     for (final entry in _entries.entries.toList()) {
+      final id = entry.key;
       if (_isAutomatic(entry.value.task) &&
-          (!_autoEnabled ||
-              !window.contains(entry.key) ||
-              _suppressed.contains(entry.key))) {
-        await _delete(entry.key);
+          id != _currentEpisodeId &&
+          _library.stateOf(id).positionMs == 0 &&
+          (!_autoEnabled || !window.contains(id) || _suppressed.contains(id))) {
+        await _delete(id);
       }
     }
     if (!_autoEnabled || !_wifi || _disposed) return;

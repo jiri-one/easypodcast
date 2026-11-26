@@ -32,7 +32,24 @@ class EpisodeAudioHandler extends BaseAudioHandler {
     required this._android,
     String Function()? languageCode,
   }) : _languageCode = languageCode ?? _deviceLanguage {
-    _player._mediaChanges.stream.listen(_publish);
+    _player._mediaChanges.stream.listen(
+      (change) {
+        _publish(change.force);
+        if (change.pauseReport case final pausedAt? when _android) {
+          _background(_finishPauseReport(pausedAt));
+        }
+      },
+      onDone: () {
+        if (!_android) return;
+        _library.removeListener(_notifyChildrenChanged);
+        _downloads.removeListener(_notifyChildrenChanged);
+        unawaited(_childrenChanged.close());
+      },
+    );
+    if (_android) {
+      _library.addListener(_notifyChildrenChanged);
+      _downloads.addListener(_notifyChildrenChanged);
+    }
     if (!_android) _player.position.addListener(() => _publish(true));
     _publish(true);
   }
@@ -43,6 +60,8 @@ class EpisodeAudioHandler extends BaseAudioHandler {
   final Settings _settings;
   final bool _android;
   final String Function() _languageCode;
+  final _childrenChanged = BehaviorSubject<Map<String, dynamic>>();
+  Future<void>? _libraryRefresh;
   int? _preparedEpisodeId;
 
   static String _deviceLanguage() =>
@@ -107,8 +126,10 @@ class EpisodeAudioHandler extends BaseAudioHandler {
   ]) async {
     switch (parentMediaId) {
       case AudioService.browsableRootId:
+        if (_android) _background(_refreshLibrary());
         return _rootItems;
       case AudioService.recentRootId:
+        if (_android && _libraryRefresh != null) await _refreshLibrary();
         final head = _library.queueHeadId;
         final recent =
             _library.recentUnfinishedEpisode ??
@@ -135,6 +156,26 @@ class EpisodeAudioHandler extends BaseAudioHandler {
               .where((episode) => _player._isUnfinished(episode.id))
               .map(_item)
               .toList();
+  }
+
+  @override
+  ValueStream<Map<String, dynamic>> subscribeToChildren(String parentMediaId) {
+    if (!_android || parentMediaId == AudioService.browsableRootId) {
+      return super.subscribeToChildren(parentMediaId);
+    }
+    if (parentMediaId == AudioService.recentRootId) {
+      _background(_refreshLibrary());
+    }
+    return _childrenChanged;
+  }
+
+  void _notifyChildrenChanged() => _childrenChanged.add(const {});
+
+  Future<void> _finishPauseReport(DateTime pausedAt) async {
+    await _player._waitForPendingSend(const Duration(seconds: 5));
+    if (!_player._disposed && identical(_player._pausedAt, pausedAt)) {
+      await androidPlatform.invokeMethod<void>('pauseReportFinished');
+    }
   }
 
   @override
@@ -179,22 +220,66 @@ class EpisodeAudioHandler extends BaseAudioHandler {
       await play();
       return;
     }
-    final podcast = _library.podcasts
-        .where((podcast) => _searchKey(podcast.title) == title)
-        .firstOrNull;
-    if (podcast != null) {
-      await _playRequest(() => _player.playFromPodcast(podcast.id));
+    final titles = [
+      for (final podcast in _library.podcasts)
+        (id: podcast.id, title: _searchKey(podcast.title)),
+    ];
+    final words = title.split(' ');
+    final match =
+        titles.where((item) => item.title == title).firstOrNull ??
+        titles
+            .where((item) => words.every(item.title.split(' ').contains))
+            .firstOrNull;
+    if (match != null) {
+      await _playRequest(() => _player.playFromPodcast(match.id));
     }
   }
 
-  String _searchKey(String title) =>
-      title.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
+  String _searchKey(String title) {
+    var key = title.toLowerCase();
+    for (final letters in const [
+      'aáàâäãå',
+      'cčćç',
+      'dď',
+      'eéèêëě',
+      'iíìîï',
+      'lĺľł',
+      'nňńñ',
+      'oóòôöõ',
+      'rřŕ',
+      'sšś',
+      'tť',
+      'uúùûüů',
+      'yýÿ',
+      'zžźż',
+    ]) {
+      key = key.replaceAll(RegExp('[${letters.substring(1)}]'), letters[0]);
+    }
+    return key
+        .replaceAll(RegExp(r'\p{M}', unicode: true), '')
+        .replaceAll(RegExp(r'[^\p{L}\p{N}]+', unicode: true), ' ')
+        .trim();
+  }
 
   @override
   Future<void> play() {
     final id = _preparedEpisodeId;
     _preparedEpisodeId = null;
-    return _playRequest(() => _player.resume(preferredEpisodeId: id));
+    return _playRequest(
+      () => _player.resume(
+        preferredEpisodeId: id,
+        refreshLibrary: _android ? _refreshLibrary : null,
+      ),
+    );
+  }
+
+  Future<void> _refreshLibrary() async {
+    final refresh = _libraryRefresh ??= _player._sync.syncNow().whenComplete(
+      () {
+        _libraryRefresh = null;
+      },
+    );
+    await refresh.timeout(const Duration(seconds: 2), onTimeout: () {});
   }
 
   Future<void> _playRequest(Future<void> Function() start) async {
@@ -243,7 +328,7 @@ class EpisodeAudioHandler extends BaseAudioHandler {
     final engine = _player._engine;
     final error = _player.lastPlaybackError;
     final processing = episode == null
-        ? AudioProcessingState.idle
+        ? (_android ? AudioProcessingState.idle : AudioProcessingState.ready)
         : error != null
         ? AudioProcessingState.error
         : !loaded
@@ -263,7 +348,13 @@ class EpisodeAudioHandler extends BaseAudioHandler {
     if (item?.id != previous?.id || item?.duration != previous?.duration) {
       mediaItem.add(item);
     }
-    final position = loaded ? engine.position : _player.position.value;
+    final position =
+        loaded &&
+            !_player._seeking &&
+            _player._failureAttempt == null &&
+            engine.processingState != ProcessingState.completed
+        ? engine.position
+        : _player.position.value;
     final state = playbackState.value;
     if (!force &&
         item?.id == previous?.id &&
@@ -305,6 +396,11 @@ class EpisodeAudioHandler extends BaseAudioHandler {
         speed: _player.speed,
       ),
     );
+    if (_android &&
+        error != null &&
+        state.processingState != AudioProcessingState.error) {
+      _background(androidPlatform.invokeMethod<void>('stopForeground'));
+    }
   }
 
   String _errorMessage(PlaybackErrorReason reason) => switch (reason) {
