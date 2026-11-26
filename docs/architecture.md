@@ -139,7 +139,7 @@ JSON in UTF-8. Every endpoint except `POST /api/login` and `GET /health` needs
 |---|---|---|
 | `POST /api/login` | `{"username", "password", "device_name"}` | 200 `{"token", "device_id"}`; 401 wrong credentials; 429 after 5 failed attempts per minute from one address |
 | `POST /api/logout` | – | 204, revokes the token used |
-| `GET /api/podcasts` | – | 200 `[Podcast]`, all known podcasts (subscribed or not) with at least one state or a subscription; supports `ETag`/`If-None-Match` |
+| `GET /api/podcasts` | – | 200 `[Podcast]`: every podcast that is subscribed, has an episode with a state, or has an episode in the queue; supports `ETag`/`If-None-Match` |
 | `POST /api/podcasts` | `{"feed_url"}` | 201 Podcast after a synchronous fetch (max 20 s); 200 if it existed (it is subscribed again); 422 if the URL is not a usable feed |
 | `DELETE /api/podcasts/{id}` | – | 204, unsubscribes and keeps everything |
 | `GET /api/podcasts/{id}/episodes` | – | 200 `[Episode]`, newest first; `ETag` |
