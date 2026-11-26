@@ -221,6 +221,12 @@ class PlayerPage extends StatelessWidget {
     final covers = _coverUrls(episode, podcast);
     final playing = playback.playing(episode.id);
     final playText = playLabel(context, playback, episode);
+    final playLabels = [
+      strings.play,
+      strings.pause,
+      strings.checkingPosition,
+      strings.loadingPlayback,
+    ];
     final player = services.player;
     final sleepEnd = player.sleepDeadline;
     final sleepOn = player.sleepAtEndOfEpisode || sleepEnd != null;
@@ -279,10 +285,20 @@ class PlayerPage extends StatelessWidget {
                       ),
                     ),
                   ),
-                  Text(
-                    playText,
-                    textAlign: TextAlign.center,
-                    style: buttonLabelStyle,
+                  // The longer labels wrap on narrow phones; reserve their height.
+                  ExcludeSemantics(
+                    child: IndexedStack(
+                      alignment: Alignment.topCenter,
+                      index: playLabels.indexOf(playText),
+                      children: [
+                        for (final label in playLabels)
+                          Text(
+                            label,
+                            textAlign: TextAlign.center,
+                            style: buttonLabelStyle,
+                          ),
+                      ],
+                    ),
                   ),
                 ],
               ),
@@ -418,7 +434,6 @@ class _SkipControl extends StatelessWidget {
     return TextButton(
       onPressed: onPressed,
       style: const ButtonStyle(
-        minimumSize: WidgetStatePropertyAll(Size(64, 64)),
         // Narrow e-ink phones need the room for "−15 s" in large text.
         padding: WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 4)),
       ),
@@ -432,12 +447,10 @@ class _SkipControl extends StatelessWidget {
               margin: const EdgeInsets.all(8),
               alignment: Alignment.center,
               decoration: const ShapeDecoration(
-                color: Colors.white,
                 shape: CircleBorder(side: BorderSide(width: 2)),
               ),
               child: Icon(
                 quickBack ? Icons.fast_rewind : Icons.fast_forward,
-                color: Colors.black,
                 size: 30,
               ),
             ),

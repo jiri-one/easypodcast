@@ -91,7 +91,8 @@ Aplikace se do telefonů instalují mimo Google Play, takže Android Auto vyžad
 - Díly se přehrávají přímo z adresy vydavatele, server je nestahuje ani nepřeposílá. Povolené jsou
   i adresy `http://`, protože některé feedy https nemají.
 - Stažení do telefonu pro poslech bez sítě (O12).
-- Ovládání: přehrát a pauza, skok zpět a vpřed (O9), rychlost a časovač spánku (O8).
+- Ovládání: přehrát a pauza, skok zpět a vpřed (O9). Rychlost a časovač spánku (O8) jsou
+  ve výchozím stavu skryté; ukáže je jeden přepínač v Nastavení.
 - Oznámení a zamykací obrazovka s ovládáním (posuvník: O10).
 - Sluchátka a Bluetooth: pauza, pokračování, „další“ a „předchozí“ (O9).
 - Android Auto: Rozposlouchané, Fronta, Stažené a Podcasty s díly, skoky zpět a vpřed. Funguje
@@ -245,7 +246,8 @@ API (náčrt, JSON):
 4. **Nové díly** (O7).
 5. **Stažené.**
 6. **Přehrávač:** otevře se z malého přehrávače nad dolní lištou.
-7. **Nastavení:** server a přihlášení, skoky, rychlost, pokračování fronty, stahování, stav feedů.
+7. **Nastavení:** server a přihlášení, skoky, přepínač rychlosti a časovače spánku (rychlost jen
+   když je zapnutý), pokračování fronty, stahování, stav feedů.
 
 Dolní lišta: Rozposlouchané, Fronta, Podcasty a Stažené. Do šířky HiBreaku se vejdou čtyři
 položky s krátkými popisky, pátá už těžko (O7).

@@ -80,8 +80,12 @@ class SettingsPage extends StatelessWidget {
               ? strings.showSpeedAndSleepOn
               : strings.showSpeedAndSleepOff,
           value: settings.showSpeedAndSleep,
-          onPressed: () =>
-              settings.showSpeedAndSleep = !settings.showSpeedAndSleep,
+          onPressed: () {
+            settings.showSpeedAndSleep = !settings.showSpeedAndSleep;
+            if (!settings.showSpeedAndSleep) {
+              services.player.setSleepTimer(null);
+            }
+          },
         ),
         if (settings.showSpeedAndSleep)
           EinkRow(

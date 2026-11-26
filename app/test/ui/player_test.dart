@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:easypodcast/ui/eink_widgets.dart';
 import 'package:easypodcast/ui/episode_page.dart';
 import 'package:easypodcast/ui/episode_text.dart';
@@ -159,6 +161,8 @@ void main() {
       expect(sleep, findsOneWidget);
       await app.tap(speed);
       await app.dialog(speedText(l, 1.2));
+      await app.tap(sleep);
+      await app.dialog(l.sleepEndOfEpisode);
       await app.back();
 
       await app.section(LibrarySection.settings);
@@ -170,7 +174,37 @@ void main() {
       expect(sleep, findsNothing);
       expect(app.services.settings.speed, 1.2);
       expect(app.services.player.speed, 1.2);
+      expect(app.services.player.sleepAtEndOfEpisode, isFalse);
     } finally {
+      await app.finish();
+    }
+  });
+
+  testWidgets('the phone play button stays put while the position is checked', (
+    tester,
+  ) async {
+    final app = await UiHarness.open(
+      tester,
+      size: const Size(392, 785),
+      playerCover: true,
+    );
+    final check = Completer<void>();
+    (app.services.sync as DemoSyncService).beforePlay = (_) => check.future;
+    final button = find.descendant(
+      of: find.byType(PlayerPage),
+      matching: find.byType(FilledButton),
+    );
+    try {
+      await app.mini(app.episode(101));
+      final original = tester.getRect(button);
+      await app.tap(button);
+      expect(
+        find.text(app.strings.checkingPosition).hitTestable(),
+        findsOneWidget,
+      );
+      expect(tester.getRect(button), original);
+    } finally {
+      check.complete();
       await app.finish();
     }
   });
