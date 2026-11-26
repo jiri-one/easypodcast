@@ -282,7 +282,11 @@ class _Library extends Library {
   }
 
   @override
-  Future<void> recordPosition(int id, Duration position) async {
+  Future<void> recordPosition(
+    int id,
+    Duration position, {
+    Duration? duration,
+  }) async {
     calls.add('record:$id:${position.inMilliseconds}');
     _positions[id] = position;
   }
