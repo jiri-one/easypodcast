@@ -1,0 +1,5 @@
+.git
+.ai
+private
+testdata
+*_test.go

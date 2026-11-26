@@ -1,0 +1,17 @@
+<rss version="2.0">
+  <channel>
+    <title>Cloudberry Signal</title>
+    <item>
+      <title>Copper Kite</title>
+      <guid isPermaLink="false">cloudberry-copper</guid>
+      <pubDate>Thu, 26 Nov 2026 09:15:00 GMT</pubDate>
+      <enclosure url="audio/copper-remaster.mp3" type="audio/mpeg"/>
+    </item>
+    <item>
+      <title>Silver Glider</title>
+      <guid isPermaLink="false">cloudberry-silver</guid>
+      <pubDate>Fri, 27 Nov 2026 09:15:00 GMT</pubDate>
+      <enclosure url="/audio/silver.mp3"/>
+    </item>
+  </channel>
+</rss>

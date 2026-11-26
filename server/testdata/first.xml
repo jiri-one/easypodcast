@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
+  <channel>
+    <title>Cloudberry Signal</title>
+    <itunes:author>Studio Lantern</itunes:author>
+    <description><![CDATA[<p>Notes from <a href="/studio">the studio</a>.</p>]]></description>
+    <link>/home</link>
+    <image><url>/cover.png</url><title>Cloudberry Signal</title><link>/home</link></image>
+    <item>
+      <title>Copper Kite</title>
+      <guid isPermaLink="false">cloudberry-copper</guid>
+      <pubDate>26 Nov 26 09:15 GMT</pubDate>
+      <description><![CDATA[<p>First &amp; <b>bright</b><br>Read <a href="../notes">the notes</a>.</p><script>hidden</script><a href="https://example.invalid/sky">https://example.invalid/sky</a>]]></description>
+      <enclosure url="audio/copper.mp3" type="audio/mpeg" length="17381"/>
+      <itunes:duration>01:04:02</itunes:duration>
+    </item>
+    <item>
+      <title>Paper Cloud</title>
+      <pubDate>some Tuesday</pubDate>
+      <enclosure url="/audio/paper.mp3"/>
+    </item>
+    <item>
+      <title>Notice without recording</title>
+      <guid isPermaLink="false">cloudberry-notice</guid>
+    </item>
+  </channel>
+</rss>
