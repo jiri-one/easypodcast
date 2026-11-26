@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -42,6 +43,7 @@ func (a *api) routes() http.Handler {
 	mux.HandleFunc("POST /api/podcasts", a.authenticated(a.subscribe))
 	mux.HandleFunc("DELETE /api/podcasts/{id}", a.authenticated(a.unsubscribe))
 	mux.HandleFunc("GET /api/podcasts/{id}/episodes", a.authenticated(a.episodes))
+	mux.HandleFunc("GET /api/podcasts/{id}/search", a.authenticated(a.searchEpisodes))
 	mux.HandleFunc("GET /api/episodes/{id}", a.authenticated(a.episode))
 	mux.HandleFunc("GET /api/episodes/{id}/state", a.authenticated(a.episodeState))
 	mux.HandleFunc("GET /api/state", a.authenticated(a.state))
@@ -311,6 +313,28 @@ func (a *api) episodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	conditionalJSON(w, r, items)
+}
+
+func (a *api) searchEpisodes(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	query := strings.TrimSpace(normalizeSearchText(r.URL.Query().Get("q")))
+	if utf8.RuneCountInString(query) < 2 {
+		apiError(w, http.StatusBadRequest, "q must contain at least two characters")
+		return
+	}
+	if strings.ContainsRune(query, 0) {
+		apiError(w, http.StatusBadRequest, "q must be valid text")
+		return
+	}
+	ids, err := a.store.searchEpisodes(r.Context(), id, strings.Fields(query))
+	if err != nil {
+		storeError(w, r, err)
+		return
+	}
+	jsonReply(w, r, http.StatusOK, map[string][]int64{"episode_ids": ids})
 }
 
 func (a *api) episode(w http.ResponseWriter, r *http.Request) {

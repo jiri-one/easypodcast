@@ -306,8 +306,8 @@ func TestStateETagAndServerIdentity(t *testing.T) {
 	s := integrationStore(t)
 	testExec(t, s.db, `INSERT INTO users (username, password_hash) VALUES ('listener', decode('00', 'hex'));
 		INSERT INTO podcasts (feed_url) VALUES ('https://fixture.invalid');
-		INSERT INTO episodes (podcast_id, guid, title, enclosure_url, description)
-			VALUES (1, 'fixture', 'Episode', 'https://fixture.invalid/audio.mp3', '')`)
+		INSERT INTO episodes (podcast_id, guid, title, enclosure_url, description, search_text)
+			VALUES (1, 'fixture', 'Episode', 'https://fixture.invalid/audio.mp3', '', 'episode ')`)
 	token, _, err := s.createDevice(t.Context(), "listener", "Reader")
 	if err != nil {
 		t.Fatal(err)

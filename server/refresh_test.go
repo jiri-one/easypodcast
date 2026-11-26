@@ -78,8 +78,8 @@ func TestRefreshRejectsLimitedFeedWithoutChangingHistory(t *testing.T) {
 	episodeCount := int64(1)
 	for i, want := range []feedError{errTooManyItems, errFeedTooDeep, errStoredEpisodeLimit, errUnusableFeed} {
 		if want == errStoredEpisodeLimit {
-			testExec(t, s.db, `INSERT INTO episodes (podcast_id, guid, title, enclosure_url, removed_from_feed, description)
-				SELECT $1, '', 'Archived episode', '/archive/' || n, true, ''
+			testExec(t, s.db, `INSERT INTO episodes (podcast_id, guid, title, enclosure_url, removed_from_feed, description, search_text)
+				SELECT $1, '', 'Archived episode', '/archive/' || n, true, '', 'archived episode '
 				FROM generate_series(1,$2::integer) n`, p.ID, maxStoredFeedEpisodes-1)
 			episodeCount = maxStoredFeedEpisodes
 		}

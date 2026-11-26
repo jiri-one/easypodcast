@@ -225,7 +225,7 @@ func saveEpisodes(ctx context.Context, tx pgx.Tx, podcastID int64, incoming []ep
 			published = &e.PublishedAt.Time
 		}
 		args := []any{e.GUID, e.Title, published, e.DurationSeconds, e.EnclosureURL, e.EnclosureType,
-			e.EnclosureLength, e.Link, e.ImageURL, e.Description, estimates[i]}
+			e.EnclosureLength, e.Link, e.ImageURL, e.Description, estimates[i], episodeSearchText(e.Title, e.Description)}
 		if match == nil {
 			added++
 			if len(existing)+added > maxStoredFeedEpisodes {
@@ -235,8 +235,8 @@ func saveEpisodes(ctx context.Context, tx pgx.Tx, podcastID int64, incoming []ep
 			position := len(live)
 			live = append(live, 0)
 			batch.Queue(`INSERT INTO episodes (guid, title, published_at, duration_s, enclosure_url, enclosure_type,
-				enclosure_length, link, image_url, description, estimated_publication, podcast_id)
-				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`, append(args, podcastID)...).
+				enclosure_length, link, image_url, description, estimated_publication, search_text, podcast_id)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`, append(args, podcastID)...).
 				QueryRow(func(row pgx.Row) error {
 					return row.Scan(&live[position])
 				})
@@ -244,7 +244,7 @@ func saveEpisodes(ctx context.Context, tx pgx.Tx, podcastID int64, incoming []ep
 		} else {
 			batch.Queue(`UPDATE episodes SET guid = $1, title = $2, published_at = $3, duration_s = $4,
 				enclosure_url = $5, enclosure_type = $6, enclosure_length = $7, link = $8, image_url = $9,
-				description = $10, estimated_publication = $11, removed_from_feed = false WHERE id = $12 AND
+				description = $10, estimated_publication = $11, search_text = $12, removed_from_feed = false WHERE id = $13 AND
 				(removed_from_feed OR ROW(guid, title, published_at, duration_s, enclosure_url, enclosure_type,
 				enclosure_length, link, image_url, description, estimated_publication) IS DISTINCT FROM
 				ROW($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11))`, append(args, match.ID)...).

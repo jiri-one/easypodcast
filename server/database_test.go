@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -123,7 +124,7 @@ func TestMigrateAsDatabaseOwner(t *testing.T) {
 		}
 	}
 	var migrations int
-	if err := pool.QueryRow(t.Context(), "SELECT count(*) FROM schema_migrations").Scan(&migrations); err != nil || migrations != 6 {
+	if err := pool.QueryRow(t.Context(), "SELECT count(*) FROM schema_migrations").Scan(&migrations); err != nil || migrations != 7 {
 		t.Fatalf("migration count: %d, %v", migrations, err)
 	}
 }
@@ -144,9 +145,12 @@ func TestUpgradeInitialSchema(t *testing.T) {
 			VALUES ('https://Example.Invalid:443/feed', 'feed is too large', now() + interval '24 hours');
 		INSERT INTO feed_aliases (url, podcast_id) SELECT feed_url, id FROM podcasts;
 		INSERT INTO episodes (podcast_id, guid, title, enclosure_url, description)
-			SELECT id, 'archive', 'Quiet Archive', 'https://example.invalid/archive.mp3', '' FROM podcasts;
+			SELECT id, 'archive', 'Quiet Archive', 'https://example.invalid/archive.mp3', 'Tomáš Roud' FROM podcasts;
 		INSERT INTO episode_state (episode_id, position_ms, status, updated_at)
 			SELECT id, 120000, '', '2025-10-01T08:10:00.123Z' FROM episodes;
+		INSERT INTO episodes (podcast_id, guid, title, enclosure_url, description)
+			SELECT 1, 'archive-' || n, 'More Archives', 'https://example.invalid/archive-' || n || '.mp3',
+				CASE WHEN n = 256 THEN 'Tomáš Roud' ELSE '' END FROM generate_series(1, 256) n;
 	`)
 	token, id, err := s.createDevice(t.Context(), "listener", "Legacy reader")
 	if err != nil {
@@ -154,6 +158,10 @@ func TestUpgradeInitialSchema(t *testing.T) {
 	}
 	if err := s.migrate(t.Context()); err != nil {
 		t.Fatal(err)
+	}
+	ids, err := s.searchEpisodes(t.Context(), 1, []string{"tomas", "roud"})
+	if err != nil || !slices.Equal(ids, []int64{257, 1}) {
+		t.Fatalf("backfilled search: %v, %v", ids, err)
 	}
 	states, err := s.state(t.Context())
 	if err != nil || len(states.Episodes) != 1 || states.Episodes[0].PositionMS != 120000 ||
@@ -228,7 +236,7 @@ func TestPasswordlessDatabaseURL(t *testing.T) {
 		t.Fatal(err)
 	}
 	var count int
-	if err := pool.QueryRow(t.Context(), "SELECT count(*) FROM schema_migrations").Scan(&count); err != nil || count != 6 {
+	if err := pool.QueryRow(t.Context(), "SELECT count(*) FROM schema_migrations").Scan(&count); err != nil || count != 7 {
 		t.Fatalf("migration via PGPASSWORD: %d, %v", count, err)
 	}
 }

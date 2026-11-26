@@ -56,6 +56,12 @@ exceed these limits records an error and preserves the stored episodes and their
 HTTP OPML imports use four workers and have 80 seconds to finish. The result lists feeds
 that need another import attempt.
 
+`GET /api/podcasts/{id}/search?q=tomas+roud` takes the usual bearer token and searches
+one podcast. Every whitespace-separated term must appear in the title or plain-text
+description. Matching ignores case and diacritics. The response is `{"episode_ids": [...]}`
+in episode list order, with up to 200 IDs. A query with fewer than two characters after
+trimming whitespace returns 400. An unknown podcast returns 404.
+
 `GET /api/state`, `POST /api/state`, and `GET /api/episodes/{id}/state` carry `duration_ms`
 as an integer or `null`. The duration comes from the player. A strictly newer state replaces
 the entire record, including its duration. Requests that omit the field supply `null`.

@@ -120,6 +120,10 @@ func TestImportPinepods(t *testing.T) {
 		untouched.EnclosureURL != website.URL+"/quiet.mp3" || untouched.DurationSeconds != nil || untouched.PublishedAt != nil {
 		t.Fatalf("removed episode without listening history %+v", untouched)
 	}
+	ids, err := s.searchEpisodes(t.Context(), podcasts[0].ID, []string{"obsidian", "bell"})
+	if err != nil || !slices.Equal(ids, []int64{archived.ID}) {
+		t.Fatalf("archived PinePods episode search: %v, %v", ids, err)
+	}
 	listenAt := time.Date(2025, 10, 1, 8, 10, 0, 123_000_000, time.UTC)
 	doneAt := time.Date(2025, 10, 1, 8, 20, 0, 456_000_000, time.UTC)
 	position, err := s.episodeState(t.Context(), copper)

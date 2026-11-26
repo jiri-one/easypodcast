@@ -391,9 +391,9 @@ func matchPinePodcast(ctx context.Context, tx pgx.Tx, podcastID int64, sources [
 			continue
 		}
 		err := tx.QueryRow(ctx, `INSERT INTO episodes
-			(podcast_id, guid, enclosure_url, title, published_at, duration_s, description, removed_from_feed)
-			VALUES ($1,$2,$3,$4,$5,$6,'',true) RETURNING id`,
-			podcastID, guid, enclosure, source.Title, source.PublishedAt, source.Duration).Scan(&id)
+			(podcast_id, guid, enclosure_url, title, published_at, duration_s, description, removed_from_feed, search_text)
+			VALUES ($1,$2,$3,$4,$5,$6,'',true,$7) RETURNING id`,
+			podcastID, guid, enclosure, source.Title, source.PublishedAt, source.Duration, episodeSearchText(source.Title, "")).Scan(&id)
 		if err != nil {
 			return 0, err
 		}

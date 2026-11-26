@@ -18,9 +18,10 @@ import (
 var migrations embed.FS
 
 const (
-	migrationLock        = 47091031
-	feedLock             = 47091032
-	feedRefreshMigration = "migrations/006_feed_refresh.sql"
+	migrationLock          = 47091031
+	feedLock               = 47091032
+	feedRefreshMigration   = "migrations/006_feed_refresh.sql"
+	episodeSearchMigration = "migrations/007_episode_search.sql"
 )
 
 var errUnknownMigration = errors.New("database has a migration this binary does not know")
@@ -67,6 +68,11 @@ func (s store) migrate(ctx context.Context) error {
 			if file == feedRefreshMigration {
 				if err := migrateFeedAliases(ctx, tx); err != nil {
 					return err
+				}
+			}
+			if file == episodeSearchMigration {
+				if err := backfillEpisodeSearch(ctx, tx); err != nil {
+					return fmt.Errorf("%s: %w", file, err)
 				}
 			}
 			if _, err := tx.Exec(ctx, "INSERT INTO schema_migrations (version) VALUES ($1)", file); err != nil {
@@ -180,22 +186,33 @@ func scanEpisode(row scanner, e *episode, extra ...any) error {
 	return err
 }
 
-func (s store) episodes(ctx context.Context, podcastID int64) ([]episode, error) {
+const episodeListFrom = ` FROM episodes
+	LEFT JOIN (
+		SELECT f.episode_id, f.position FROM podcasts p CROSS JOIN LATERAL
+			unnest(p.feed_episode_order) WITH ORDINALITY AS f(episode_id, position) WHERE p.id = $1
+	) AS feed ON feed.episode_id = episodes.id
+	WHERE podcast_id = $1`
+
+const episodeListOrder = ` ORDER BY COALESCE(published_at, estimated_publication) DESC NULLS LAST,
+	COALESCE(feed.position - 1, feed_order) NULLS LAST, id DESC`
+
+func (s store) requirePodcast(ctx context.Context, podcastID int64) error {
 	var exists bool
 	err := s.db.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM podcasts WHERE id = $1)", podcastID).Scan(&exists)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if !exists {
-		return nil, pgx.ErrNoRows
+		return pgx.ErrNoRows
 	}
-	rows, err := s.db.Query(ctx, "SELECT "+episodeColumns+` FROM episodes
-		LEFT JOIN (
-			SELECT f.episode_id, f.position FROM podcasts p CROSS JOIN LATERAL
-				unnest(p.feed_episode_order) WITH ORDINALITY AS f(episode_id, position) WHERE p.id = $1
-		) AS feed ON feed.episode_id = episodes.id
-		WHERE podcast_id = $1 ORDER BY COALESCE(published_at, estimated_publication) DESC NULLS LAST,
-			COALESCE(feed.position - 1, feed_order) NULLS LAST, id DESC`, podcastID)
+	return nil
+}
+
+func (s store) episodes(ctx context.Context, podcastID int64) ([]episode, error) {
+	if err := s.requirePodcast(ctx, podcastID); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.Query(ctx, "SELECT "+episodeColumns+episodeListFrom+episodeListOrder, podcastID)
 	if err != nil {
 		return nil, err
 	}
