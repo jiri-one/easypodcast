@@ -85,7 +85,7 @@ func TestHTTPAPI(t *testing.T) {
 		t.Fatal(got)
 	}
 	call("GET", "/api/podcasts", "", "", "", 401)
-	call("PUT", "/api/podcasts/1/new-episodes", `{"show":false}`, "", "", 401)
+	call("DELETE", "/api/podcasts/1/new-episodes", "", "", "", 401)
 	for range 5 {
 		call("POST", "/api/login", `{"username":"listener","password":"wrong","device_name":"Test"}`, "", "", 401)
 	}
@@ -137,10 +137,9 @@ func TestHTTPAPI(t *testing.T) {
 	podcastsTag := list.Header().Get("ETag")
 	call("GET", "/api/podcasts", "", "W/"+podcastsTag, "", 304)
 	podcastPath := fmt.Sprintf("/api/podcasts/%d", p.ID)
-	visibilityPath := podcastPath + "/new-episodes"
-	call("PUT", "/api/podcasts/999999/new-episodes", `{"show":false}`, "", "", 404)
-	call("PUT", visibilityPath, `{"show":null}`, "", "", 400)
-	call("PUT", visibilityPath, `{"show":false}`, "", "", 204)
+	newEpisodesPath := podcastPath + "/new-episodes"
+	call("DELETE", "/api/podcasts/999999/new-episodes", "", "", "", 404)
+	call("DELETE", newEpisodesPath, "", "", "", 204)
 	updatedList := call("GET", "/api/podcasts", "", podcastsTag, "", 200)
 	if updated := response[[]podcast](t, updatedList); len(updated) != 1 || updated[0].ShowInNewEpisodes ||
 		updated[0].EpisodesVersion != p.EpisodesVersion || updatedList.Header().Get("ETag") == podcastsTag {
@@ -173,6 +172,10 @@ func TestHTTPAPI(t *testing.T) {
 	resubscribed := response[podcast](t, call("POST", "/api/podcasts", input, "", "", 200))
 	if !resubscribed.Subscribed || resubscribed.ShowInNewEpisodes {
 		t.Fatal("resubscribing lost the New episodes preference")
+	}
+	call("PUT", newEpisodesPath, "", "", "", 204)
+	if shown := response[[]podcast](t, call("GET", "/api/podcasts", "", "", "", 200)); !shown[0].ShowInNewEpisodes {
+		t.Fatalf("PUT did not show the podcast in New episodes: %+v", shown)
 	}
 	call("GET", "/api/episodes/999999/state", "", "", "", 404)
 	call("GET", "/api/podcasts/999999/episodes", "", "", "", 404)

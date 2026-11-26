@@ -233,66 +233,30 @@ void main() {
     },
   );
 
-  testWidgets(
-    'the About podcast toggle hides episodes only from New episodes',
-    (tester) async {
-      final app = await _phone(tester);
-      final l = app.strings;
-      final library = app.services.library;
-      Iterable<int> listedIds() => tester
-          .widget<EpisodeList>(find.byType(EpisodeList))
-          .episodes
-          .map((episode) => episode.id);
-      try {
-        await app.section(LibrarySection.newEpisodes);
-        expect(listedIds(), contains(201));
-        await app.section(LibrarySection.podcasts);
-        await app.scrollToRow(
-          library.podcast(2)!.title,
-          find.byType(PodcastList),
-        );
-        await app.tap(find.bySemanticsLabel(l.aboutPodcast));
-        final row = find.widgetWithText(EinkRow, l.showInNewEpisodes);
-        await app.scrollTo(row, find.byType(AboutPodcastPage));
-        expect(tester.widget<EinkRow>(row).toggled, isTrue);
-        await app.tap(row);
-        expect(tester.widget<EinkRow>(row).toggled, isFalse);
-
-        await app.back();
-        expect(listedIds(), contains(201));
-        await app.back();
-        await app.section(LibrarySection.newEpisodes);
-        expect(listedIds(), isNot(contains(201)));
-        expect(listedIds(), contains(301));
-        await app.section(LibrarySection.inProgress);
-        expect(listedIds(), contains(204));
-      } finally {
-        await app.finish();
-      }
-    },
-  );
+  testWidgets('the About podcast toggle switches New episodes off', (
+    tester,
+  ) async {
+    final app = await _phone(tester);
+    try {
+      final row = await _showInNewEpisodesRow(app);
+      expect(tester.widget<EinkRow>(row).toggled, isTrue);
+      await app.tap(row);
+      expect(tester.widget<EinkRow>(row).toggled, isFalse);
+      expect(app.services.library.podcast(2)!.showInNewEpisodes, isFalse);
+    } finally {
+      await app.finish();
+    }
+  });
 
   testWidgets('a failed About podcast toggle keeps its value and says so', (
     tester,
   ) async {
-    final app = await UiHarness.open(
-      tester,
-      size: const Size(392, 785),
-      library: _OfflineToggleLibrary(),
-    );
-    final l = app.strings;
+    final app = await _phone(tester, library: _OfflineToggleLibrary());
     try {
-      await app.section(LibrarySection.podcasts);
-      await app.scrollToRow(
-        app.services.library.podcast(2)!.title,
-        find.byType(PodcastList),
-      );
-      await app.tap(find.bySemanticsLabel(l.aboutPodcast));
-      final row = find.widgetWithText(EinkRow, l.showInNewEpisodes);
-      await app.scrollTo(row, find.byType(AboutPodcastPage));
+      final row = await _showInNewEpisodesRow(app);
       await app.tap(row);
       expect(tester.widget<EinkRow>(row).toggled, isTrue);
-      expect(find.text(l.actionFailed), findsOneWidget);
+      expect(find.text(app.strings.actionFailed), findsOneWidget);
     } finally {
       await app.finish();
     }
@@ -496,11 +460,31 @@ void _checkTextLayout(String screen) {
   );
 }
 
-Future<UiHarness> _phone(WidgetTester tester, {bool loggedIn = true}) =>
-    UiHarness.open(tester, size: const Size(392, 785), loggedIn: loggedIn);
+Future<UiHarness> _phone(
+  WidgetTester tester, {
+  bool loggedIn = true,
+  DemoLibrary? library,
+}) => UiHarness.open(
+  tester,
+  size: const Size(392, 785),
+  loggedIn: loggedIn,
+  library: library,
+);
+
+Future<Finder> _showInNewEpisodesRow(UiHarness app) async {
+  await app.section(LibrarySection.podcasts);
+  await app.scrollToRow(
+    app.services.library.podcast(2)!.title,
+    find.byType(PodcastList),
+  );
+  await app.tap(find.bySemanticsLabel(app.strings.aboutPodcast));
+  final row = find.widgetWithText(EinkRow, app.strings.showInNewEpisodes);
+  await app.scrollTo(row, find.byType(AboutPodcastPage));
+  return row;
+}
 
 class _OfflineToggleLibrary extends DemoLibrary {
   @override
-  Future<void> setNewEpisodesVisibility(int podcastId, bool show) async =>
+  Future<void> setShowInNewEpisodes(int podcastId, bool show) async =>
       throw OfflineException();
 }

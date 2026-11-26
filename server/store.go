@@ -174,7 +174,7 @@ func (s store) unsubscribe(ctx context.Context, id int64) error {
 	return err
 }
 
-func (s store) setNewEpisodesVisibility(ctx context.Context, id int64, show bool) error {
+func (s store) setShowInNewEpisodes(ctx context.Context, id int64, show bool) error {
 	tag, err := s.db.Exec(ctx, "UPDATE podcasts SET show_in_new_episodes = $2 WHERE id = $1", id, show)
 	if err == nil && tag.RowsAffected() == 0 {
 		return pgx.ErrNoRows

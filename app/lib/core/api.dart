@@ -106,7 +106,7 @@ abstract interface class ApiClient {
 
   Future<void> unsubscribe(int podcastId, {Duration? timeout});
 
-  Future<void> setNewEpisodesVisibility(
+  Future<void> setShowInNewEpisodes(
     int podcastId,
     bool show, {
     Duration? timeout,

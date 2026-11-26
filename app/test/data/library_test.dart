@@ -768,7 +768,7 @@ void main() {
     await device.sync.syncNow();
     await lib().recordPosition(episodes[0], const Duration(minutes: 2));
 
-    await lib().setNewEpisodesVisibility(1, false);
+    await lib().setShowInNewEpisodes(1, false);
     expect(lib().podcast(1)!.showInNewEpisodes, isFalse);
     expect(lib().newEpisodes(since: oldestTime).map((e) => e.id), kept);
     expect(lib().episodesOf(1), hasLength(5));
@@ -785,10 +785,15 @@ void main() {
 
     device.api.online = false;
     await expectLater(
-      lib().setNewEpisodesVisibility(1, true),
+      lib().setShowInNewEpisodes(1, true),
       throwsA(isA<OfflineException>()),
     );
     expect(lib().podcast(1)!.showInNewEpisodes, isFalse);
     expect(lib().newEpisodes(since: oldestTime).map((e) => e.id), kept);
+
+    device.api.online = true;
+    await pc.library.setShowInNewEpisodes(1, true);
+    await device.sync.syncNow();
+    expect(lib().podcast(1)!.showInNewEpisodes, isTrue);
   });
 }

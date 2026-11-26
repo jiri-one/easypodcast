@@ -84,6 +84,9 @@ class FakeServer {
   void setSubscribed(int podcastId, bool subscribed) => _podcasts[podcastId] =
       _podcasts[podcastId]!.copyWith(subscribed: subscribed);
 
+  void setShowInNewEpisodes(int podcastId, bool show) => _podcasts[podcastId] =
+      _podcasts[podcastId]!.copyWith(showInNewEpisodes: show);
+
   List<Podcast> listPodcasts() {
     final result = <Podcast>[];
     for (final p in _podcasts.values) {
@@ -284,15 +287,13 @@ class FakeApiClient implements HttpApiClient {
   }
 
   @override
-  Future<void> setNewEpisodesVisibility(
+  Future<void> setShowInNewEpisodes(
     int podcastId,
     bool show, {
     Duration? timeout,
   }) async {
     _check();
-    final podcast = server._podcasts[podcastId];
-    if (podcast == null) throw ApiException(404, 'not found');
-    server._podcasts[podcastId] = podcast.copyWith(showInNewEpisodes: show);
+    server.setShowInNewEpisodes(podcastId, show);
   }
 
   @override

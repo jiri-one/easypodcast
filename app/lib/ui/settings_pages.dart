@@ -396,11 +396,11 @@ class _AboutPodcastPageState extends State<AboutPodcastPage>
   String? _error;
   bool? _subscribing;
 
-  Future<void> _changeNewEpisodesVisibility() => guardAction(() async {
+  Future<void> _toggleShowInNewEpisodes() => guardAction(() async {
     final podcast = widget.podcast;
     if (_error != null) setState(() => _error = null);
     try {
-      await widget.services.library.setNewEpisodesVisibility(
+      await widget.services.library.setShowInNewEpisodes(
         podcast.id,
         !podcast.showInNewEpisodes,
       );
@@ -474,7 +474,7 @@ class _AboutPodcastPageState extends State<AboutPodcastPage>
         _ToggleRow(
           title: strings.showInNewEpisodes,
           value: podcast.showInNewEpisodes,
-          onPressed: _changeNewEpisodesVisibility,
+          onPressed: _toggleShowInNewEpisodes,
         ),
       ],
     );

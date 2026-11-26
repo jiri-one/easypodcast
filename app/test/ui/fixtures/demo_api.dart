@@ -41,11 +41,11 @@ class DemoApiClient implements ApiClient {
       _library.unsubscribe(podcastId);
 
   @override
-  Future<void> setNewEpisodesVisibility(
+  Future<void> setShowInNewEpisodes(
     int podcastId,
     bool show, {
     Duration? timeout,
-  }) => _library.setNewEpisodesVisibility(podcastId, show);
+  }) => _library.setShowInNewEpisodes(podcastId, show);
 
   @override
   Future<Fetched<List<Episode>>?> episodes(

@@ -166,7 +166,7 @@ class DemoLibrary extends Library {
   }
 
   @override
-  Future<void> setNewEpisodesVisibility(int podcastId, bool show) async {
+  Future<void> setShowInNewEpisodes(int podcastId, bool show) async {
     _podcasts[podcastId] = _podcasts[podcastId]!.copyWith(
       showInNewEpisodes: show,
     );

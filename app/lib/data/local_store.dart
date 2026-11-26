@@ -240,11 +240,15 @@ class LocalStore {
     await batch.commit(noResult: true);
   }
 
-  Future<void> upsertPodcast(Podcast podcast) => db.insert(
-    'podcasts',
-    _podcastRow(podcast),
-    conflictAlgorithm: ConflictAlgorithm.replace,
-  );
+  Future<void> upsertPodcast(Podcast podcast) async {
+    // With the old list version kept, a list restored by another device would answer 304.
+    await setMeta(MetaKey.podcastsEtag, null);
+    await db.insert(
+      'podcasts',
+      _podcastRow(podcast),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
 
   Future<void> replaceEpisodes(
     int podcastId,

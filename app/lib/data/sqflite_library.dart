@@ -286,8 +286,8 @@ class SqfliteLibrary extends Library {
   }
 
   @override
-  Future<void> setNewEpisodesVisibility(int podcastId, bool show) async {
-    await _api.setNewEpisodesVisibility(podcastId, show);
+  Future<void> setShowInNewEpisodes(int podcastId, bool show) async {
+    await _api.setShowInNewEpisodes(podcastId, show);
     final p = _podcasts[podcastId];
     if (p == null) return;
     final updated = p.copyWith(showInNewEpisodes: show);

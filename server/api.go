@@ -42,7 +42,8 @@ func (a *api) routes() http.Handler {
 	mux.HandleFunc("GET /api/podcasts", a.authenticated(a.podcasts))
 	mux.HandleFunc("POST /api/podcasts", a.authenticated(a.subscribe))
 	mux.HandleFunc("DELETE /api/podcasts/{id}", a.authenticated(a.unsubscribe))
-	mux.HandleFunc("PUT /api/podcasts/{id}/new-episodes", a.authenticated(a.setNewEpisodesVisibility))
+	mux.HandleFunc("PUT /api/podcasts/{id}/new-episodes", a.authenticated(a.setShowInNewEpisodes))
+	mux.HandleFunc("DELETE /api/podcasts/{id}/new-episodes", a.authenticated(a.setShowInNewEpisodes))
 	mux.HandleFunc("GET /api/podcasts/{id}/episodes", a.authenticated(a.episodes))
 	mux.HandleFunc("GET /api/podcasts/{id}/search", a.authenticated(a.searchEpisodes))
 	mux.HandleFunc("GET /api/search", a.authenticated(a.searchEpisodes))
@@ -304,22 +305,12 @@ func (a *api) unsubscribe(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (a *api) setNewEpisodesVisibility(w http.ResponseWriter, r *http.Request) {
+func (a *api) setShowInNewEpisodes(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
 	if !ok {
 		return
 	}
-	var input struct {
-		Show *bool `json:"show"`
-	}
-	if !decodeJSON(w, r, &input) {
-		return
-	}
-	if input.Show == nil {
-		apiError(w, http.StatusBadRequest, "show must be a boolean")
-		return
-	}
-	if err := a.store.setNewEpisodesVisibility(r.Context(), id, *input.Show); err != nil {
+	if err := a.store.setShowInNewEpisodes(r.Context(), id, r.Method == http.MethodPut); err != nil {
 		storeError(w, r, err)
 		return
 	}

@@ -109,7 +109,9 @@ Derived values, the same everywhere:
 8. Episode lists: the client compares `episodes_version` from `GET /api/podcasts` with its local
    copy and refetches `GET /api/podcasts/{id}/episodes` only for changed podcasts.
    New episodes includes only subscribed podcasts with `show_in_new_episodes` enabled. Like a
-   subscription, the preference changes only online, directly on the server.
+   subscription, the preference changes only online, directly on the server. A podcast written
+   locally after such a command drops the saved podcast-list `ETag`, so the next pull fetches the
+   whole list even if another device has meanwhile restored the old one.
 9. Transitions (all produce a new state with the device time):
    - playback reaches the end: `status = "played"`, `position_ms = 0`, and the next queue item
      starts (when the setting is on);
@@ -148,7 +150,7 @@ JSON in UTF-8. Every endpoint except `POST /api/login` and `GET /health` needs
 | `GET /api/podcasts` | – | 200 `[Podcast]`: every podcast that is subscribed, has an episode with a state, or has an episode in the queue; supports `ETag`/`If-None-Match` |
 | `POST /api/podcasts` | `{"feed_url"}` | 201 Podcast after a synchronous fetch (max 80 s overall), 200 if it existed (it is subscribed again), 422 if the URL is not a usable feed |
 | `DELETE /api/podcasts/{id}` | – | 204, unsubscribes and keeps everything |
-| `PUT /api/podcasts/{id}/new-episodes` | `{"show": false}` | 204, sets `show_in_new_episodes`. 400 without a boolean `show`, 404 for an unknown podcast. |
+| `PUT` or `DELETE /api/podcasts/{id}/new-episodes` | – | 204; PUT shows the podcast in New episodes, DELETE hides it (`show_in_new_episodes`). 404 for an unknown podcast |
 | `GET /api/podcasts/{id}/episodes` | – | 200 `[Episode]`, newest first; `ETag` |
 | `GET /api/podcasts/{id}/search` | `q` (at least two characters after trimming whitespace) | 200 `{"episode_ids": [episode IDs]}` in episode list order, up to 200. Every whitespace-separated term must occur in the title or plain-text description, ignoring case and diacritics. 400 for a missing or short query, 404 for a missing podcast. |
 | `GET /api/search` | `q` (at least two characters after trimming whitespace) | 200 `{"episode_ids": [episode IDs]}` for subscribed podcasts, up to 100. Uses the same matching rules as podcast search. Sorts by publication date, newest first, with undated episodes last and higher IDs first when dates tie. 400 for a missing or short query. |
