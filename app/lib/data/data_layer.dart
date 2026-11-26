@@ -41,10 +41,10 @@ Future<DataLayer> openDataLayer() async {
     library: library,
     store: store,
     networkUp: Platform.isAndroid
+        // Every change to a usable network counts, also Wi-Fi to mobile data.
         ? Connectivity().onConnectivityChanged
-              .map((results) => !results.contains(ConnectivityResult.none))
-              .distinct()
-              .where((up) => up)
+              .where((results) => !results.contains(ConnectivityResult.none))
+              .map((_) => true)
         : null,
   );
   api.onUnauthorized = sync.handleUnauthorized;
