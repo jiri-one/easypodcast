@@ -67,9 +67,9 @@ class _JustAudioEngine implements PlaybackEngine {
 
   static Future<_JustAudioEngine> open() async {
     final session = Platform.isAndroid ? await AudioSession.instance : null;
-    // speech() asks Android to pause instead of ducking, so every
-    // notification sound paused the podcast.
-    await session?.configure(const AudioSessionConfiguration.music());
+    // speech() makes notification and navigation sounds pause the podcast
+    // until they end, instead of ducking it, so no words are lost.
+    await session?.configure(const AudioSessionConfiguration.speech());
     return _JustAudioEngine(session);
   }
 

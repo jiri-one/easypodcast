@@ -1,5 +1,8 @@
 const inProgressThresholdMs = 60000;
 
+// Positions this close count as the same: the library does not store them.
+const samePositionTolerance = Duration(seconds: 1);
+
 DateTime? _time(Object? value) =>
     value == null ? null : DateTime.parse(value as String).toUtc();
 

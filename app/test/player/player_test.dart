@@ -847,6 +847,30 @@ void main() {
     },
   );
 
+  testWidgets(
+    'focus gain right after a saved position resumes without seeking back',
+    (tester) async {
+      openPlayer();
+      await player.play(1);
+      engine.position = const Duration(seconds: 25);
+      engine.interruptionEvents.add(PlaybackInterruption.transientLoss);
+      await tester.pump(const Duration(seconds: 1));
+      engine.interruptionEvents.add(PlaybackInterruption.regained);
+      await tester.pump();
+      expect(player.isPlaying, isTrue);
+      engine.position = const Duration(seconds: 25, milliseconds: 700);
+      engine.interruptionEvents.add(PlaybackInterruption.transientLoss);
+      await tester.pump(const Duration(seconds: 1));
+      expect(library.stateOf(1).positionMs, 25000);
+      calls.clear();
+      engine.interruptionEvents.add(PlaybackInterruption.regained);
+      await tester.pump();
+      expect(calls.where((call) => call.startsWith('seek')), isEmpty);
+      expect(engine.position, const Duration(seconds: 25, milliseconds: 700));
+      expect(player.isPlaying, isTrue);
+    },
+  );
+
   for (final cancelBy in ['pause', 'sleep', 'output disconnect']) {
     testWidgets('focus return cannot undo $cancelBy', (tester) async {
       openPlayer();

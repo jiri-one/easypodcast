@@ -415,7 +415,12 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
         _resumePosition(state),
         _measuredDuration,
       );
-      if (target == applied) return true;
+      // A pause right after a saved position leaves the stored one up to a
+      // second behind; seeking back to it would flush the buffered audio.
+      if (applied != null &&
+          (target - applied).abs() <= samePositionTolerance) {
+        return true;
+      }
       await _seekEngine(target);
       applied = target;
     }

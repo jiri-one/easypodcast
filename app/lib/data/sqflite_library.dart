@@ -318,7 +318,10 @@ class SqfliteLibrary extends Library {
     if (!_canRecord(episodeId, updatedAt)) return;
     final positionMs = position.isNegative ? 0 : position.inMilliseconds;
     final previous = stateOf(episodeId);
-    if ((previous.positionMs - positionMs).abs() <= 1000) return;
+    if ((previous.positionMs - positionMs).abs() <=
+        samePositionTolerance.inMilliseconds) {
+      return;
+    }
     final state = _state(
       episodeId,
       positionMs,
