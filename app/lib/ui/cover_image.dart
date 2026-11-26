@@ -57,7 +57,6 @@ class CoverImage extends ImageProvider<CoverImage> {
 
   static const _maxCacheBytes = 64 * 1024 * 1024;
   static final _downloads = <String, Future<Uint8List>>{};
-  static final _storedUrls = StreamController<String>.broadcast();
   static Future<void> _cacheWrites = Future.value();
 
   final String url;
@@ -74,26 +73,13 @@ class CoverImage extends ImageProvider<CoverImage> {
     }
   }
 
-  static Stream<Uri?> watchArtwork(Episode episode, Podcast? podcast) {
-    final urls = coverUrls(episode, podcast);
-    if (urls.isEmpty) return const Stream.empty();
-    return Stream<String?>.multi((updates) {
-      final writes = _storedUrls.stream
-          .where(urls.contains)
-          .listen(updates.add);
-      updates.onCancel = writes.cancel;
-      updates.add(null);
-    }).asyncMap((_) async {
-      for (final url in urls) {
-        final file = await CoverImage(url)._cacheFile();
-        try {
-          if (file != null && await file.exists()) return file.absolute.uri;
-        } on FileSystemException {
-          continue;
-        }
-      }
-      return null;
-    });
+  static Future<Uri?> artwork(Episode episode, Podcast? podcast) async {
+    for (final url in coverUrls(episode, podcast)) {
+      await prefetch(url);
+      final file = await CoverImage(url)._cacheFile();
+      if (file != null && await file.exists()) return file.uri;
+    }
+    return null;
   }
 
   ResizeImage resized(double side, double devicePixelRatio) {
@@ -205,7 +191,6 @@ class CoverImage extends ImageProvider<CoverImage> {
       await directory.create(recursive: true);
       await pending.writeAsBytes(bytes);
       await pending.rename(file.path);
-      _storedUrls.add(url);
       final cached = <(File, FileStat)>[];
       var total = 0;
       await for (final entry in directory.list(followLinks: false)) {

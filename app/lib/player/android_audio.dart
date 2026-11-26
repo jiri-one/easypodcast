@@ -17,7 +17,7 @@ const androidAudioConfig = AudioServiceConfig(
 
 Future<void> _openAndroidAudio(
   EpisodePlayer player,
-  Stream<Uri?> Function(Episode, Podcast?)? watchArtwork,
+  Future<Uri?> Function(Episode, Podcast?)? artwork,
 ) async {
   await AudioService.init(
     builder: () => EpisodeAudioHandler(
@@ -26,7 +26,7 @@ Future<void> _openAndroidAudio(
       player._downloads,
       player._settings,
       android: true,
-      watchArtwork: watchArtwork,
+      artwork: artwork,
     ),
     config: androidAudioConfig,
   );
@@ -40,13 +40,12 @@ class EpisodeAudioHandler extends BaseAudioHandler {
     this._settings, {
     required this._android,
     String Function()? languageCode,
-    this._watchArtwork,
+    this._artwork,
   }) : _languageCode = languageCode ?? _deviceLanguage {
     _player._mediaChanges.stream.listen(
       _publish,
       onDone: () {
         if (!_android) return;
-        unawaited(_artworkSubscription?.cancel());
         _library.removeListener(_notifyChildrenChanged);
         _downloads.removeListener(_notifyDownloadsChanged);
         unawaited(_childrenChanged.close());
@@ -67,13 +66,12 @@ class EpisodeAudioHandler extends BaseAudioHandler {
   final Settings _settings;
   final bool _android;
   final String Function() _languageCode;
-  final Stream<Uri?> Function(Episode, Podcast?)? _watchArtwork;
+  final Future<Uri?> Function(Episode, Podcast?)? _artwork;
   final _childrenChanged = BehaviorSubject<Map<String, dynamic>>();
   late List<int> _downloadedIds;
   Future<void>? _libraryRefresh;
   int? _preparedEpisodeId;
-  Episode? _artworkEpisode;
-  StreamSubscription<Uri?>? _artworkSubscription;
+  int? _artworkId;
   Uri? _artUri;
 
   static String _deviceLanguage() =>
@@ -328,34 +326,26 @@ class EpisodeAudioHandler extends BaseAudioHandler {
   @override
   Future<void> onTaskRemoved() => _player.reportBeforeBackground();
 
-  void _watchCurrentArtwork(Episode? episode) {
-    final watchArtwork = _watchArtwork;
-    if (!_android ||
-        watchArtwork == null ||
-        identical(_artworkEpisode, episode)) {
-      return;
-    }
-    _artworkEpisode = episode;
+  void _loadArtwork(Episode? episode) {
+    final artwork = _artwork;
+    // The player may swap in a fresh copy of the same episode; keep its cover.
+    if (artwork == null || _artworkId == episode?.id) return;
+    _artworkId = episode?.id;
     _artUri = null;
-    unawaited(_artworkSubscription?.cancel());
-    _artworkSubscription = null;
     if (episode == null) return;
-
     final podcast = _library.podcast(episode.podcastId);
-    _artworkSubscription = watchArtwork(episode, podcast).listen((uri) {
-      if (_player._disposed ||
-          !identical(_player.current, episode) ||
-          uri == _artUri) {
-        return;
-      }
-      _artUri = uri;
-      _publish(false);
-    });
+    background(
+      artwork(episode, podcast).then((uri) {
+        if (_player.current?.id != episode.id) return;
+        _artUri = uri;
+        _publish(false);
+      }),
+    );
   }
 
   void _publish(bool force) {
     final episode = _player.current;
-    _watchCurrentArtwork(episode);
+    _loadArtwork(episode);
     final playing = _player._mediaPlaying;
     final loaded = _player._loaded;
     final engine = _player._engine;

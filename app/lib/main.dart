@@ -27,7 +27,7 @@ Future<void> main() async {
     sync: data.sync,
     downloads: downloads,
     settings: settings,
-    watchArtwork: CoverImage.watchArtwork,
+    artwork: CoverImage.artwork,
   );
   prefetchEpisodeCovers(
     library: data.library,
@@ -86,5 +86,4 @@ void prefetchEpisodeCovers({
   downloads.addListener(downloadsChanged);
   player.addListener(currentChanged);
   downloadsChanged();
-  currentChanged();
 }

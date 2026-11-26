@@ -79,15 +79,6 @@ void main() {
     },
   );
 
-  test(
-    'an episode already playing when listeners attach warms its cover',
-    () async {
-      await services.player.play(_episodeId);
-      listen();
-      expect(fetched, containsAll([_episodeCover, _podcastCover]));
-    },
-  );
-
   test('each new current episode fetches its covers once', () async {
     listen();
     fetched.clear();
@@ -103,9 +94,12 @@ void main() {
 
   group('Android media artwork', () {
     late EpisodeAudioHandler handler;
+    late Completer<http.Response> episodeCover;
+    late List<Future<Uri?>> lookups;
 
     setUp(() async {
-      final parent = await Directory('../.ai').create(recursive: true);
+      final parent = Directory('${Directory.current.parent.path}/.ai');
+      await parent.create(recursive: true);
       final cache = await parent.createTemp('media-art-test-');
       const channel = MethodChannel('plugins.flutter.io/path_provider');
       final messenger = binding.defaultBinaryMessenger;
@@ -114,46 +108,41 @@ void main() {
         messenger.setMockMethodCallHandler(channel, null);
         await cache.delete(recursive: true);
       });
+      episodeCover = Completer();
+      final client = MockClient(
+        (request) async => request.url.toString() == _episodeCover
+            ? await episodeCover.future
+            : http.Response.bytes(_podcastCoverBytes, 200),
+      );
+      lookups = [];
       handler = EpisodeAudioHandler(
         services.player as EpisodePlayer,
         services.library,
         services.downloads,
         services.settings,
         android: true,
-        watchArtwork: CoverImage.watchArtwork,
+        artwork: (episode, podcast) {
+          final lookup = http.runWithClient(
+            () => CoverImage.artwork(episode, podcast),
+            () => client,
+          );
+          lookups.add(lookup);
+          return lookup;
+        },
       );
     });
 
-    Future<Uri> artwork(int episodeId, {Uri? previous}) async {
-      final item = await handler.mediaItem
-          .firstWhere(
-            (item) =>
-                item?.id == 'episode:$episodeId' &&
-                item?.artUri != null &&
-                item?.artUri != previous,
-          )
-          .timeout(const Duration(seconds: 5));
-      return item!.artUri!;
+    Future<List<int>?> shownArt() async {
+      await Future.wait(lookups);
+      final uri = handler.mediaItem.value?.artUri;
+      return uri == null ? null : File.fromUri(uri).readAsBytes();
     }
 
-    test('cached covers appear on the playing item alone', () async {
-      await http.runWithClient(
-        () async {
-          await CoverImage.prefetch(_episodeCover);
-          await CoverImage.prefetch(_podcastCover);
-        },
-        () => MockClient((request) async {
-          final bytes = request.url.toString() == _episodeCover
-              ? _episodeCoverBytes
-              : _podcastCoverBytes;
-          return http.Response.bytes(bytes, 200);
-        }),
-      );
-
+    test('the cover appears on the playing item alone', () async {
+      episodeCover.complete(http.Response.bytes(_episodeCoverBytes, 200));
       await handler.playFromMediaId('episode:$_episodeId');
-      final episodeArt = await artwork(_episodeId);
-      expect(episodeArt.scheme, 'file');
-      expect(await File.fromUri(episodeArt).readAsBytes(), _episodeCoverBytes);
+      expect(await shownArt(), _episodeCoverBytes);
+      expect(handler.mediaItem.value?.artUri?.scheme, 'file');
       final browsed = await handler.getChildren('podcast:1');
       expect(
         browsed.singleWhere((item) => item.id == 'episode:$_episodeId').artUri,
@@ -165,57 +154,34 @@ void main() {
       );
 
       await handler.playFromMediaId('episode:$_noCoverId');
-      final podcastArt = await artwork(_noCoverId);
-      expect(podcastArt.scheme, 'file');
-      expect(await File.fromUri(podcastArt).readAsBytes(), _podcastCoverBytes);
+      expect(handler.mediaItem.value?.artUri, isNull);
+      expect(await shownArt(), _podcastCoverBytes);
     });
 
-    test('playback starts before uncached artwork is ready', () async {
-      final episodeResponse = Completer<http.Response>();
-      final podcastResponse = Completer<http.Response>();
-      final prefetches = <Future<void>>[];
-      await http.runWithClient(
-        () async {
-          prefetchEpisodeCovers(
-            library: services.library,
-            downloads: services.downloads,
-            player: services.player,
-            fetch: (url) {
-              final prefetch = CoverImage.prefetch(url);
-              prefetches.add(prefetch);
-              return prefetch;
-            },
-          );
-          await handler.playFromMediaId('episode:$_episodeId');
-          expect(services.player.isPlaying, isTrue);
-          expect(handler.mediaItem.value?.id, 'episode:$_episodeId');
-          expect(handler.mediaItem.value?.artUri, isNull);
+    for (final (status, shown) in [
+      (200, _episodeCoverBytes),
+      (404, _podcastCoverBytes),
+    ]) {
+      test('playback starts before the cover is fetched, '
+          'episode cover $status', () async {
+        await handler.playFromMediaId('episode:$_episodeId');
+        expect(services.player.isPlaying, isTrue);
+        expect(handler.mediaItem.value?.id, 'episode:$_episodeId');
+        expect(handler.mediaItem.value?.artUri, isNull);
 
-          podcastResponse.complete(
-            http.Response.bytes(_podcastCoverBytes, 200),
-          );
-          final fallback = await artwork(_episodeId);
-          expect(
-            await File.fromUri(fallback).readAsBytes(),
-            _podcastCoverBytes,
-          );
+        episodeCover.complete(http.Response.bytes(_episodeCoverBytes, status));
+        expect(await shownArt(), shown);
+      });
+    }
 
-          episodeResponse.complete(
-            http.Response.bytes(_episodeCoverBytes, 200),
-          );
-          final preferred = await artwork(_episodeId, previous: fallback);
-          expect(
-            await File.fromUri(preferred).readAsBytes(),
-            _episodeCoverBytes,
-          );
-          await Future.wait(prefetches);
-        },
-        () => MockClient(
-          (request) => request.url.toString() == _episodeCover
-              ? episodeResponse.future
-              : podcastResponse.future,
-        ),
-      );
+    test('a cover fetched after a switch stays off the next episode', () async {
+      await handler.playFromMediaId('episode:$_episodeId');
+      await handler.playFromMediaId('episode:$_noCoverId');
+      await lookups.last;
+
+      episodeCover.complete(http.Response.bytes(_episodeCoverBytes, 200));
+      expect(await shownArt(), _podcastCoverBytes);
+      expect(handler.mediaItem.value?.id, 'episode:$_noCoverId');
     });
   });
 }

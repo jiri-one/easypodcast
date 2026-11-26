@@ -33,7 +33,7 @@ Future<PlayerController> openPlayer({
   required SyncService sync,
   required DownloadService downloads,
   required Settings settings,
-  Stream<Uri?> Function(Episode, Podcast?)? watchArtwork,
+  Future<Uri?> Function(Episode, Podcast?)? artwork,
 }) async {
   if (Platform.isLinux) {
     JustAudioMediaKit.ensureInitialized();
@@ -48,7 +48,7 @@ Future<PlayerController> openPlayer({
   );
   try {
     if (Platform.isAndroid) {
-      await _openAndroidAudio(controller, watchArtwork);
+      await _openAndroidAudio(controller, artwork);
     } else if (Platform.isLinux) {
       await connectMpris(controller);
     }

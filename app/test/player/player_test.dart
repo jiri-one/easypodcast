@@ -990,6 +990,11 @@ void main() {
     });
   });
 
+  test('Android decodes notification artwork at a reduced size', () {
+    expect(androidAudioConfig.artDownscaleWidth, 256);
+    expect(androidAudioConfig.artDownscaleHeight, 256);
+  });
+
   testWidgets('Linux MPRIS publishes advancing position for relative seek', (
     tester,
   ) async {
