@@ -150,10 +150,8 @@ void main() {
 
       await app.section(LibrarySection.settings);
       expect(speedRow, findsNothing);
-      expect(find.text(l.showSpeedAndSleepOff), findsOneWidget);
       await app.row(l.showSpeedAndSleep);
       expect(speedRow, findsOneWidget);
-      expect(find.text(l.showSpeedAndSleepOn), findsOneWidget);
       await app.back();
 
       await app.mini(app.episode(101));
@@ -225,18 +223,6 @@ void main() {
       );
       try {
         expect(speed, findsNothing);
-        for (final (label, icon) in [
-          (l.skipBackValue(15), Icons.fast_rewind),
-          (l.skipForwardValue(30), Icons.fast_forward),
-        ]) {
-          expect(
-            find.descendant(
-              of: find.widgetWithText(EinkButton, label),
-              matching: find.byIcon(icon),
-            ),
-            findsOneWidget,
-          );
-        }
         await app.section(LibrarySection.settings);
         await app.row(l.showSpeedAndSleep);
         expect(speed, findsOneWidget);

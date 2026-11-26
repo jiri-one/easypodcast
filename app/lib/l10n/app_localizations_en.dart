@@ -441,13 +441,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get continueQueueOff => 'Playback stops when the episode ends.';
 
   @override
-  String get showSpeedAndSleep => 'Speed and sleep timer';
-
-  @override
-  String get showSpeedAndSleepOn => 'Controls are visible.';
-
-  @override
-  String get showSpeedAndSleepOff => 'Controls are hidden.';
+  String get showSpeedAndSleep => 'Show speed and sleep timer';
 
   @override
   String get skipBack => 'Skip back';

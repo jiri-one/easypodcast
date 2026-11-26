@@ -221,12 +221,6 @@ class PlayerPage extends StatelessWidget {
     final covers = _coverUrls(episode, podcast);
     final playing = playback.playing(episode.id);
     final playText = playLabel(context, playback, episode);
-    final playLabels = [
-      strings.play,
-      strings.pause,
-      strings.checkingPosition,
-      strings.loadingPlayback,
-    ];
     final player = services.player;
     final sleepEnd = player.sleepDeadline;
     final sleepOn = player.sleepAtEndOfEpisode || sleepEnd != null;
@@ -261,7 +255,8 @@ class PlayerPage extends StatelessWidget {
             Expanded(
               flex: 3,
               child: _SkipControl(
-                seconds: -settings.skipBackSeconds,
+                icon: Icons.fast_rewind,
+                label: strings.skipBackValue(settings.skipBackSeconds),
                 onPressed: playback.skipBack,
               ),
             ),
@@ -289,9 +284,14 @@ class PlayerPage extends StatelessWidget {
                   ExcludeSemantics(
                     child: IndexedStack(
                       alignment: Alignment.topCenter,
-                      index: playLabels.indexOf(playText),
                       children: [
-                        for (final label in playLabels)
+                        for (final label in {
+                          playText,
+                          strings.play,
+                          strings.pause,
+                          strings.checkingPosition,
+                          strings.loadingPlayback,
+                        })
                           Text(
                             label,
                             textAlign: TextAlign.center,
@@ -306,7 +306,8 @@ class PlayerPage extends StatelessWidget {
             Expanded(
               flex: 3,
               child: _SkipControl(
-                seconds: settings.skipForwardSeconds,
+                icon: Icons.fast_forward,
+                label: strings.skipForwardValue(settings.skipForwardSeconds),
                 onPressed: playback.skipForward,
               ),
             ),
@@ -422,15 +423,18 @@ class _PlayerCover extends StatelessWidget {
 }
 
 class _SkipControl extends StatelessWidget {
-  const _SkipControl({required this.seconds, required this.onPressed});
+  const _SkipControl({
+    required this.icon,
+    required this.label,
+    required this.onPressed,
+  });
 
-  final int seconds;
+  final IconData icon;
+  final String label;
   final VoidCallback onPressed;
 
   @override
   Widget build(BuildContext context) {
-    final quickBack = seconds < 0;
-    final strings = context.strings;
     return TextButton(
       onPressed: onPressed,
       style: const ButtonStyle(
@@ -445,23 +449,13 @@ class _SkipControl extends StatelessWidget {
             dimension: _playControlSize,
             child: Container(
               margin: const EdgeInsets.all(8),
-              alignment: Alignment.center,
               decoration: const ShapeDecoration(
                 shape: CircleBorder(side: BorderSide(width: 2)),
               ),
-              child: Icon(
-                quickBack ? Icons.fast_rewind : Icons.fast_forward,
-                size: 30,
-              ),
+              child: Icon(icon, size: 30),
             ),
           ),
-          Text(
-            quickBack
-                ? strings.skipBackValue(-seconds)
-                : strings.skipForwardValue(seconds),
-            textAlign: TextAlign.center,
-            style: buttonLabelStyle,
-          ),
+          Text(label, textAlign: TextAlign.center, style: buttonLabelStyle),
         ],
       ),
     );
@@ -571,12 +565,14 @@ class DesktopPlayer extends StatelessWidget {
       ),
     ];
     final speedButton = settings.showSpeedAndSleep
-        ? EinkButton(
-            strings.desktopSpeed(
-              speedText(strings, playback.services.player.speed),
+        ? Expanded(
+            child: EinkButton(
+              strings.desktopSpeed(
+                speedText(strings, playback.services.player.speed),
+              ),
+              minHeight: 56,
+              onPressed: () => showSpeedChoices(context, playback),
             ),
-            minHeight: 56,
-            onPressed: () => showSpeedChoices(context, playback),
           )
         : null;
     final heading = Row(
@@ -661,8 +657,7 @@ class DesktopPlayer extends StatelessWidget {
                           children: [
                             for (final button in buttons)
                               Expanded(child: button),
-                            if (speedButton != null)
-                              Expanded(child: speedButton),
+                            ?speedButton,
                           ],
                         ),
                       ],
@@ -673,7 +668,7 @@ class DesktopPlayer extends StatelessWidget {
                     children: [
                       for (final button in buttons) Expanded(child: button),
                       Expanded(flex: 3, child: heading),
-                      if (speedButton != null) Expanded(child: speedButton),
+                      ?speedButton,
                     ],
                   );
                 },

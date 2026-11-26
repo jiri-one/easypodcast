@@ -441,13 +441,7 @@ class AppLocalizationsCs extends AppLocalizations {
   String get continueQueueOff => 'Po dohrání se přehrávání zastaví.';
 
   @override
-  String get showSpeedAndSleep => 'Rychlost a časovač spánku';
-
-  @override
-  String get showSpeedAndSleepOn => 'Ovládání je vidět.';
-
-  @override
-  String get showSpeedAndSleepOff => 'Ovládání je skryté.';
+  String get showSpeedAndSleep => 'Zobrazit rychlost a časovač spánku';
 
   @override
   String get skipBack => 'Skok zpět';

@@ -76,15 +76,11 @@ class SettingsPage extends StatelessWidget {
         ),
         _ToggleRow(
           title: strings.showSpeedAndSleep,
-          description: settings.showSpeedAndSleep
-              ? strings.showSpeedAndSleepOn
-              : strings.showSpeedAndSleepOff,
           value: settings.showSpeedAndSleep,
           onPressed: () {
+            // A hidden sleep timer would stop playback with nothing on screen.
+            if (settings.showSpeedAndSleep) services.player.setSleepTimer(null);
             settings.showSpeedAndSleep = !settings.showSpeedAndSleep;
-            if (!settings.showSpeedAndSleep) {
-              services.player.setSleepTimer(null);
-            }
           },
         ),
         if (settings.showSpeedAndSleep)
