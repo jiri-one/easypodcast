@@ -13,28 +13,33 @@ import 'package:path/path.dart' as path;
 void main() {
   final binding = TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('prefetch stores the raw bytes and skips a cached cover', () async {
-    final cache = await _coverCache(binding);
-    const url = 'https://podcast.example/episode.png';
-    const bytes = [1, 2, 3];
-    var requests = 0;
-    await http.runWithClient(
-      () async {
-        await CoverImage.prefetch(url);
-        final file = await cache.list().single as File;
-        expect(await file.readAsBytes(), bytes);
-        await file.setLastModified(DateTime.utc(2025));
-        final modified = await file.lastModified();
-        await CoverImage.prefetch(url);
-        expect(await file.lastModified(), modified);
-      },
-      () => MockClient((_) async {
-        requests++;
-        return http.Response.bytes(bytes, 200);
-      }),
-    );
-    expect(requests, 1);
-  });
+  test(
+    'prefetch stores the raw bytes and only touches a cached cover',
+    () async {
+      final cache = await _coverCache(binding);
+      const url = 'https://podcast.example/episode.png';
+      const bytes = [1, 2, 3];
+      var requests = 0;
+      await http.runWithClient(
+        () async {
+          await CoverImage.prefetch(url);
+          final file = await cache.list().single as File;
+          expect(await file.readAsBytes(), bytes);
+          await file.setLastModified(DateTime.utc(2025));
+          await CoverImage.prefetch(url);
+          expect(
+            (await file.lastModified()).isAfter(DateTime.utc(2025, 2)),
+            isTrue,
+          );
+        },
+        () => MockClient((_) async {
+          requests++;
+          return http.Response.bytes(bytes, 200);
+        }),
+      );
+      expect(requests, 1);
+    },
+  );
 
   test('prefetch ignores an address that the HTTP client rejects', () async {
     await _coverCache(binding);

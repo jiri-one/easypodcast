@@ -58,11 +58,11 @@ void prefetchEpisodeCovers({
 }) {
   void prefetch(Episode? episode) {
     if (episode == null) return;
-    final url = coverUrls(
-      episode,
-      library.podcast(episode.podcastId),
-    ).firstOrNull;
-    if (url != null) unawaited(fetch(url));
+    // The podcast's cover too: the player falls back to it when the
+    // episode's own image fails.
+    for (final url in coverUrls(episode, library.podcast(episode.podcastId))) {
+      unawaited(fetch(url));
+    }
   }
 
   var downloaded = <int>{};

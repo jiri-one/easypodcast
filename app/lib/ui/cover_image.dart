@@ -1,15 +1,16 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
-
-import '../core/models.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
+
+import '../core/models.dart';
 
 const coverGrayscale = ui.ColorFilter.matrix([
   0.2126,
@@ -39,7 +40,7 @@ String? validCoverUrl(String? url) {
   if (trimmed == null) return null;
   final uri = Uri.tryParse(trimmed);
   return uri != null &&
-          uri.hasAuthority &&
+          uri.host.isNotEmpty &&
           (uri.scheme == 'https' || uri.scheme == 'http')
       ? trimmed
       : null;
@@ -64,7 +65,8 @@ class CoverImage extends ImageProvider<CoverImage> {
     final cover = CoverImage(url);
     try {
       final file = await cover._cacheFile();
-      if (file == null || await file.exists()) return;
+      if (file == null) return;
+      if (await file.exists()) return await _touch(file);
       await cover._cache(file, await cover._sharedDownload());
     } on Object {
       // Artwork is optional.
@@ -93,7 +95,9 @@ class CoverImage extends ImageProvider<CoverImage> {
     final file = await _cacheFile();
     if (file != null) {
       try {
-        return await _decode(await file.readAsBytes(), decode);
+        final image = await _decode(await file.readAsBytes(), decode);
+        unawaited(_touch(file));
+        return image;
       } on Exception {
         // The cache can be cleared while an image is loading.
       }
@@ -102,6 +106,15 @@ class CoverImage extends ImageProvider<CoverImage> {
     final image = await _decode(bytes, decode);
     await _cache(file, bytes);
     return image;
+  }
+
+  // Eviction drops the oldest files first, so use counts as a write.
+  static Future<void> _touch(File file) async {
+    try {
+      await file.setLastModified(DateTime.now());
+    } on FileSystemException {
+      // The cache can be cleared at any time.
+    }
   }
 
   // A prefetch and a display that overlap share one request.

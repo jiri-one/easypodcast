@@ -43,7 +43,7 @@ void main() {
     fetch: (url) async => fetched.add(url),
   );
 
-  test('a finished download fetches the cover the player shows', () async {
+  test('a finished download fetches the covers the player can show', () async {
     listen();
     fetched.clear();
     final downloads = services.downloads as DemoDownloadService;
@@ -55,9 +55,9 @@ void main() {
     expect(fetched, isEmpty);
 
     await downloads.download(_episodeId);
-    expect(fetched, [_episodeCover]);
-    await downloads.download(_noCoverId);
     expect(fetched, [_episodeCover, _podcastCover]);
+    await downloads.download(_noCoverId);
+    expect(fetched, [_episodeCover, _podcastCover, _podcastCover]);
   });
 
   test(
@@ -69,17 +69,17 @@ void main() {
     },
   );
 
-  test('each new current episode fetches its cover once', () async {
+  test('each new current episode fetches its covers once', () async {
     listen();
     fetched.clear();
     final player = services.player;
     await player.play(_episodeId);
     await player.pause();
     await player.resume();
-    expect(fetched, [_episodeCover]);
+    expect(fetched, [_episodeCover, _podcastCover]);
 
     await player.play(_noCoverId);
-    expect(fetched, [_episodeCover, _podcastCover]);
+    expect(fetched, [_episodeCover, _podcastCover, _podcastCover]);
   });
 }
 
