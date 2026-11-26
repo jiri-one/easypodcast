@@ -182,6 +182,7 @@ class FakeApiClient implements HttpApiClient {
   Duration? episodeStateTimeout;
   Future<void> Function()? beforeStateReply;
   Future<void> Function()? beforePodcasts;
+  Future<void> Function()? beforePodcastsReply;
   Future<void> Function(int)? beforeEpisodes;
   Future<void> Function(int)? beforeEpisode;
   Future<void> Function()? beforePush;
@@ -257,8 +258,15 @@ class FakeApiClient implements HttpApiClient {
     final list = server.listPodcasts();
     final tag = _tag([
       for (final p in list)
-        [p.id, p.episodesVersion, p.subscribed, p.playedCount],
+        [
+          p.id,
+          p.episodesVersion,
+          p.subscribed,
+          p.playedCount,
+          p.showInNewEpisodes,
+        ],
     ]);
+    await _wait(beforePodcastsReply?.call(), timeout);
     if (tag == ifNoneMatch) return null;
     return Fetched(list, tag);
   }
@@ -275,6 +283,26 @@ class FakeApiClient implements HttpApiClient {
   Future<void> unsubscribe(int podcastId, {Duration? timeout}) async {
     _check();
     server.setSubscribed(podcastId, false);
+  }
+
+  @override
+  Future<void> setNewEpisodesVisibility(
+    int podcastId,
+    bool show, {
+    String? serverId,
+    Duration? timeout,
+  }) async {
+    _check();
+    if (serverId != null && serverId != server.serverId) {
+      throw ApiException(
+        409,
+        'server identity changed',
+        serverId: server.serverId,
+      );
+    }
+    final podcast = server._podcasts[podcastId];
+    if (podcast == null) throw ApiException(404, 'not found');
+    server._podcasts[podcastId] = podcast.copyWith(showInNewEpisodes: show);
   }
 
   @override

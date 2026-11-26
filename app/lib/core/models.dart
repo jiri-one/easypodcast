@@ -44,6 +44,7 @@ class Podcast {
     this.imageUrl,
     this.link,
     this.subscribed = true,
+    this.showInNewEpisodes = true,
     this.episodeCount = 0,
     this.playedCount = 0,
     this.episodesVersion = '',
@@ -59,6 +60,7 @@ class Podcast {
   final String? imageUrl;
   final String? link;
   final bool subscribed;
+  final bool showInNewEpisodes;
   final int episodeCount;
   final int playedCount;
   final String episodesVersion;
@@ -74,6 +76,7 @@ class Podcast {
     imageUrl: json['image_url'] as String?,
     link: json['link'] as String?,
     subscribed: json['subscribed'] as bool? ?? false,
+    showInNewEpisodes: json['show_in_new_episodes'] as bool? ?? true,
     episodeCount: json['episode_count'] as int? ?? 0,
     playedCount: json['played_count'] as int? ?? 0,
     episodesVersion: json['episodes_version'] as String? ?? '',
@@ -84,6 +87,7 @@ class Podcast {
   Podcast copyWith({
     String? title,
     bool? subscribed,
+    bool? showInNewEpisodes,
     int? episodeCount,
     int? playedCount,
     String? episodesVersion,
@@ -97,6 +101,7 @@ class Podcast {
     imageUrl: imageUrl,
     link: link,
     subscribed: subscribed ?? this.subscribed,
+    showInNewEpisodes: showInNewEpisodes ?? this.showInNewEpisodes,
     episodeCount: episodeCount ?? this.episodeCount,
     playedCount: playedCount ?? this.playedCount,
     episodesVersion: episodesVersion ?? this.episodesVersion,

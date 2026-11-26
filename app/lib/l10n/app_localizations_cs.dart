@@ -354,6 +354,9 @@ class AppLocalizationsCs extends AppLocalizations {
   String get aboutPodcast => 'O podcastu';
 
   @override
+  String get showInNewEpisodes => 'Zobrazovat v Nových dílech';
+
+  @override
   String get unsubscribe => 'Zrušit odběr';
 
   @override

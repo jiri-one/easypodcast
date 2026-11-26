@@ -106,6 +106,13 @@ abstract interface class ApiClient {
 
   Future<void> unsubscribe(int podcastId, {Duration? timeout});
 
+  Future<void> setNewEpisodesVisibility(
+    int podcastId,
+    bool show, {
+    String? serverId,
+    Duration? timeout,
+  });
+
   /// Null means not modified since [ifNoneMatch].
   Future<Fetched<List<Episode>>?> episodes(
     int podcastId, {

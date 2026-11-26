@@ -27,6 +27,7 @@ class SqfliteLibrary extends Library {
   final _finished = StreamController<int>.broadcast();
 
   final Map<int, Podcast> _podcasts = {};
+  final Map<int, bool> _pendingNewEpisodes = {};
   final Map<int, List<Episode>> _episodesByPodcast = {};
   final Map<int, Episode> _episodes = {};
   final Map<int, EpisodeState> _states = {};
@@ -53,6 +54,9 @@ class SqfliteLibrary extends Library {
     _podcasts
       ..clear()
       ..addAll({for (final p in snapshot.podcasts) p.id: p});
+    _pendingNewEpisodes
+      ..clear()
+      ..addAll(snapshot.pendingNewEpisodes);
     _episodes.clear();
     _episodesByPodcast.clear();
     for (final e in snapshot.episodes) {
@@ -110,7 +114,7 @@ class SqfliteLibrary extends Library {
   List<Podcast> _sortedPodcasts() {
     final list = [
       for (final p in _podcasts.values)
-        if (p.subscribed) _withPlayedCount(p),
+        if (p.subscribed) _podcastView(p),
     ];
     list.sort((a, b) {
       final byPlayed = b.playedCount.compareTo(a.playedCount);
@@ -121,19 +125,23 @@ class SqfliteLibrary extends Library {
     return List.unmodifiable(list);
   }
 
-  /// The local count includes plays not yet reflected in the server's podcast list.
-  Podcast _withPlayedCount(Podcast p) {
-    final localPlayed = (_playedCounts ??= _computePlayedCounts())[p.id] ?? 0;
-    if (!_episodeLists.containsKey(p.id) || localPlayed == p.playedCount) {
+  bool _showInNewEpisodes(Podcast p) =>
+      _pendingNewEpisodes[p.id] ?? p.showInNewEpisodes;
+
+  Podcast _podcastView(Podcast p) {
+    final show = _showInNewEpisodes(p);
+    final played = _episodeLists.containsKey(p.id)
+        ? (_playedCounts ??= _computePlayedCounts())[p.id] ?? 0
+        : p.playedCount;
+    if (show == p.showInNewEpisodes && played == p.playedCount) {
       return p;
     }
-    return p.copyWith(playedCount: localPlayed);
+    return p.copyWith(playedCount: played, showInNewEpisodes: show);
   }
 
   @override
-  Podcast? podcast(int podcastId) => _podcasts[podcastId] == null
-      ? null
-      : _withPlayedCount(_podcasts[podcastId]!);
+  Podcast? podcast(int podcastId) =>
+      _podcasts[podcastId] == null ? null : _podcastView(_podcasts[podcastId]!);
 
   @override
   List<Episode> episodesOf(int podcastId) =>
@@ -217,7 +225,7 @@ class SqfliteLibrary extends Library {
     final fresh =
         [
           for (final podcast in _podcasts.values)
-            if (podcast.subscribed)
+            if (podcast.subscribed && _showInNewEpisodes(podcast))
               for (final e
                   in _episodesByPodcast[podcast.id] ?? const <Episode>[])
                 if (!e.removedFromFeed &&
@@ -262,8 +270,8 @@ class SqfliteLibrary extends Library {
 
   @override
   Future<Podcast> subscribe(String feedUrl) async {
-    final podcast = await _api.subscribe(feedUrl);
-    await _store.upsertPodcast(podcast);
+    final subscription = await _api.subscribe(feedUrl);
+    final podcast = await _store.saveSubscription(subscription);
     _podcasts[podcast.id] = podcast;
     _changed();
     try {
@@ -277,11 +285,44 @@ class SqfliteLibrary extends Library {
   @override
   Future<void> unsubscribe(int podcastId) async {
     await _api.unsubscribe(podcastId);
+    await _store.saveUnsubscribe(podcastId);
     final p = _podcasts[podcastId];
     if (p == null) return;
-    final updated = p.copyWith(subscribed: false);
-    await _store.upsertPodcast(updated);
-    _podcasts[podcastId] = updated;
+    _podcasts[podcastId] = p.copyWith(subscribed: false);
+    _changed();
+  }
+
+  @override
+  Future<void> setNewEpisodesVisibility(int podcastId, bool show) async {
+    if (_clearing || !_podcasts.containsKey(podcastId)) return;
+    await _store.queueNewEpisodesChange(podcastId, show);
+    if (_clearing) return;
+    _pendingNewEpisodes[podcastId] = show;
+    _changed();
+    requestPendingSend();
+  }
+
+  MapEntry<int, bool>? get pendingNewEpisodesChange =>
+      _pendingNewEpisodes.entries.firstOrNull;
+
+  Future<void> completeNewEpisodesChange(
+    int podcastId,
+    bool show, {
+    required bool applied,
+  }) async {
+    final removed = await _store.completeNewEpisodesChange(
+      podcastId,
+      show,
+      applied: applied,
+    );
+    if (_clearing) return;
+    if (removed && _pendingNewEpisodes[podcastId] == show) {
+      _pendingNewEpisodes.remove(podcastId);
+    }
+    final podcast = _podcasts[podcastId];
+    if (applied && podcast != null) {
+      _podcasts[podcastId] = podcast.copyWith(showInNewEpisodes: show);
+    }
     _changed();
   }
 
@@ -577,11 +618,11 @@ class SqfliteLibrary extends Library {
     onPendingSend?.call(force: forceSend);
   }
 
-  int get pendingCount => _pending.length;
+  int get pendingCount => _pending.length + _pendingNewEpisodes.length;
 
-  bool get hasPending => _pending.isNotEmpty;
+  bool get hasPending => pendingCount != 0;
   bool get hasClockRejections => _clockRejections.isNotEmpty;
-  bool get hasUnrejectedPending => _pending.length > _clockRejections.length;
+  bool get hasUnrejectedPending => pendingCount > _clockRejections.length;
 
   bool _repairTime(int? id, DateTime now) {
     if (!now.isBefore(_clockRejections[id]!)) return false;

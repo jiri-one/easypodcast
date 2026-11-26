@@ -71,6 +71,7 @@ void main() {
       expect(fetched!.etag, '"t1"');
       final p = fetched.value.single;
       expect(p.title, 'Kaktusy a lidé');
+      expect(p.showInNewEpisodes, isTrue);
       expect(p.playedCount, 4);
       expect(p.lastSuccessAt, DateTime.utc(2026, 11, 26, 14, 3, 7, 120));
     },

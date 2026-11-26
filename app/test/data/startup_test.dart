@@ -40,12 +40,29 @@ void main() {
               published_at INTEGER, duration_s INTEGER, enclosure_type TEXT,
               enclosure_length INTEGER, link TEXT, image_url TEXT,
               removed_from_feed INTEGER NOT NULL)''');
+            await db.execute('''CREATE TABLE podcasts (
+              id INTEGER PRIMARY KEY, feed_url TEXT NOT NULL, title TEXT NOT NULL,
+              author TEXT NOT NULL, description TEXT NOT NULL, image_url TEXT, link TEXT,
+              subscribed INTEGER NOT NULL, episode_count INTEGER NOT NULL,
+              played_count INTEGER NOT NULL, episodes_version TEXT NOT NULL,
+              last_success_at INTEGER, last_error TEXT)''');
             await LocalStore.createSchema(db);
           },
         ),
       );
       final at = DateTime.utc(2026, 11, 26);
       try {
+        await legacy.insert('podcasts', {
+          'id': 3,
+          'feed_url': 'https://example.test/feed.xml',
+          'title': 'Saved podcast',
+          'author': '',
+          'description': '',
+          'subscribed': 1,
+          'episode_count': 1,
+          'played_count': 0,
+          'episodes_version': 'legacy',
+        });
         await legacy.insert('episodes', {
           'id': 7,
           'podcast_id': 3,
@@ -77,6 +94,7 @@ void main() {
       final store = LocalStore(db);
       expect(await store.description(7), (text: 'Saved notes', version: null));
       final snapshot = await store.load();
+      expect(snapshot.podcasts.single.showInNewEpisodes, isTrue);
       final episode = snapshot.episodes.single;
       expect(
         (

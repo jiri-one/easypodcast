@@ -396,6 +396,19 @@ class _AboutPodcastPageState extends State<AboutPodcastPage>
   String? _error;
   bool? _subscribing;
 
+  Future<void> _changeNewEpisodesVisibility() => guardAction(() async {
+    final podcast = widget.podcast;
+    if (_error != null) setState(() => _error = null);
+    try {
+      await widget.services.library.setNewEpisodesVisibility(
+        podcast.id,
+        !podcast.showInNewEpisodes,
+      );
+    } on Exception catch (error) {
+      if (mounted) setState(() => _error = actionError(context, error));
+    }
+  });
+
   Future<void> _changeSubscription() => guardAction(() async {
     final podcast = widget.podcast;
     final strings = context.strings;
@@ -458,6 +471,11 @@ class _AboutPodcastPageState extends State<AboutPodcastPage>
         ),
         if (_error case final error?) EinkError(error, inset: true),
         if (!podcast.subscribed) PageMessage(strings.notSubscribed),
+        _ToggleRow(
+          title: strings.showInNewEpisodes,
+          value: podcast.showInNewEpisodes,
+          onPressed: _changeNewEpisodesVisibility,
+        ),
       ],
     );
   }

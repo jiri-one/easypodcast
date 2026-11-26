@@ -122,7 +122,7 @@ type scanner interface {
 }
 
 const podcastSelect = `SELECT p.id, p.feed_url, p.title, p.author, p.description, p.image_url, p.link,
-	p.subscribed, counts.total, counts.played, p.episodes_version::text, p.last_success_at, p.last_error
+	p.subscribed, p.show_in_new_episodes, counts.total, counts.played, p.episodes_version::text, p.last_success_at, p.last_error
 	FROM podcasts p
 	CROSS JOIN LATERAL (
 		SELECT count(*) AS total, count(*) FILTER (WHERE es.status = 'played') AS played,
@@ -135,7 +135,7 @@ func scanPodcast(row scanner) (podcast, error) {
 	var p podcast
 	var success *time.Time
 	err := row.Scan(&p.ID, &p.FeedURL, &p.Title, &p.Author, &p.Description, &p.ImageURL, &p.Link,
-		&p.Subscribed, &p.EpisodeCount, &p.PlayedCount, &p.EpisodesVersion, &success, &p.LastError)
+		&p.Subscribed, &p.ShowInNewEpisodes, &p.EpisodeCount, &p.PlayedCount, &p.EpisodesVersion, &success, &p.LastError)
 	p.LastSuccessAt = nullableTimestamp(success)
 	return p, err
 }
@@ -172,6 +172,26 @@ func (s store) unsubscribe(ctx context.Context, id int64) error {
 		return pgx.ErrNoRows
 	}
 	return err
+}
+
+func (s store) setNewEpisodesVisibility(ctx context.Context, id int64, show bool, expectedServerID *string) (string, error) {
+	var serverID string
+	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		revision, err := scanStateRevision(tx.QueryRow(ctx, stateRevisionSQL+" FOR SHARE"))
+		if err != nil {
+			return err
+		}
+		serverID = revision.ServerID
+		if expectedServerID != nil && *expectedServerID != serverID {
+			return errServerIDChanged
+		}
+		tag, err := tx.Exec(ctx, "UPDATE podcasts SET show_in_new_episodes = $2 WHERE id = $1", id, show)
+		if err == nil && tag.RowsAffected() == 0 {
+			return pgx.ErrNoRows
+		}
+		return err
+	})
+	return serverID, err
 }
 
 const episodeColumns = `id, podcast_id, guid, title, published_at, duration_s, enclosure_url,

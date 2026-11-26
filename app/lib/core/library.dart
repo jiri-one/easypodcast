@@ -57,7 +57,7 @@ abstract class Library extends ChangeNotifier {
   Future<Episode?> resolveQueueEpisode(int episodeId) async =>
       episode(episodeId);
 
-  /// New episodes of subscribed podcasts, newest first.
+  /// New episodes of subscribed podcasts shown in New episodes, newest first.
   List<Episode> newEpisodes({required DateTime since});
 
   /// Ids of episodes that just became played or dismissed, locally or from another device.
@@ -69,6 +69,8 @@ abstract class Library extends ChangeNotifier {
   Future<Podcast> subscribe(String feedUrl);
 
   Future<void> unsubscribe(int podcastId);
+
+  Future<void> setNewEpisodesVisibility(int podcastId, bool show);
 
   /// Turns a played or dismissed episode back into a fresh one and returns where to start.
   Future<Duration> prepareForPlayback(int episodeId);

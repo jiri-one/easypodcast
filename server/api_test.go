@@ -85,6 +85,7 @@ func TestHTTPAPI(t *testing.T) {
 		t.Fatal(got)
 	}
 	call("GET", "/api/podcasts", "", "", "", 401)
+	call("PUT", "/api/podcasts/1/new-episodes", `{"show":false}`, "", "", 401)
 	for range 5 {
 		call("POST", "/api/login", `{"username":"listener","password":"wrong","device_name":"Test"}`, "", "", 401)
 	}
@@ -125,7 +126,7 @@ func TestHTTPAPI(t *testing.T) {
 	}
 	input := fmt.Sprintf(`{"feed_url":%q}`, feeds.URL+"/old")
 	p := response[podcast](t, call("POST", "/api/podcasts", input, "", "", 201))
-	if p.EpisodeCount != 2 || p.FeedURL != feeds.URL+"/feeds/cloudberry.xml" {
+	if p.EpisodeCount != 2 || p.FeedURL != feeds.URL+"/feeds/cloudberry.xml" || !p.ShowInNewEpisodes {
 		t.Fatal(p)
 	}
 	call("POST", "/api/podcasts", input, "", "", 200)
@@ -133,8 +134,23 @@ func TestHTTPAPI(t *testing.T) {
 		t.Fatal("existing subscription triggered a fetch")
 	}
 	list := call("GET", "/api/podcasts", "", "", "", 200)
-	call("GET", "/api/podcasts", "", "W/"+list.Header().Get("ETag"), "", 304)
+	podcastsTag := list.Header().Get("ETag")
+	call("GET", "/api/podcasts", "", "W/"+podcastsTag, "", 304)
 	podcastPath := fmt.Sprintf("/api/podcasts/%d", p.ID)
+	visibilityPath := podcastPath + "/new-episodes"
+	call("PUT", "/api/podcasts/999999/new-episodes", `{"show":false}`, "", "", 404)
+	call("PUT", visibilityPath, `{"show":null}`, "", "", 400)
+	call("PUT", visibilityPath, fmt.Sprintf(`{"show":false,"server_id":%q}`, tokens.ServerID), "", "", 204)
+	updatedList := call("GET", "/api/podcasts", "", podcastsTag, "", 200)
+	if updated := response[[]podcast](t, updatedList); len(updated) != 1 || updated[0].ShowInNewEpisodes ||
+		updated[0].EpisodesVersion != p.EpisodesVersion || updatedList.Header().Get("ETag") == podcastsTag {
+		t.Fatalf("preference did not update the podcast list: %+v", updated)
+	}
+	conflict := call("PUT", visibilityPath, `{"show":true,"server_id":"old-id"}`, "", "", 409)
+	if response[map[string]string](t, conflict)["server_id"] != tokens.ServerID {
+		t.Fatal("preference conflict did not return the current server ID")
+	}
+	call("GET", "/api/podcasts", "", updatedList.Header().Get("ETag"), "", 304)
 	episodePath := podcastPath + "/episodes"
 	list = call("GET", episodePath, "", "", "", 200)
 	originalTag := list.Header().Get("ETag")
@@ -159,7 +175,10 @@ func TestHTTPAPI(t *testing.T) {
 	if urls, err := parseOPML(call("GET", "/api/opml", "", "", "", 200).Body); err != nil || len(urls) != 0 {
 		t.Fatalf("unsubscribed podcast was exported: %v, %v", urls, err)
 	}
-	call("POST", "/api/podcasts", input, "", "", 200)
+	resubscribed := response[podcast](t, call("POST", "/api/podcasts", input, "", "", 200))
+	if !resubscribed.Subscribed || resubscribed.ShowInNewEpisodes {
+		t.Fatal("resubscribing lost the New episodes preference")
+	}
 	call("GET", "/api/episodes/999999/state", "", "", "", 404)
 	call("GET", "/api/podcasts/999999/episodes", "", "", "", 404)
 	call("GET", "/api/episodes/abc", "", "", "", 400)

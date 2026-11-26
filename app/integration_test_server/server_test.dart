@@ -552,6 +552,70 @@ void main() {
     );
 
     test(
+      'an offline podcast toggle syncs on restart and reaches another client',
+      () async {
+        final a = await device('New episodes A');
+        final podcast = await a.data.library.subscribe(fixture('new-episodes'));
+        final id = podcast.id;
+        final directory = await Directory.systemTemp.createTemp(
+          'easypodcast-toggle-',
+        );
+        addTearDown(() => directory.delete(recursive: true));
+        Future<Device> open() => Device.open(
+          'New episodes B',
+          () => deviceTime,
+          databasePath: '${directory.path}/toggle.db',
+        );
+        final b = await open();
+        final library = b.data.library;
+        final episodes = library.episodesOf(id);
+        final playing = episodes.last.id;
+        await b.pauseAt(playing, 65000);
+        expect(
+          library.newEpisodes(since: oldestTime).any((e) => e.podcastId == id),
+          isTrue,
+        );
+
+        b.wire.offline = true;
+        await library.setNewEpisodesVisibility(id, false);
+        await b.waitForSync();
+        expect(b.sync.status.value.pending, 1);
+        expect(library.podcast(id)!.showInNewEpisodes, isFalse);
+        expect(
+          library.newEpisodes(since: oldestTime).any((e) => e.podcastId == id),
+          isFalse,
+        );
+        expect(library.episodesOf(id), episodes);
+        expect(
+          library.inProgress.map((episode) => episode.id),
+          contains(playing),
+        );
+        expect(a.data.library.podcast(id)!.showInNewEpisodes, isTrue);
+
+        await b.close();
+        final restarted = await open();
+        final sent = restarted.wire.exchanges.first;
+        expect(sent.request.method, 'PUT');
+        expect(sent.request.url.path, '/api/podcasts/$id/new-episodes');
+        expect(jsonDecode(sent.requestBody), {
+          'show': false,
+          'server_id': restarted.store.meta(MetaKey.serverId),
+        });
+        sent.expectStatus(204);
+        expect(restarted.sync.status.value.pending, 0);
+        expect(restarted.data.library.podcast(id)!.showInNewEpisodes, isFalse);
+
+        await a.sync.syncNow();
+        expect(a.data.library.podcast(id)!.showInNewEpisodes, isFalse);
+
+        await a.data.library.setNewEpisodesVisibility(id, true);
+        await a.waitForSync();
+        await restarted.sync.syncNow();
+        expect(restarted.data.library.podcast(id)!.showInNewEpisodes, isTrue);
+      },
+    );
+
+    test(
       'same-millisecond writes converge and survive both clients restarting',
       () async {
         final directory = await Directory.systemTemp.createTemp(

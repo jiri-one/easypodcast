@@ -113,6 +113,7 @@
   "feedUnavailable": "Couldn't fetch the feed.",
   "feedStatus": "Feed status",
   "aboutPodcast": "About podcast",
+  "showInNewEpisodes": "Show in New episodes",
   "unsubscribe": "Unsubscribe",
   "unsubscribeTitle": "Unsubscribe?",
   "resubscribe": "Subscribe again",

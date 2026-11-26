@@ -124,7 +124,7 @@ func TestMigrateAsDatabaseOwner(t *testing.T) {
 		}
 	}
 	var migrations int
-	if err := pool.QueryRow(t.Context(), "SELECT count(*) FROM schema_migrations").Scan(&migrations); err != nil || migrations != 7 {
+	if err := pool.QueryRow(t.Context(), "SELECT count(*) FROM schema_migrations").Scan(&migrations); err != nil || migrations != 8 {
 		t.Fatalf("migration count: %d, %v", migrations, err)
 	}
 }
@@ -158,6 +158,10 @@ func TestUpgradeInitialSchema(t *testing.T) {
 	}
 	if err := s.migrate(t.Context()); err != nil {
 		t.Fatal(err)
+	}
+	podcast, err := s.podcast(t.Context(), 1)
+	if err != nil || !podcast.ShowInNewEpisodes {
+		t.Fatalf("legacy podcast is hidden from New episodes: %+v, %v", podcast, err)
 	}
 	ids, err := s.searchEpisodes(t.Context(), 1, []string{"tomas", "roud"})
 	if err != nil || !slices.Equal(ids, []int64{257, 1}) {
@@ -236,7 +240,7 @@ func TestPasswordlessDatabaseURL(t *testing.T) {
 		t.Fatal(err)
 	}
 	var count int
-	if err := pool.QueryRow(t.Context(), "SELECT count(*) FROM schema_migrations").Scan(&count); err != nil || count != 7 {
+	if err := pool.QueryRow(t.Context(), "SELECT count(*) FROM schema_migrations").Scan(&count); err != nil || count != 8 {
 		t.Fatalf("migration via PGPASSWORD: %d, %v", count, err)
 	}
 }

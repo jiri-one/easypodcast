@@ -14,6 +14,7 @@ class EpisodeListInfo {
 class LocalSnapshot {
   LocalSnapshot({
     required this.podcasts,
+    required this.pendingNewEpisodes,
     required this.episodes,
     required this.states,
     required this.pendingStates,
@@ -24,6 +25,7 @@ class LocalSnapshot {
   });
 
   final List<Podcast> podcasts;
+  final Map<int, bool> pendingNewEpisodes;
 
   /// In server order (newest first) within each podcast.
   final List<Episode> episodes;
@@ -51,7 +53,10 @@ class LocalStore {
   final Database db;
   final Map<String, String> _meta = {};
 
-  static const schemaVersion = 4;
+  static const schemaVersion = 5;
+  static const _pendingNewEpisodesTable =
+      'CREATE TABLE IF NOT EXISTS pending_new_episodes ('
+      'podcast_id INTEGER PRIMARY KEY, show INTEGER NOT NULL)';
   static const _episodesTable = '''CREATE TABLE IF NOT EXISTS episodes (
     id INTEGER PRIMARY KEY, podcast_id INTEGER NOT NULL, sort INTEGER NOT NULL,
     title TEXT NOT NULL, enclosure_url TEXT NOT NULL, published_at INTEGER,
@@ -95,6 +100,12 @@ class LocalStore {
           await db.execute(_episodesIndex);
           await db.delete('meta', where: "key = 'device_id'");
         }
+        if (oldVersion < 5) {
+          await db.execute(
+            'ALTER TABLE podcasts ADD COLUMN show_in_new_episodes INTEGER NOT NULL DEFAULT 1',
+          );
+          await db.execute(_pendingNewEpisodesTable);
+        }
       },
     ),
   );
@@ -106,7 +117,9 @@ class LocalStore {
         author TEXT NOT NULL, description TEXT NOT NULL, image_url TEXT, link TEXT,
         subscribed INTEGER NOT NULL, episode_count INTEGER NOT NULL,
         played_count INTEGER NOT NULL, episodes_version TEXT NOT NULL,
-        last_success_at INTEGER, last_error TEXT)''')
+        last_success_at INTEGER, last_error TEXT,
+        show_in_new_episodes INTEGER NOT NULL DEFAULT 1)''')
+      ..execute(_pendingNewEpisodesTable)
       ..execute(_episodesTable)
       ..execute(_episodesIndex)
       ..execute('''CREATE TABLE IF NOT EXISTS episode_states (
@@ -133,6 +146,7 @@ class LocalStore {
 
   Future<LocalSnapshot> load() async {
     final podcastRows = await db.query('podcasts');
+    final pendingNewEpisodes = await db.query('pending_new_episodes');
     final episodeRows = await db.query('episodes', orderBy: 'podcast_id, sort');
     final stateRows = await db.query('episode_states');
     final queueRows = await db.query('queue');
@@ -173,6 +187,10 @@ class LocalStore {
     }
     return LocalSnapshot(
       podcasts: [for (final row in podcastRows) _podcast(row)],
+      pendingNewEpisodes: {
+        for (final row in pendingNewEpisodes)
+          row['podcast_id'] as int: row['show'] == 1,
+      },
       episodes: [for (final row in episodeRows) _episode(row)],
       states: states,
       pendingStates: pending,
@@ -232,11 +250,69 @@ class LocalStore {
     await batch.commit(noResult: true);
   }
 
-  Future<void> upsertPodcast(Podcast podcast) => db.insert(
+  Future<Podcast> saveSubscription(Podcast podcast) =>
+      db.transaction((txn) async {
+        final rows = await txn.query(
+          'podcasts',
+          columns: ['show_in_new_episodes'],
+          where: 'id = ?',
+          whereArgs: [podcast.id],
+        );
+        // A subscription reply can predate a preference change.
+        final saved = rows.isEmpty
+            ? podcast
+            : podcast.copyWith(
+                showInNewEpisodes: rows.single['show_in_new_episodes'] == 1,
+              );
+        await txn.insert(
+          'podcasts',
+          _podcastRow(saved),
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+        return saved;
+      });
+
+  Future<void> saveUnsubscribe(int podcastId) => db.update(
     'podcasts',
-    _podcastRow(podcast),
+    {'subscribed': 0},
+    where: 'id = ?',
+    whereArgs: [podcastId],
+  );
+
+  Future<void> queueNewEpisodesChange(int podcastId, bool show) => db.insert(
+    'pending_new_episodes',
+    {'podcast_id': podcastId, 'show': show ? 1 : 0},
     conflictAlgorithm: ConflictAlgorithm.replace,
   );
+
+  Future<bool> completeNewEpisodesChange(
+    int podcastId,
+    bool show, {
+    required bool applied,
+  }) async {
+    final deleted = await db.transaction((txn) async {
+      if (applied) {
+        await txn.update(
+          'podcasts',
+          {'show_in_new_episodes': show ? 1 : 0},
+          where: 'id = ?',
+          whereArgs: [podcastId],
+        );
+      }
+      await txn.delete(
+        'meta',
+        where: 'key = ?',
+        whereArgs: [MetaKey.podcastsEtag],
+      );
+      return txn.delete(
+        'pending_new_episodes',
+        where: 'podcast_id = ? AND show = ?',
+        whereArgs: [podcastId, show ? 1 : 0],
+      );
+    });
+    _meta.remove(MetaKey.podcastsEtag);
+    return deleted != 0;
+  }
 
   Future<void> replaceEpisodes(
     int podcastId,
@@ -347,6 +423,7 @@ class LocalStore {
     final batch = db.batch();
     for (final table in const [
       'podcasts',
+      'pending_new_episodes',
       'episodes',
       'episode_states',
       'queue',
@@ -382,6 +459,7 @@ class LocalStore {
     imageUrl: row['image_url'] as String?,
     link: row['link'] as String?,
     subscribed: row['subscribed'] == 1,
+    showInNewEpisodes: row['show_in_new_episodes'] == 1,
     episodeCount: row['episode_count'] as int,
     playedCount: row['played_count'] as int,
     episodesVersion: row['episodes_version'] as String,
@@ -398,6 +476,7 @@ class LocalStore {
     'image_url': p.imageUrl,
     'link': p.link,
     'subscribed': p.subscribed ? 1 : 0,
+    'show_in_new_episodes': p.showInNewEpisodes ? 1 : 0,
     'episode_count': p.episodeCount,
     'played_count': p.playedCount,
     'episodes_version': p.episodesVersion,

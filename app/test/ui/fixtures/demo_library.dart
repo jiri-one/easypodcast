@@ -94,6 +94,7 @@ class DemoLibrary extends Library {
         [
           for (final episode in _episodes.values)
             if (_podcasts[episode.podcastId]!.subscribed &&
+                _podcasts[episode.podcastId]!.showInNewEpisodes &&
                 !episode.removedFromFeed &&
                 episode.publishedAt?.isBefore(since) == false &&
                 stateOf(episode.id).isNew)
@@ -161,6 +162,14 @@ class DemoLibrary extends Library {
     final show = _podcasts[podcastId];
     if (show == null || !show.subscribed) return;
     _podcasts[podcastId] = _podcastWith(show, subscribed: false);
+    notifyListeners();
+  }
+
+  @override
+  Future<void> setNewEpisodesVisibility(int podcastId, bool show) async {
+    _podcasts[podcastId] = _podcasts[podcastId]!.copyWith(
+      showInNewEpisodes: show,
+    );
     notifyListeners();
   }
 

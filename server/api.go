@@ -42,6 +42,7 @@ func (a *api) routes() http.Handler {
 	mux.HandleFunc("GET /api/podcasts", a.authenticated(a.podcasts))
 	mux.HandleFunc("POST /api/podcasts", a.authenticated(a.subscribe))
 	mux.HandleFunc("DELETE /api/podcasts/{id}", a.authenticated(a.unsubscribe))
+	mux.HandleFunc("PUT /api/podcasts/{id}/new-episodes", a.authenticated(a.setNewEpisodesVisibility))
 	mux.HandleFunc("GET /api/podcasts/{id}/episodes", a.authenticated(a.episodes))
 	mux.HandleFunc("GET /api/podcasts/{id}/search", a.authenticated(a.searchEpisodes))
 	mux.HandleFunc("GET /api/search", a.authenticated(a.searchEpisodes))
@@ -301,6 +302,33 @@ func (a *api) unsubscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *api) setNewEpisodesVisibility(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	var input struct {
+		Show     *bool   `json:"show"`
+		ServerID *string `json:"server_id"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	if input.Show == nil {
+		apiError(w, http.StatusBadRequest, "show must be a boolean")
+		return
+	}
+	serverID, err := a.store.setNewEpisodesVisibility(r.Context(), id, *input.Show, input.ServerID)
+	switch {
+	case errors.Is(err, errServerIDChanged):
+		jsonReply(w, r, http.StatusConflict, map[string]string{"error": err.Error(), "server_id": serverID})
+	case err != nil:
+		storeError(w, r, err)
+	default:
+		w.WriteHeader(http.StatusNoContent)
+	}
 }
 
 func (a *api) episodes(w http.ResponseWriter, r *http.Request) {

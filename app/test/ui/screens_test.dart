@@ -6,6 +6,7 @@ import 'package:easypodcast/ui/eink_widgets.dart';
 import 'package:easypodcast/ui/episode_page.dart';
 import 'package:easypodcast/ui/library_views.dart';
 import 'package:easypodcast/ui/player_views.dart';
+import 'package:easypodcast/ui/settings_pages.dart';
 import 'package:easypodcast/ui/theme.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -224,6 +225,45 @@ void main() {
         expect(library.stateOf(201).isPlayed, isTrue);
         expect(find.text(l.dismiss), findsNothing);
         expect(find.text(l.markNew), findsOneWidget);
+      } finally {
+        await app.finish();
+      }
+    },
+  );
+
+  testWidgets(
+    'the About podcast toggle hides episodes only from New episodes',
+    (tester) async {
+      final app = await _phone(tester);
+      final l = app.strings;
+      final library = app.services.library;
+      Iterable<int> listedIds() => tester
+          .widget<EpisodeList>(find.byType(EpisodeList))
+          .episodes
+          .map((episode) => episode.id);
+      try {
+        await app.section(LibrarySection.newEpisodes);
+        expect(listedIds(), contains(201));
+        await app.section(LibrarySection.podcasts);
+        await app.scrollToRow(
+          library.podcast(2)!.title,
+          find.byType(PodcastList),
+        );
+        await app.tap(find.bySemanticsLabel(l.aboutPodcast));
+        final row = find.widgetWithText(EinkRow, l.showInNewEpisodes);
+        await app.scrollTo(row, find.byType(AboutPodcastPage));
+        expect(tester.widget<EinkRow>(row).toggled, isTrue);
+        await app.tap(row);
+        expect(tester.widget<EinkRow>(row).toggled, isFalse);
+
+        await app.back();
+        expect(listedIds(), contains(201));
+        await app.back();
+        await app.section(LibrarySection.newEpisodes);
+        expect(listedIds(), isNot(contains(201)));
+        expect(listedIds(), contains(301));
+        await app.section(LibrarySection.inProgress);
+        expect(listedIds(), contains(204));
       } finally {
         await app.finish();
       }

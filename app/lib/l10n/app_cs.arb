@@ -110,6 +110,7 @@
   "feedUnavailable": "Feed nejde stáhnout.",
   "feedStatus": "Stav feedů",
   "aboutPodcast": "O podcastu",
+  "showInNewEpisodes": "Zobrazovat v Nových dílech",
   "unsubscribe": "Zrušit odběr",
   "unsubscribeTitle": "Zrušit odběr?",
   "resubscribe": "Odebírat znovu",

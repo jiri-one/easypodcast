@@ -355,6 +355,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get aboutPodcast => 'About podcast';
 
   @override
+  String get showInNewEpisodes => 'Show in New episodes';
+
+  @override
   String get unsubscribe => 'Unsubscribe';
 
   @override

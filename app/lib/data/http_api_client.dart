@@ -204,6 +204,21 @@ class HttpApiClient implements ApiClient {
   }
 
   @override
+  Future<void> setNewEpisodesVisibility(
+    int podcastId,
+    bool show, {
+    String? serverId,
+    Duration? timeout,
+  }) async {
+    await _send(
+      'PUT',
+      '/api/podcasts/$podcastId/new-episodes',
+      json: {'show': show, 'server_id': ?serverId},
+      timeout: timeout,
+    );
+  }
+
+  @override
   Future<Fetched<List<Episode>>?> episodes(
     int podcastId, {
     String? ifNoneMatch,

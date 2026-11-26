@@ -759,6 +759,12 @@ abstract class AppLocalizations {
   /// **'About podcast'**
   String get aboutPodcast;
 
+  /// No description provided for @showInNewEpisodes.
+  ///
+  /// In en, this message translates to:
+  /// **'Show in New episodes'**
+  String get showInNewEpisodes;
+
   /// No description provided for @unsubscribe.
   ///
   /// In en, this message translates to:

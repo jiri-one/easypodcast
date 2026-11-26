@@ -16,19 +16,20 @@ func (t timestamp) MarshalJSON() ([]byte, error) {
 }
 
 type podcast struct {
-	ID              int64      `json:"id"`
-	FeedURL         string     `json:"feed_url"`
-	Title           string     `json:"title"`
-	Author          string     `json:"author"`
-	Description     string     `json:"description"`
-	ImageURL        *string    `json:"image_url"`
-	Link            *string    `json:"link"`
-	Subscribed      bool       `json:"subscribed"`
-	EpisodeCount    int64      `json:"episode_count"`
-	PlayedCount     int64      `json:"played_count"`
-	EpisodesVersion string     `json:"episodes_version"`
-	LastSuccessAt   *timestamp `json:"last_success_at"`
-	LastError       *string    `json:"last_error"`
+	ID                int64      `json:"id"`
+	FeedURL           string     `json:"feed_url"`
+	Title             string     `json:"title"`
+	Author            string     `json:"author"`
+	Description       string     `json:"description"`
+	ImageURL          *string    `json:"image_url"`
+	Link              *string    `json:"link"`
+	Subscribed        bool       `json:"subscribed"`
+	ShowInNewEpisodes bool       `json:"show_in_new_episodes"`
+	EpisodeCount      int64      `json:"episode_count"`
+	PlayedCount       int64      `json:"played_count"`
+	EpisodesVersion   string     `json:"episodes_version"`
+	LastSuccessAt     *timestamp `json:"last_success_at"`
+	LastError         *string    `json:"last_error"`
 }
 
 type episode struct {
