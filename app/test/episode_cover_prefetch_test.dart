@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:easypodcast/core/downloads.dart';
@@ -21,8 +22,15 @@ const _episodeId = 103;
 const _noCoverId = 105;
 const _episodeCover = 'https://podcast.example/episode.png';
 const _podcastCover = 'https://podcast.example/podcast.png';
-const _episodeCoverBytes = [1, 2];
-const _podcastCoverBytes = [3, 4];
+final _episodeCoverBytes = base64Decode(
+  '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP////////////////////////////////////////'
+  '//////////////////////////////////////////////wAALCAABAAEBAREA/8QAFAABAAAA'
+  'AAAAAAAAAAAAAAAAAv/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AL//Z',
+);
+final _podcastCoverBytes = base64Decode(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR42mOwAAAAOgA5TJ7RDwAA'
+  'AABJRU5ErkJggg==',
+);
 
 void main() {
   final binding = TestWidgetsFlutterBinding.ensureInitialized();
@@ -167,6 +175,26 @@ void main() {
       expect(await shownArt(), _podcastCoverBytes);
       expect(handler.mediaItem.value?.id, 'episode:$_noCoverId');
     });
+
+    for (final cachedEarlier in [false, true]) {
+      test('an episode cover page sent with status 200 '
+          '${cachedEarlier ? 'and cached earlier ' : ''}'
+          'falls back to the podcast cover', () async {
+        final page = http.Response(
+          '<!DOCTYPE html><title>Not found</title>',
+          200,
+        );
+        if (cachedEarlier) {
+          await http.runWithClient(
+            () => CoverImage.prefetch(_episodeCover),
+            () => MockClient((_) async => page),
+          );
+        }
+        episodeCover.complete(page);
+        await handler.playFromMediaId('episode:$_episodeId');
+        expect(await shownArt(), _podcastCoverBytes);
+      });
+    }
   });
 }
 

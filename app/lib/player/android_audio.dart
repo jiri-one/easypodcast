@@ -72,6 +72,7 @@ class EpisodeAudioHandler extends BaseAudioHandler {
   Future<void>? _libraryRefresh;
   int? _preparedEpisodeId;
   int? _artworkId;
+  int _artworkRequest = 0;
   Uri? _artUri;
 
   static String _deviceLanguage() =>
@@ -332,11 +333,12 @@ class EpisodeAudioHandler extends BaseAudioHandler {
     if (artwork == null || _artworkId == episode?.id) return;
     _artworkId = episode?.id;
     _artUri = null;
+    final request = ++_artworkRequest;
     if (episode == null) return;
     final podcast = _library.podcast(episode.podcastId);
     background(
       artwork(episode, podcast).then((uri) {
-        if (_player.current?.id != episode.id) return;
+        if (request != _artworkRequest) return;
         _artUri = uri;
         _publish(false);
       }),

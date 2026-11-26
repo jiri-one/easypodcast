@@ -248,15 +248,54 @@ void main() {
     }
   });
 
+  testWidgets('the About podcast toggle is a full-width row under the button', (
+    tester,
+  ) async {
+    final app = await _phone(tester);
+    try {
+      final row = await _showInNewEpisodesRow(app);
+      final page = find.byType(AboutPodcastPage);
+      final heading = find.descendant(
+        of: page,
+        matching: find.text(app.services.library.podcast(2)!.title),
+      );
+      final button = find.descendant(
+        of: page,
+        matching: find.byType(EinkButton),
+      );
+      expect(tester.getSize(row).width, tester.getSize(page).width);
+      expect(
+        tester.getTopLeft(find.text(app.strings.showInNewEpisodes)).dx,
+        tester.getTopLeft(heading).dx,
+      );
+      expect(
+        tester.getRect(row).top,
+        greaterThan(tester.getRect(button).bottom),
+      );
+    } finally {
+      await app.finish();
+    }
+  });
+
   testWidgets('a failed About podcast toggle keeps its value and says so', (
     tester,
   ) async {
-    final app = await _phone(tester, library: _OfflineToggleLibrary());
+    final library = _OfflineToggleLibrary();
+    final app = await _phone(tester, library: library);
+    final l = app.strings;
     try {
       final row = await _showInNewEpisodesRow(app);
       await app.tap(row);
+      expect(tester.widget<EinkRow>(row).toggled, isFalse);
+      library.reply.complete();
+      await tester.pumpAndSettle();
       expect(tester.widget<EinkRow>(row).toggled, isTrue);
-      expect(find.text(app.strings.actionFailed), findsOneWidget);
+      final error = find.text(l.actionFailed);
+      expect(error, findsOneWidget);
+      expect(
+        tester.getRect(error).top,
+        greaterThan(tester.getRect(row).bottom),
+      );
     } finally {
       await app.finish();
     }
@@ -484,7 +523,11 @@ Future<Finder> _showInNewEpisodesRow(UiHarness app) async {
 }
 
 class _OfflineToggleLibrary extends DemoLibrary {
+  final reply = Completer<void>();
+
   @override
-  Future<void> setShowInNewEpisodes(int podcastId, bool show) async =>
-      throw OfflineException();
+  Future<void> setShowInNewEpisodes(int podcastId, bool show) async {
+    await reply.future;
+    throw OfflineException();
+  }
 }

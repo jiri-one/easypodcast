@@ -395,17 +395,22 @@ class _AboutPodcastPageState extends State<AboutPodcastPage>
     with ActionTapGuard {
   String? _error;
   bool? _subscribing;
+  // The switch shows the requested value until the server answers.
+  bool? _requestedShow;
 
   Future<void> _toggleShowInNewEpisodes() => guardAction(() async {
     final podcast = widget.podcast;
-    if (_error != null) setState(() => _error = null);
+    final show = !podcast.showInNewEpisodes;
+    setState(() {
+      _error = null;
+      _requestedShow = show;
+    });
     try {
-      await widget.services.library.setShowInNewEpisodes(
-        podcast.id,
-        !podcast.showInNewEpisodes,
-      );
+      await widget.services.library.setShowInNewEpisodes(podcast.id, show);
     } on Exception catch (error) {
-      if (mounted) setState(() => _error = actionError(context, error));
+      if (mounted) _error = actionError(context, error);
+    } finally {
+      if (mounted) setState(() => _requestedShow = null);
     }
   });
 
@@ -440,42 +445,55 @@ class _AboutPodcastPageState extends State<AboutPodcastPage>
     final strings = context.strings;
     final podcast = widget.podcast;
     return PageList(
-      inset: true,
       children: [
-        Text(podcast.title, style: headingStyle),
-        if (podcast.author.isNotEmpty) Text(podcast.author, style: detailStyle),
-        if (podcast.description.isNotEmpty) ...[
-          const SizedBox(height: 12),
-          PlainLinks(podcast.description, style: buttonLabelStyle),
-        ],
-        const SizedBox(height: 12),
-        Text(strings.feedAddress, style: buttonLabelStyle),
-        PlainLinks(podcast.feedUrl),
-        const SizedBox(height: 8),
-        FeedStatusText(podcast),
-        const SizedBox(height: 16),
-        EinkButton(
-          switch (_subscribing) {
-            true => strings.addingPodcast,
-            false => strings.unsubscribing,
-            null =>
-              podcast.subscribed ? strings.unsubscribe : strings.resubscribe,
-          },
-          onPressed: _changeSubscription,
-          alternatives: [
-            strings.unsubscribe,
-            strings.unsubscribing,
-            strings.resubscribe,
-            strings.addingPodcast,
-          ],
+        Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(podcast.title, style: headingStyle),
+              if (podcast.author.isNotEmpty)
+                Text(podcast.author, style: detailStyle),
+              if (podcast.description.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                PlainLinks(podcast.description, style: buttonLabelStyle),
+              ],
+              const SizedBox(height: 12),
+              Text(strings.feedAddress, style: buttonLabelStyle),
+              PlainLinks(podcast.feedUrl),
+              const SizedBox(height: 8),
+              FeedStatusText(podcast),
+              const SizedBox(height: 16),
+              EinkButton(
+                switch (_subscribing) {
+                  true => strings.addingPodcast,
+                  false => strings.unsubscribing,
+                  null =>
+                    podcast.subscribed
+                        ? strings.unsubscribe
+                        : strings.resubscribe,
+                },
+                onPressed: _changeSubscription,
+                alternatives: [
+                  strings.unsubscribe,
+                  strings.unsubscribing,
+                  strings.resubscribe,
+                  strings.addingPodcast,
+                ],
+              ),
+            ],
+          ),
         ),
+        if (podcast.subscribed) ...[
+          const Divider(height: 1),
+          _ToggleRow(
+            title: strings.showInNewEpisodes,
+            value: _requestedShow ?? podcast.showInNewEpisodes,
+            onPressed: _toggleShowInNewEpisodes,
+          ),
+        ] else
+          PageMessage(strings.notSubscribed),
         if (_error case final error?) EinkError(error, inset: true),
-        if (!podcast.subscribed) PageMessage(strings.notSubscribed),
-        _ToggleRow(
-          title: strings.showInNewEpisodes,
-          value: podcast.showInNewEpisodes,
-          onPressed: _toggleShowInNewEpisodes,
-        ),
       ],
     );
   }

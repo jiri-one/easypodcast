@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'package:easypodcast/core/models.dart';
 import 'package:easypodcast/ui/cover_image.dart';
 import 'package:flutter/painting.dart';
 import 'package:flutter/services.dart';
@@ -42,6 +44,53 @@ void main() {
       expect(requests, 1);
     },
   );
+
+  test('artwork takes GIF and WebP but skips an empty episode cover', () async {
+    await coverCache(binding);
+    final podcastCover = await _coverBytes();
+    final gif = base64Decode(
+      'R0lGODdhAQABAIEAADg4OAAAAAAAAAAAACwAAAAAAQABAAAIBAABBAQAOw==',
+    );
+    final webp = base64Decode(
+      'UklGRh4AAABXRUJQVlA4TBEAAAAvAAAAAAdQnOIUp/+BiOh/AAA=',
+    );
+    final bodies = {
+      'podcast.png': podcastCover,
+      'episode.gif': gif,
+      'episode.webp': webp,
+      'empty.png': Uint8List(0),
+    };
+    Future<List<int>> shown(String episodeCover) async {
+      final art = await CoverImage.artwork(
+        Episode(
+          id: 1,
+          podcastId: 1,
+          title: 'Episode',
+          enclosureUrl: 'https://podcast.example/1.mp3',
+          imageUrl: 'https://podcast.example/$episodeCover',
+        ),
+        const Podcast(
+          id: 1,
+          feedUrl: 'https://podcast.example/feed.xml',
+          title: 'Podcast',
+          imageUrl: 'https://podcast.example/podcast.png',
+        ),
+      );
+      return File.fromUri(art!).readAsBytes();
+    }
+
+    await http.runWithClient(
+      () async {
+        expect(await shown('episode.gif'), gif);
+        expect(await shown('episode.webp'), webp);
+        expect(await shown('empty.png'), podcastCover);
+      },
+      () => MockClient(
+        (request) async =>
+            http.Response.bytes(bodies[request.url.pathSegments.single]!, 200),
+      ),
+    );
+  });
 
   test('prefetch ignores an address that the HTTP client rejects', () async {
     await coverCache(binding);

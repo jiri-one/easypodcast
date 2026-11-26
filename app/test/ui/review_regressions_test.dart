@@ -195,21 +195,26 @@ void main() {
         }
         expect(find.byTooltip(l.refresh), findsOneWidget);
         final list = find.byType(EpisodeList);
-        final height = tester.getSize(list).height;
-        await tester.drag(list, Offset(0, height / 8));
-        await tester.pumpAndSettle();
+        await tester.drag(list, const Offset(0, 80));
+        await tester.pump();
+        // An e-ink screen can redraw for a frame that changes nothing.
+        expect(tester.binding.hasScheduledFrame, isFalse);
         expect(library.refreshes, 0);
 
-        // A finger rarely moves straight: the small step back must not cancel.
         final gesture = await tester.startGesture(tester.getCenter(list));
-        for (final distance in [25.0, height / 6, -2.0, height / 6]) {
+        await gesture.moveBy(const Offset(0, 25));
+        await tester.pump();
+        await gesture.moveBy(const Offset(0, 70));
+        expect(tester.binding.hasScheduledFrame, isFalse);
+        // A finger rarely moves straight: the small step back must not cancel.
+        for (final distance in [-2.0, 70.0]) {
           await gesture.moveBy(Offset(0, distance));
         }
         await tester.pump();
         expect(library.refreshes, 0);
         await gesture.up();
-        await tester.pumpAndSettle();
         expect(library.refreshes, 1);
+        await tester.pumpAndSettle();
         expect(find.widgetWithText(EinkHeader, l.refreshing), findsOneWidget);
 
         library.finishRefresh();
@@ -452,6 +457,7 @@ void main() {
         await app.dialog(l.unsubscribe);
         expect(library.podcast(1)!.subscribed, isFalse);
         expect(find.text(l.resubscribe), findsOneWidget);
+        expect(find.text(l.showInNewEpisodes), findsNothing);
         await app.back();
         expect(find.byTooltip(l.refresh), findsNothing);
         await tester.drag(find.byType(EpisodeList), const Offset(0, 400));
@@ -462,6 +468,7 @@ void main() {
         await app.tapText(l.resubscribe);
         expect(library.podcast(1)!.subscribed, isTrue);
         expect(find.text(l.unsubscribe), findsOneWidget);
+        expect(find.text(l.showInNewEpisodes), findsOneWidget);
       } finally {
         await app.finish();
       }

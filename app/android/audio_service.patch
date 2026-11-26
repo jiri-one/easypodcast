@@ -139,3 +139,17 @@
 +            flutterReady = false;
          }
      }
+@@ -517,4 +538,6 @@
+     private static class AudioHandlerInterface implements MethodCallHandler, AudioService.ServiceListener {
+         private static final int SILENCE_SAMPLE_RATE = 44100;
++        // One thread keeps media items in the order they were sent.
++        private static final java.util.concurrent.Executor mediaItemExecutor = Executors.newSingleThreadExecutor();
+         public BinaryMessenger messenger;
+         public MethodChannel channel;
+@@ -836,5 +859,5 @@
+                 switch (call.method) {
+                 case "setMediaItem": {
+-                    Executors.newSingleThreadExecutor().execute(() -> {
++                    mediaItemExecutor.execute(() -> {
+                         try {
+                             Map<?, ?> rawMediaItem = (Map<?, ?>)args.get("mediaItem");

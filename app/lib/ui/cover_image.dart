@@ -80,9 +80,26 @@ class CoverImage extends ImageProvider<CoverImage> {
 
   static Future<Uri?> artwork(Episode episode, Podcast? podcast) async {
     for (final url in coverUrls(episode, podcast)) {
-      if (await prefetch(url) case final file?) return file.uri;
+      final file = await prefetch(url);
+      if (file != null && await _isImage(file)) return file.uri;
     }
     return null;
+  }
+
+  // The cache keeps any status 200 body, and Android shows no cover for one
+  // that is not an image.
+  static Future<bool> _isImage(File file) async {
+    try {
+      final head = latin1.decode(
+        await file.openRead(0, 12).expand((bytes) => bytes).toList(),
+      );
+      return head.startsWith('\xff\xd8\xff') ||
+          head.startsWith('\x89PNG') ||
+          head.startsWith('GIF8') ||
+          (head.startsWith('RIFF') && head.endsWith('WEBP'));
+    } on FileSystemException {
+      return false;
+    }
   }
 
   ResizeImage resized(double side, double devicePixelRatio) {
