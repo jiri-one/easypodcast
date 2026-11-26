@@ -6,6 +6,8 @@ const androidAudioConfig = AudioServiceConfig(
   androidNotificationChannelName: 'EasyPodcast',
   androidNotificationIcon: 'drawable/ic_stat_easypodcast',
   androidStopForegroundOnPause: false,
+  artDownscaleWidth: 256,
+  artDownscaleHeight: 256,
   androidBrowsableRootExtras: {
     AndroidContentStyle.supportedKey: true,
     AndroidContentStyle.browsableHintKey: AndroidContentStyle.listItemHintValue,
@@ -15,17 +17,16 @@ const androidAudioConfig = AudioServiceConfig(
 
 Future<void> _openAndroidAudio(
   EpisodePlayer player,
-  Library library,
-  DownloadService downloads,
-  Settings settings,
+  Stream<Uri?> Function(Episode, Podcast?)? watchArtwork,
 ) async {
   await AudioService.init(
     builder: () => EpisodeAudioHandler(
       player,
-      library,
-      downloads,
-      settings,
+      player._library,
+      player._downloads,
+      player._settings,
       android: true,
+      watchArtwork: watchArtwork,
     ),
     config: androidAudioConfig,
   );
@@ -39,11 +40,13 @@ class EpisodeAudioHandler extends BaseAudioHandler {
     this._settings, {
     required this._android,
     String Function()? languageCode,
+    this._watchArtwork,
   }) : _languageCode = languageCode ?? _deviceLanguage {
     _player._mediaChanges.stream.listen(
       _publish,
       onDone: () {
         if (!_android) return;
+        unawaited(_artworkSubscription?.cancel());
         _library.removeListener(_notifyChildrenChanged);
         _downloads.removeListener(_notifyDownloadsChanged);
         unawaited(_childrenChanged.close());
@@ -64,10 +67,14 @@ class EpisodeAudioHandler extends BaseAudioHandler {
   final Settings _settings;
   final bool _android;
   final String Function() _languageCode;
+  final Stream<Uri?> Function(Episode, Podcast?)? _watchArtwork;
   final _childrenChanged = BehaviorSubject<Map<String, dynamic>>();
   late List<int> _downloadedIds;
   Future<void>? _libraryRefresh;
   int? _preparedEpisodeId;
+  Episode? _artworkEpisode;
+  StreamSubscription<Uri?>? _artworkSubscription;
+  Uri? _artUri;
 
   static String _deviceLanguage() =>
       WidgetsBinding.instance.platformDispatcher.locale.languageCode;
@@ -91,13 +98,14 @@ class EpisodeAudioHandler extends BaseAudioHandler {
     ];
   }
 
-  MediaItem _item(Episode episode, {Duration? duration}) {
+  MediaItem _item(Episode episode, {Duration? duration, Uri? artUri}) {
     final podcast = _library.podcast(episode.podcastId);
     return MediaItem(
       id: '$_episodePrefix${episode.id}',
       title: episode.title,
       album: podcast?.title,
       artist: _android ? null : podcast?.author,
+      artUri: artUri,
       duration:
           duration ??
           (episode.durationS == null
@@ -320,8 +328,34 @@ class EpisodeAudioHandler extends BaseAudioHandler {
   @override
   Future<void> onTaskRemoved() => _player.reportBeforeBackground();
 
+  void _watchCurrentArtwork(Episode? episode) {
+    final watchArtwork = _watchArtwork;
+    if (!_android ||
+        watchArtwork == null ||
+        identical(_artworkEpisode, episode)) {
+      return;
+    }
+    _artworkEpisode = episode;
+    _artUri = null;
+    unawaited(_artworkSubscription?.cancel());
+    _artworkSubscription = null;
+    if (episode == null) return;
+
+    final podcast = _library.podcast(episode.podcastId);
+    _artworkSubscription = watchArtwork(episode, podcast).listen((uri) {
+      if (_player._disposed ||
+          !identical(_player.current, episode) ||
+          uri == _artUri) {
+        return;
+      }
+      _artUri = uri;
+      _publish(false);
+    });
+  }
+
   void _publish(bool force) {
     final episode = _player.current;
+    _watchCurrentArtwork(episode);
     final playing = _player._mediaPlaying;
     final loaded = _player._loaded;
     final engine = _player._engine;
@@ -342,9 +376,11 @@ class EpisodeAudioHandler extends BaseAudioHandler {
 
     final item = episode == null
         ? null
-        : _item(episode, duration: _player.duration);
+        : _item(episode, duration: _player.duration, artUri: _artUri);
     final previous = mediaItem.value;
-    if (item?.id != previous?.id || item?.duration != previous?.duration) {
+    if (item?.id != previous?.id ||
+        item?.duration != previous?.duration ||
+        item?.artUri != previous?.artUri) {
       mediaItem.add(item);
     }
     final position = loaded && !_player._seeking
