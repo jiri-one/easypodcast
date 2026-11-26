@@ -9,7 +9,6 @@ import 'cover_image.dart';
 import 'eink_widgets.dart';
 import 'episode_queue.dart';
 import 'episode_text.dart';
-import 'feed_refresh.dart';
 import 'playback_actions.dart';
 import 'theme.dart';
 
@@ -71,59 +70,6 @@ class ListProblems extends StatelessWidget {
   }
 }
 
-class RefreshRow extends StatelessWidget {
-  const RefreshRow({
-    super.key,
-    required this.refresh,
-    required this.lastLoaded,
-    this.podcastId,
-  });
-
-  final FeedRefresh refresh;
-  final DateTime? lastLoaded;
-  final int? podcastId;
-
-  @override
-  Widget build(BuildContext context) {
-    final strings = context.strings;
-    final last = lastLoaded;
-    final running = refresh.runningFor(podcastId);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        LayoutBuilder(
-          builder: (context, constraints) => EinkRow(
-            title: running
-                ? strings.refreshing
-                : refresh.requestedFor(podcastId, last)
-                ? strings.refreshRequested
-                : strings.refresh,
-            underlined: !running,
-            compact: true,
-            onPressed: () => refresh.request(podcastId: podcastId),
-            trailing: last == null
-                ? null
-                : ConstrainedBox(
-                    constraints: BoxConstraints(
-                      maxWidth: constraints.maxWidth * 0.5,
-                    ),
-                    child: Text(
-                      DateUtils.isSameDay(last.toLocal(), DateTime.now())
-                          ? strings.loadedAt(clockText(strings, last))
-                          : strings.loadedOn(dateText(strings, last)),
-                      style: detailStyle,
-                      textAlign: TextAlign.end,
-                    ),
-                  ),
-          ),
-        ),
-        if (refresh.failedFor(podcastId))
-          EinkError(strings.refreshFailed, inset: true),
-      ],
-    );
-  }
-}
-
 Widget listHeading(String text) => Padding(
   padding: const EdgeInsets.fromLTRB(12, 8, 12, 2),
   child: Semantics(
@@ -144,6 +90,7 @@ class EpisodeList extends StatelessWidget {
     required this.playback,
     required this.onOpen,
     required this.onMenu,
+    this.onRefresh,
     this.actions = const [],
     this.headerSlivers = const [],
     this.desktop = false,
@@ -157,6 +104,7 @@ class EpisodeList extends StatelessWidget {
   final PlaybackActions playback;
   final ValueChanged<Episode> onOpen;
   final ValueChanged<Episode> onMenu;
+  final VoidCallback? onRefresh;
   final List<Widget> actions;
   final List<Widget> headerSlivers;
   final bool desktop;
@@ -189,8 +137,14 @@ class EpisodeList extends StatelessWidget {
         library.projectedQueue.map((episode) => episode.id).toSet(),
       _ => const <int>{},
     };
-    return CustomScrollView(
+    final refresh = onRefresh;
+    final list = CustomScrollView(
       key: key ?? PageStorageKey(kind),
+      physics: refresh == null
+          ? null
+          : const ClampingScrollPhysics(
+              parent: AlwaysScrollableScrollPhysics(),
+            ),
       slivers: [
         SliverToBoxAdapter(child: problem),
         for (final action in actions) SliverToBoxAdapter(child: action),
@@ -244,6 +198,9 @@ class EpisodeList extends StatelessWidget {
           ),
       ],
     );
+    return refresh == null
+        ? list
+        : _PullToRefresh(onRefresh: refresh, child: list);
   }
 
   Widget _episodeRow(
@@ -371,6 +328,50 @@ class EpisodeList extends StatelessWidget {
       builder: buildRow,
     );
   }
+}
+
+class _PullToRefresh extends StatefulWidget {
+  const _PullToRefresh({required this.onRefresh, required this.child});
+
+  final VoidCallback onRefresh;
+  final Widget child;
+
+  @override
+  State<_PullToRefresh> createState() => _PullToRefreshState();
+}
+
+class _PullToRefreshState extends State<_PullToRefresh> {
+  static const _refreshDistance = 64.0;
+  double? _distance;
+
+  bool _onScroll(ScrollNotification notification) {
+    if (notification.depth != 0) return false;
+    switch (notification) {
+      case ScrollStartNotification(:final metrics, :final dragDetails):
+        _distance = dragDetails != null && metrics.extentBefore == 0 ? 0 : null;
+      case ScrollUpdateNotification():
+        _distance = null;
+      case OverscrollNotification(:final overscroll, dragDetails: _?)
+          when _distance != null:
+        _distance = overscroll < 0 ? _distance! - overscroll : null;
+      case ScrollEndNotification(:final dragDetails):
+        final distance = _distance;
+        _distance = null;
+        if (dragDetails != null &&
+            distance != null &&
+            distance >= _refreshDistance) {
+          widget.onRefresh();
+        }
+    }
+    return false;
+  }
+
+  @override
+  Widget build(BuildContext context) =>
+      NotificationListener<ScrollNotification>(
+        onNotification: _onScroll,
+        child: widget.child,
+      );
 }
 
 class _EpisodeMetadata extends StatelessWidget {

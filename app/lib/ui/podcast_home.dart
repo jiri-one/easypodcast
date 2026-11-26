@@ -13,6 +13,7 @@ import 'downloads_page.dart';
 import 'eink_widgets.dart';
 import 'episode_actions.dart';
 import 'episode_page.dart';
+import 'episode_text.dart';
 import 'feed_refresh.dart';
 import 'library_views.dart';
 import 'playback_actions.dart';
@@ -343,39 +344,26 @@ class _LibraryHomeState extends State<_LibraryHome> {
   Widget _phoneBody(BuildContext context) {
     final page = _pages.lastOrNull;
     final switcher = page == null && _section != LibrarySection.search;
-    return _phoneFrame(
-      context,
-      title: page == null ? _section.label(context) : _title(context, page),
-      body: page == null ? _sectionBody(context) : _pageBody(context, page),
-      onBack: switcher ? null : _back,
-      switcher: switcher,
-      mini: page == null || page.screen == _Screen.podcast,
-    );
-  }
-
-  Widget _phoneFrame(
-    BuildContext context, {
-    required String title,
-    required Widget body,
-    VoidCallback? onBack,
-    bool switcher = false,
-    bool mini = false,
-  }) {
     final menu = switcher && _menuOpen;
     final content = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Expanded(child: body),
-        if (mini)
+        Expanded(
+          child: page == null
+              ? _sectionBody(context)
+              : _pageBody(context, page),
+        ),
+        if (page == null || page.screen == _Screen.podcast)
           MiniPlayer(playback: _playback, onOpen: () => _open(_Screen.player)),
       ],
     );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        EinkHeader(
-          title,
-          onBack: onBack,
+        _header(
+          context,
+          page,
+          onBack: switcher ? null : _back,
           onMenu: switcher
               ? () => setState(() => _menuOpen = !_menuOpen)
               : null,
@@ -489,10 +477,9 @@ class _LibraryHomeState extends State<_LibraryHome> {
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      EinkHeader(
-                        listPage == null
-                            ? _section.label(context)
-                            : _title(context, listPage),
+                      _header(
+                        context,
+                        listPage,
                         onBack: listPage == null
                             ? (_section == LibrarySection.search
                                   ? () => setState(_closeGlobalSearch)
@@ -564,6 +551,57 @@ class _LibraryHomeState extends State<_LibraryHome> {
     child: child,
   );
 
+  Widget _header(
+    BuildContext context,
+    _Page? page, {
+    VoidCallback? onBack,
+    VoidCallback? onMenu,
+    bool expanded = false,
+  }) {
+    final strings = context.strings;
+    final podcast = switch (page) {
+      (screen: _Screen.podcast, id: final int id) =>
+        widget.services.library.podcast(id),
+      _ => null,
+    };
+    final canRefresh =
+        podcast?.subscribed == true ||
+        (page == null && _section == LibrarySection.newEpisodes);
+    return EinkHeader(
+      page == null ? _section.label(context) : _title(context, page),
+      onBack: onBack,
+      onMenu: onMenu,
+      expanded: expanded,
+      subtitle: canRefresh ? _refreshSubtitle(context, podcast) : null,
+      actions: [
+        if (canRefresh)
+          IconButton(
+            icon: Icon(Icons.refresh, semanticLabel: strings.refresh),
+            onPressed: _refresh.running
+                ? null
+                : () => _refresh.request(podcastId: podcast?.id),
+          ),
+        if (podcast != null)
+          IconButton(
+            icon: Icon(Icons.info_outline, semanticLabel: strings.aboutPodcast),
+            onPressed: () => _open(_Screen.about, podcast.id),
+          ),
+      ],
+    );
+  }
+
+  String? _refreshSubtitle(BuildContext context, Podcast? podcast) {
+    final strings = context.strings;
+    final id = podcast?.id;
+    if (_refresh.runningFor(id)) return strings.refreshing;
+    final last = podcast == null ? _refresh.lastLoaded : podcast.lastSuccessAt;
+    if (_refresh.requestedFor(id, last)) return strings.refreshRequested;
+    if (last == null) return null;
+    return DateUtils.isSameDay(last.toLocal(), DateTime.now())
+        ? strings.loadedAt(clockText(strings, last))
+        : strings.loadedOn(dateText(strings, last));
+  }
+
   String _title(BuildContext context, _Page page) {
     final library = widget.services.library;
     final strings = context.strings;
@@ -607,17 +645,19 @@ class _LibraryHomeState extends State<_LibraryHome> {
       _ => null,
     };
     if (kind != null) {
+      final canRefresh = kind == EpisodeListKind.newEpisodes;
       return EpisodeList(
         kind: kind,
         episodes: _sectionEpisodes(),
         playback: _playback,
         onOpen: _openEpisode,
         onMenu: _openEpisodeMenu,
+        onRefresh: canRefresh ? () => _refresh.request() : null,
         desktop: desktop,
         selectedId: _selectedEpisodeId,
         actions: [
-          if (_section == LibrarySection.newEpisodes)
-            RefreshRow(refresh: _refresh, lastLoaded: _refresh.lastLoaded),
+          if (canRefresh && _refresh.failedFor(null))
+            EinkError(context.strings.refreshFailed, inset: true),
         ],
       );
     }
@@ -707,6 +747,9 @@ class _LibraryHomeState extends State<_LibraryHome> {
       playback: _playback,
       onOpen: _openEpisode,
       onMenu: _openEpisodeMenu,
+      onRefresh: podcast.subscribed
+          ? () => _refresh.request(podcastId: id)
+          : null,
       desktop: desktop,
       selectedId: _selectedEpisodeId,
       emptyMessage: searching && _podcastSearch.words.isNotEmpty
@@ -733,24 +776,13 @@ class _LibraryHomeState extends State<_LibraryHome> {
             leading: const Icon(Icons.search),
             onPressed: () => _openPodcastSearch(id),
           ),
-        if (podcast.subscribed)
-          RefreshRow(
-            refresh: _refresh,
-            lastLoaded: podcast.lastSuccessAt,
-            podcastId: id,
-          ),
+        if (podcast.subscribed && _refresh.failedFor(id))
+          EinkError(strings.refreshFailed, inset: true),
         if (podcast.lastError?.isNotEmpty ?? false)
           Padding(
             padding: const EdgeInsets.all(8),
             child: FeedStatusText(podcast, showLastLoaded: !podcast.subscribed),
           ),
-        EinkRow(
-          title: strings.aboutPodcast,
-          compact: true,
-          underlined: true,
-          trailing: const Icon(Icons.chevron_right),
-          onPressed: () => _open(_Screen.about, id),
-        ),
       ],
     );
   }

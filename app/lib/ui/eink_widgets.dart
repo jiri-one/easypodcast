@@ -78,15 +78,19 @@ class EinkHeader extends StatelessWidget {
   const EinkHeader(
     this.title, {
     super.key,
+    this.subtitle,
     this.onBack,
     this.onMenu,
     this.expanded = false,
+    this.actions = const [],
   });
 
   final String title;
+  final String? subtitle;
   final VoidCallback? onBack;
   final VoidCallback? onMenu;
   final bool expanded;
+  final List<Widget> actions;
 
   @override
   Widget build(BuildContext context) {
@@ -97,54 +101,67 @@ class EinkHeader extends StatelessWidget {
       overflow: TextOverflow.ellipsis,
     );
     final menu = onMenu;
+    final titleLine = menu == null
+        ? Semantics(header: true, child: label)
+        : Row(
+            children: [
+              Flexible(child: label),
+              const SizedBox(width: 4),
+              Icon(expanded ? Icons.expand_less : Icons.expand_more),
+            ],
+          );
+    final detail = subtitle;
+    final content = detail == null
+        ? titleLine
+        : Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              titleLine,
+              Text(detail, style: detailStyle),
+            ],
+          );
     return DecoratedBox(
       decoration: const BoxDecoration(border: Border(bottom: BorderSide())),
       child: ConstrainedBox(
         constraints: const BoxConstraints(minHeight: 52),
-        child: menu != null
-            ? Semantics(
-                expanded: expanded,
-                label: context.strings.changeList,
-                child: TextButton(
-                  onPressed: menu,
-                  style: const ButtonStyle(
-                    alignment: AlignmentDirectional.centerStart,
-                    minimumSize: WidgetStatePropertyAll(
-                      Size(double.infinity, 52),
-                    ),
-                    padding: WidgetStatePropertyAll(
-                      EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    ),
-                  ),
-                  child: Row(
-                    children: [
-                      Flexible(child: label),
-                      const SizedBox(width: 4),
-                      Icon(expanded ? Icons.expand_less : Icons.expand_more),
-                    ],
-                  ),
-                ),
+        child: Row(
+          children: [
+            if (onBack != null)
+              IconButton(
+                onPressed: onBack,
+                tooltip: MaterialLocalizations.of(context).backButtonTooltip,
+                icon: const Icon(Icons.arrow_back),
               )
-            : Row(
-                children: [
-                  if (onBack != null)
-                    IconButton(
-                      onPressed: onBack,
-                      tooltip: MaterialLocalizations.of(context)
-                          .backButtonTooltip,
-                      icon: const Icon(Icons.arrow_back),
-                    )
-                  else
-                    const SizedBox(width: 12),
-                  Expanded(
-                    child: Padding(
+            else if (menu == null)
+              const SizedBox(width: 12),
+            Expanded(
+              child: menu == null
+                  ? Padding(
                       padding: const EdgeInsets.symmetric(vertical: 6),
-                      child: Semantics(header: true, child: label),
+                      child: content,
+                    )
+                  : Semantics(
+                      expanded: expanded,
+                      label: context.strings.changeList,
+                      child: TextButton(
+                        onPressed: menu,
+                        style: const ButtonStyle(
+                          minimumSize: WidgetStatePropertyAll(Size(0, 52)),
+                          padding: WidgetStatePropertyAll(
+                            EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          ),
+                        ),
+                        child: content,
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 12),
-                ],
-              ),
+            ),
+            if (actions.isNotEmpty)
+              Column(mainAxisSize: MainAxisSize.min, children: actions)
+            else if (menu == null)
+              const SizedBox(width: 12),
+          ],
+        ),
       ),
     );
   }

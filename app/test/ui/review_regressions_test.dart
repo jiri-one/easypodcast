@@ -9,6 +9,7 @@ import 'package:easypodcast/ui/episode_text.dart';
 import 'package:easypodcast/ui/library_views.dart';
 import 'package:easypodcast/ui/settings_pages.dart';
 import 'package:easypodcast/ui/theme.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
@@ -117,10 +118,15 @@ void main() {
   testWidgets(
     'podcast shows a stale feed error and a refresh that is still pending',
     (tester) async {
-      final app = await _phone(tester, library: _StaleFeedLibrary());
+      final library = _StaleFeedLibrary();
+      final app = await _phone(tester, library: library);
       final l = app.strings;
-      final podcast = app.services.library.podcast(7)!;
+      final podcast = library.podcast(7)!;
       final date = l.loadedOn(dateText(l, podcast.lastSuccessAt!));
+      Finder subtitle(String text) => find.descendant(
+        of: find.byType(EinkHeader),
+        matching: find.text(text),
+      );
       try {
         await app.section(LibrarySection.podcasts);
         final podcasts = find.byType(PodcastList);
@@ -130,25 +136,109 @@ void main() {
         expect(podcasts, findsOneWidget);
         await app.scrollToRow(podcast.title, podcasts);
 
-        expect(find.text(date), findsOneWidget);
+        expect(subtitle(date), findsOneWidget);
         expect(find.textContaining(podcast.lastError!), findsOneWidget);
-        await app.row(l.refresh);
-        expect(find.text(l.refreshing), findsOneWidget);
+        await app.tap(find.bySemanticsLabel(l.refresh));
+        expect(library.refreshes, 1);
+        expect(subtitle(l.refreshing), findsOneWidget);
+        expect(subtitle(date), findsNothing);
         for (final seconds in [2, 4, 8]) {
           await tester.pump(Duration(seconds: seconds));
           await tester.pump();
         }
-        expect(find.text(l.refreshRequested), findsOneWidget);
-        expect(find.text(date), findsOneWidget);
-        (app.services.library as _StaleFeedLibrary).finishRefresh();
+        expect(subtitle(l.refreshRequested), findsOneWidget);
+        library.finishRefresh();
         await tester.pumpAndSettle();
-        expect(find.text(l.refreshRequested), findsNothing);
+        expect(subtitle(l.refreshRequested), findsNothing);
+        final updated = library.podcast(podcast.id)!.lastSuccessAt!;
+        expect(subtitle(l.loadedAt(clockText(l, updated))), findsOneWidget);
         expect(find.textContaining(podcast.lastError!), findsNothing);
       } finally {
         await app.finish();
       }
     },
   );
+
+  for (final section in [LibrarySection.newEpisodes, LibrarySection.podcasts]) {
+    testWidgets('${section.name} refreshes once when a long pull is released', (
+      tester,
+    ) async {
+      final library = _StaleFeedLibrary();
+      final app = await _phone(tester, library: library);
+      final l = app.strings;
+      try {
+        await app.section(section);
+        if (section == LibrarySection.podcasts) {
+          await app.scrollToRow(
+            library.podcast(1)!.title,
+            find.byType(PodcastList),
+          );
+        }
+        final list = find.byType(EpisodeList);
+        final scrollable = find.descendant(
+          of: list,
+          matching: find.byType(Scrollable),
+        );
+        final position = tester.state<ScrollableState>(scrollable).position;
+        await tester.drag(list, const Offset(0, 40));
+        await tester.pumpAndSettle();
+        expect(library.refreshes, 0);
+
+        final gesture = await tester.startGesture(tester.getCenter(list));
+        for (final distance in [25.0, 40.0, 40.0]) {
+          await gesture.moveBy(Offset(0, distance));
+        }
+        await tester.pump();
+        expect(position.pixels, position.minScrollExtent);
+        expect(library.refreshes, 0);
+        await gesture.up();
+        await tester.pumpAndSettle();
+        expect(library.refreshes, 1);
+        expect(find.widgetWithText(EinkHeader, l.refreshing), findsOneWidget);
+
+        library.finishRefresh();
+        await tester.pump(const Duration(seconds: 2));
+        await tester.pumpAndSettle();
+        final updated = library.podcast(1)!.lastSuccessAt!;
+        expect(
+          find.widgetWithText(EinkHeader, l.loadedAt(clockText(l, updated))),
+          findsOneWidget,
+        );
+        expect(library.refreshes, 1);
+      } finally {
+        await app.finish();
+      }
+    });
+  }
+
+  testWidgets('Linux list header can refresh and shows a failed request', (
+    tester,
+  ) async {
+    final library = _StaleFeedLibrary()..failRefresh = true;
+    final app = await UiHarness.open(
+      tester,
+      size: const Size(1000, 700),
+      desktopFont: font,
+      library: library,
+    );
+    final l = app.strings;
+    try {
+      await app.section(LibrarySection.newEpisodes);
+      final refresh = find.descendant(
+        of: find.byType(EinkHeader),
+        matching: find.bySemanticsLabel(l.refresh),
+      );
+      final target = tester.getSize(refresh);
+      expect(target.width, greaterThanOrEqualTo(48));
+      expect(target.height, greaterThanOrEqualTo(48));
+      await tester.tap(refresh, kind: PointerDeviceKind.mouse);
+      await tester.pumpAndSettle();
+      expect(library.refreshes, 1);
+      expect(find.widgetWithText(EinkError, l.refreshFailed), findsOneWidget);
+    } finally {
+      await app.finish();
+    }
+  });
 
   testWidgets(
     'open episode notes reload after a podcast update and a same-version reset',
@@ -294,7 +384,8 @@ void main() {
           library.podcast(1)!.title,
           find.byType(PodcastList),
         );
-        await app.row(l.aboutPodcast);
+        await app.tap(find.bySemanticsLabel(l.aboutPodcast));
+        expect(find.byType(AboutPodcastPage), findsOneWidget);
         await app.tapText(l.unsubscribe);
         expect(library.podcast(1)!.subscribed, isTrue);
         await app.dialog(l.cancel);
@@ -463,8 +554,14 @@ class _EmptyLibrary extends DemoLibrary {
 }
 
 class _StaleFeedLibrary extends DemoLibrary {
+  int refreshes = 0;
+  bool failRefresh = false;
+
   @override
-  void refreshFeeds() {}
+  void refreshFeeds() {
+    refreshes++;
+    if (failRefresh) throw ApiException(500, 'Demo refresh error');
+  }
 
   void finishRefresh() => super.refreshFeeds();
 }
