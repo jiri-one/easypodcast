@@ -6,6 +6,7 @@ import 'package:easypodcast/ui/eink_widgets.dart';
 import 'package:easypodcast/ui/episode_queue.dart';
 import 'package:easypodcast/ui/library_views.dart';
 import 'package:flutter/gestures.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -117,6 +118,17 @@ void main() {
       expect(tester.getRect(_row(app, 203, 2)), preview);
       expect(_ids(library), [203, 401, 602]);
       expect(library.moves, [(203, 2)]);
+      expect(
+        tester
+            .widget<Opacity>(
+              find.ancestor(
+                of: find.text(app.strings.queueSaving),
+                matching: find.byType(Opacity),
+              ),
+            )
+            .opacity,
+        1,
+      );
 
       gate.complete();
       await tester.pumpAndSettle();
@@ -242,6 +254,75 @@ void main() {
       await app.finish();
     }
   });
+
+  testWidgets('a finger held for 600 ms can still start a scroll', (
+    tester,
+  ) async {
+    final library = _RecordingLibrary();
+    final app = await _openQueue(tester, library);
+    try {
+      expect(find.text(app.strings.queueDragHint), findsOneWidget);
+      final row = _row(app, 602, 2);
+      final touch = await tester.startGesture(tester.getCenter(row));
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(tester.widget<EinkRow>(row).lifted, isFalse);
+      await touch.moveTo(tester.getCenter(_row(app, 203, 0)));
+      await touch.up();
+      await tester.pumpAndSettle();
+      expect(library.moves, isEmpty);
+      expect(_ids(library), [203, 401, 602]);
+    } finally {
+      await app.finish();
+    }
+  });
+
+  testWidgets(
+    'the accessible row action can move an episode down or to the top',
+    (tester) async {
+      final semantics = tester.ensureSemantics();
+      final library = _RecordingLibrary();
+      final app = await _openQueue(tester, library);
+      final l = app.strings;
+      Future<void> actions(int id, int index) async {
+        final node = tester.getSemantics(_row(app, id, index));
+        node.owner!.performAction(node.id, SemanticsAction.longPress);
+        await tester.pumpAndSettle();
+      }
+
+      try {
+        await actions(401, 1);
+        expect(find.text(l.moveQueueUp), findsOneWidget);
+        await app.dialog(l.moveQueueDown);
+        expect(_ids(library), [203, 602, 401]);
+        await actions(401, 2);
+        await app.dialog(l.moveQueueFirst);
+        expect(_ids(library), [401, 203, 602]);
+      } finally {
+        semantics.dispose();
+        await app.finish();
+      }
+    },
+  );
+
+  testWidgets('Shift+F10 opens queue actions from the focused row', (
+    tester,
+  ) async {
+    final library = _RecordingLibrary();
+    final app = await _openQueue(tester, library, desktopFont: font);
+    try {
+      final title = app.strings.numberedTitle(2, app.episode(401));
+      Focus.of(tester.element(find.text(title))).requestFocus();
+      await tester.pump();
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.f10);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.pumpAndSettle();
+      await app.dialog(app.strings.moveQueueUp);
+      expect(_ids(library), [401, 203, 602]);
+    } finally {
+      await app.finish();
+    }
+  });
 }
 
 Future<UiHarness> _openQueue(
@@ -271,7 +352,7 @@ List<int> _ids(DemoLibrary library) => [
 
 Future<TestGesture> _hold(WidgetTester tester, Finder row) async {
   final gesture = await tester.startGesture(tester.getCenter(row));
-  await tester.pump(kLongPressTimeout);
+  await tester.pump(EpisodeQueue.holdDuration);
   return gesture;
 }
 

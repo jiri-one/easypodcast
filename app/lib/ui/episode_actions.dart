@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../core/downloads.dart';
@@ -8,6 +7,7 @@ import 'eink_widgets.dart';
 import 'episode_text.dart';
 import 'playback_actions.dart';
 import 'player_views.dart';
+import 'queue_edits.dart';
 import 'theme.dart';
 
 class EpisodeAction {
@@ -19,6 +19,7 @@ class EpisodeAction {
     this.alternatives = const [],
     this.progress,
     this.error = false,
+    this.hidden = false,
   });
 
   final String label;
@@ -28,6 +29,7 @@ class EpisodeAction {
   final List<String> alternatives;
   final int? progress;
   final bool error;
+  final bool hidden;
 
   EinkButton button(VoidCallback onPressed) => EinkButton(
     label,
@@ -38,6 +40,7 @@ class EpisodeAction {
     alternatives: alternatives,
     progress: progress,
     error: error,
+    reserveSpaceOnly: hidden,
   );
 }
 
@@ -45,15 +48,15 @@ class EpisodeActions {
   const EpisodeActions({
     required this.episode,
     required this.playback,
+    required this.queueEdits,
     required this.downloadsAvailable,
-    required this.wifiConnected,
     required this.onTrackDownload,
   });
 
   final Episode episode;
   final PlaybackActions playback;
+  final QueueEdits queueEdits;
   final bool downloadsAvailable;
-  final ValueListenable<bool?> wifiConnected;
   final ValueChanged<int> onTrackDownload;
 
   Library get _library => playback.services.library;
@@ -65,17 +68,23 @@ class EpisodeActions {
   ) => downloadsAvailable
       ? DownloadStatusView(
           services: playback.services,
-          wifiConnected: wifiConnected,
           episodeId: episode.id,
           builder: builder,
         )
       : builder(context, noDownload);
 
-  List<EpisodeAction> options(BuildContext context, DownloadDisplay download) {
+  List<EpisodeAction> options(
+    BuildContext context,
+    DownloadDisplay download, {
+    bool queueMoves = false,
+    bool reserveStateSlots = false,
+  }) {
     final strings = context.strings;
     final id = episode.id;
     final state = _library.stateOf(id);
-    final queued = _library.queue.any((item) => item.id == id);
+    final queue = queueEdits.episodes;
+    final queueIndex = queue.indexWhere((item) => item.id == id);
+    final queued = queueIndex >= 0;
     return [
       EpisodeAction(
         playLabel(context, playback, episode, showPosition: true),
@@ -96,39 +105,49 @@ class EpisodeActions {
       ),
       EpisodeAction(
         queued ? strings.removeFromQueue : strings.addToQueue,
-        (_) => queued ? _library.dequeue(id) : _library.enqueue(id),
+        (_) => queueEdits.setMembership(episode, queued: !queued),
         alternatives: [strings.removeFromQueue, strings.addToQueue],
       ),
+      if (queueMoves && queued && !queueEdits.saving) ...[
+        if (queueIndex > 0)
+          EpisodeAction(
+            strings.moveQueueUp,
+            (_) => queueEdits.move(episode, queueIndex - 1),
+          ),
+        if (queueIndex < queue.length - 1)
+          EpisodeAction(
+            strings.moveQueueDown,
+            (_) => queueEdits.move(episode, queueIndex + 1),
+          ),
+        if (queueIndex > 0)
+          EpisodeAction(
+            strings.moveQueueFirst,
+            (_) => queueEdits.move(episode, 0),
+          ),
+      ],
+      EpisodeAction(
+        state.isPlayed ? strings.markNew : strings.markPlayed,
+        (_) => state.isPlayed
+            ? _library.markNew(id)
+            : _finish(() => _library.markPlayed(id)),
+        alternatives: [strings.markNew, strings.markPlayed],
+      ),
+      if (!state.isPlayed || reserveStateSlots)
+        EpisodeAction(
+          state.isDismissed ? strings.markNew : strings.dismiss,
+          state.isDismissed ? (_) => _library.markNew(id) : _dismiss,
+          alternatives: [strings.markNew, strings.dismiss],
+          hidden: state.isPlayed,
+        ),
       if (downloadsAvailable &&
           (!state.isDismissed || download.status != DownloadStatus.none))
         _downloadAction(context, download),
-      if (state.isDismissed || state.isPlayed)
-        EpisodeAction(
-          strings.markNew,
-          (_) => _library.markNew(id),
-          alternatives: [
-            strings.markNew,
-            state.isPlayed ? strings.markPlayed : strings.dismiss,
-          ],
-        )
-      else ...[
-        EpisodeAction(
-          strings.markPlayed,
-          (_) => _finish(() => _library.markPlayed(id)),
-          alternatives: [strings.markNew, strings.markPlayed],
-        ),
-        EpisodeAction(
-          strings.dismiss,
-          _dismiss,
-          alternatives: [strings.markNew, strings.dismiss],
-        ),
-      ],
       if (state.isNew && !queued && _dismissibleOlder().length > 1)
         EpisodeAction(strings.dismissOlder, _dismissOlder),
     ];
   }
 
-  Future<void> showMenu(BuildContext context) async {
+  Future<void> showMenu(BuildContext context, {bool queueMoves = false}) async {
     final selected = await showEinkDialog<EpisodeAction>(
       context: context,
       barrierDismissible: false,
@@ -136,6 +155,7 @@ class EpisodeActions {
         listenable: Listenable.merge([
           _library,
           playback,
+          queueEdits,
           playback.services.settings,
         ]),
         builder: (context, _) => watchDownload(
@@ -153,7 +173,11 @@ class EpisodeActions {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 spacing: 6,
                 children: [
-                  for (final action in options(context, download))
+                  for (final action in options(
+                    context,
+                    download,
+                    queueMoves: queueMoves,
+                  ))
                     action.button(() => Navigator.pop(context, action)),
                 ],
               ),
@@ -267,19 +291,8 @@ class EpisodeActions {
     await _finish(() => _library.dismiss(episode.id));
   }
 
-  List<Episode> _dismissibleOlder() {
-    final cutoff = episode.publishedAt;
-    final queued = _library.queue.map((item) => item.id).toSet();
-    return [
-      for (final item in _library.episodesOf(episode.podcastId))
-        if ((item.id == episode.id ||
-                (cutoff != null &&
-                    item.publishedAt?.isAfter(cutoff) == false)) &&
-            _library.stateOf(item.id).isNew &&
-            !queued.contains(item.id))
-          item,
-    ];
-  }
+  List<Episode> _dismissibleOlder() =>
+      _library.dismissOlderCandidates(episode.id);
 
   Future<void> _dismissOlder(BuildContext context) async {
     final candidates = _dismissibleOlder();
@@ -302,7 +315,13 @@ class EpisodeActions {
       action: strings.dismissCount(count),
     );
     if (confirm && context.mounted) {
-      await _finish(() => _library.dismissOlder(episode.id));
+      await _finish(() async {
+        try {
+          await _library.dismissOlder(episode.id);
+        } on Object {
+          throw BulkDismissNeedsConnection();
+        }
+      });
     }
   }
 }

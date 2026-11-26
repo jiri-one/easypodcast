@@ -5,12 +5,14 @@ import 'package:easypodcast/core/downloads.dart';
 import 'package:easypodcast/core/services.dart';
 import 'package:easypodcast/l10n/app_localizations.dart';
 import 'package:easypodcast/ui/app_root.dart';
+import 'package:easypodcast/ui/cover_image.dart';
 import 'package:easypodcast/ui/demo/demo_api.dart';
 import 'package:easypodcast/ui/demo/demo_downloads.dart';
 import 'package:easypodcast/ui/demo/demo_library.dart';
 import 'package:easypodcast/ui/demo/demo_services.dart';
 import 'package:easypodcast/ui/demo/demo_sync.dart';
 import 'package:easypodcast/ui/eink_widgets.dart';
+import 'package:easypodcast/ui/episode_queue.dart';
 import 'package:easypodcast/ui/library_views.dart';
 import 'package:easypodcast/ui/playback_position.dart';
 import 'package:easypodcast/ui/player_views.dart';
@@ -74,15 +76,18 @@ class UiHarness {
     bool loggedIn = true,
     DemoLibrary? library,
     bool playerCover = false,
+    AppServices Function(AppServices)? configure,
   }) async {
     final desktop = desktopFont != null;
-    if (playerCover) _cacheCover();
-    final services = await createDemoServices(
+    if (playerCover) await _cacheCover(desktop ? 52 : size.width.round());
+    final demo = await createDemoServices(
       loggedIn: loggedIn,
       library:
           library ??
           (playerCover ? DemoLibrary(firstPodcastCover: _coverUrl) : null),
     );
+    final services = configure?.call(demo) ?? demo;
+    if (!identical(services.player, demo.player)) demo.player.dispose();
     final app = UiHarness._(tester, services, desktop);
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1;
@@ -149,10 +154,12 @@ class UiHarness {
         buttons: kSecondaryMouseButton,
       );
     } else {
-      await tester.longPress(
-        row,
+      final hold = await tester.startGesture(
+        tester.getCenter(row),
         kind: desktop ? PointerDeviceKind.mouse : PointerDeviceKind.touch,
       );
+      await tester.pump(EpisodeQueue.holdDuration);
+      await hold.up();
     }
     await tester.pumpAndSettle();
   }
@@ -201,74 +208,94 @@ class UiHarness {
   Future<void> login({bool reject = false}) async {
     (services.api as DemoApiClient).loginErrorCode = reject ? 401 : null;
     for (final (key, text) in [
+      if (tester
+          .widget<TextField>(_loginField('login-address'))
+          .controller!
+          .text
+          .isEmpty)
+        ('login-address', 'https://podcast.example'),
       ('login-name', 'listener'),
       ('login-password', 'demo password'),
     ]) {
-      await tester.enterText(
-        find.descendant(
-          of: find.byKey(ValueKey(key)),
-          matching: find.byType(TextField),
-        ),
-        text,
-      );
+      await tester.enterText(_loginField(key), text);
     }
     await tapText(strings.signIn);
   }
+
+  Finder _loginField(String key) => find.descendant(
+    of: find.byKey(ValueKey(key)),
+    matching: find.byType(TextField),
+  );
 }
 
 const _coverUrl = 'https://podcast.example/1/cover.png';
 
-void _cacheCover() {
-  const key = NetworkImage(_coverUrl);
+Future<void> _cacheCover(int largest) async {
   final cache = PaintingBinding.instance.imageCache;
-  cache.putIfAbsent(key, () {
-    final recorder = ui.PictureRecorder();
-    final canvas = Canvas(recorder);
-    const size = Size.square(192);
-    final paint = Paint()..color = const Color(0xffb4cbd3);
-    canvas.drawRect(Offset.zero & size, paint);
-    paint.color = const Color(0xffe5c596);
-    canvas.drawCircle(const Offset(136, 55), 24, paint);
-    paint.color = const Color(0xff506e62);
-    canvas.drawPath(
-      Path()
-        ..moveTo(0, 100)
-        ..lineTo(43, 58)
-        ..lineTo(73, 88)
-        ..lineTo(108, 70)
-        ..lineTo(192, 108)
-        ..lineTo(192, 192)
-        ..lineTo(0, 192)
-        ..close(),
+  final recorder = ui.PictureRecorder();
+  final canvas = Canvas(recorder);
+  const size = Size.square(192);
+  final paint = Paint()..color = const Color(0xffb4cbd3);
+  canvas.drawRect(Offset.zero & size, paint);
+  paint.color = const Color(0xffe5c596);
+  canvas.drawCircle(const Offset(136, 55), 24, paint);
+  paint.color = const Color(0xff506e62);
+  canvas.drawPath(
+    Path()
+      ..moveTo(0, 100)
+      ..lineTo(43, 58)
+      ..lineTo(73, 88)
+      ..lineTo(108, 70)
+      ..lineTo(192, 108)
+      ..lineTo(192, 192)
+      ..lineTo(0, 192)
+      ..close(),
+    paint,
+  );
+  paint
+    ..color = const Color(0xffd7cca5)
+    ..strokeWidth = 3;
+  for (final (y, halfWidth) in const [
+    (102.0, 9.0),
+    (116.0, 15.0),
+    (136.0, 22.0),
+    (161.0, 32.0),
+    (189.0, 45.0),
+  ]) {
+    canvas.drawLine(
+      Offset(99 - halfWidth, y),
+      Offset(99 + halfWidth, y),
       paint,
     );
-    paint
-      ..color = const Color(0xffd7cca5)
-      ..strokeWidth = 3;
-    for (final (y, halfWidth) in const [
-      (102.0, 9.0),
-      (116.0, 15.0),
-      (136.0, 22.0),
-      (161.0, 32.0),
-      (189.0, 45.0),
-    ]) {
-      canvas.drawLine(
-        Offset(99 - halfWidth, y),
-        Offset(99 + halfWidth, y),
-        paint,
-      );
+  }
+  paint
+    ..color = const Color(0xff292e39)
+    ..strokeWidth = 5;
+  canvas.drawLine(const Offset(94, 93), const Offset(60, 192), paint);
+  canvas.drawLine(const Offset(104, 93), const Offset(138, 192), paint);
+  final picture = recorder.endRecording();
+  final image = picture.toImageSync(192, 192);
+  picture.dispose();
+  final completer = OneFrameImageStreamCompleter(
+    Future.value(ImageInfo(image: image)),
+  );
+  final keys = [
+    for (var size = 1; size <= largest; size++)
+      await ResizeImage(
+        const CoverImage(_coverUrl),
+        width: size,
+        height: size,
+        policy: ResizeImagePolicy.fit,
+      ).obtainKey(ImageConfiguration.empty),
+  ];
+  for (final key in keys) {
+    cache.putIfAbsent(key, () => completer);
+  }
+  addTearDown(() {
+    for (final key in keys) {
+      cache.evict(key);
     }
-    paint
-      ..color = const Color(0xff292e39)
-      ..strokeWidth = 5;
-    canvas.drawLine(const Offset(94, 93), const Offset(60, 192), paint);
-    canvas.drawLine(const Offset(104, 93), const Offset(138, 192), paint);
-    final picture = recorder.endRecording();
-    final image = picture.toImageSync(192, 192);
-    picture.dispose();
-    return OneFrameImageStreamCompleter(Future.value(ImageInfo(image: image)));
   });
-  addTearDown(() => cache.evict(key));
 }
 
 typedef VisitScreen = Future<void> Function(String name);
@@ -347,6 +374,8 @@ Future<void> tourPhone(UiHarness app, VisitScreen visit) async {
   await app.row(l.aboutPodcast);
   await visit('20-about-podcast');
   await app.tapText(l.unsubscribe);
+  expect(find.text(l.unsubscribeTitle), findsOneWidget);
+  await app.dialog(l.unsubscribe);
   expect(find.text(l.notSubscribed), findsOneWidget);
   await visit('25-unsubscribe');
   await app.back();
@@ -354,7 +383,7 @@ Future<void> tourPhone(UiHarness app, VisitScreen visit) async {
   await app.back();
 
   (app.services.sync as DemoSyncService).setOffline();
-  downloads.queueDownload(602);
+  downloads.queueDownload(602, waitingForWifi: true);
   await app.section(LibrarySection.downloads);
   await visit('13-downloads-offline');
   await app.back();

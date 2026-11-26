@@ -1,15 +1,17 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../core/api.dart';
 import '../core/models.dart';
 import '../core/services.dart';
-import '../core/sync.dart';
 import 'eink_widgets.dart';
 import 'episode_text.dart';
 import 'plain_links.dart';
 import 'playback_actions.dart';
 import 'player_views.dart';
+import 'sync_feedback.dart';
 import 'theme.dart';
 
 class SettingsPage extends StatelessWidget {
@@ -50,11 +52,21 @@ class SettingsPage extends StatelessWidget {
     return PageList(
       key: const PageStorageKey('settings-list'),
       children: [
-        EinkRow(
-          title: strings.server,
-          details: [ServerStatusLine(services: services)],
-          trailing: const Icon(Icons.chevron_right),
-          onPressed: onServer,
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            EinkRow(
+              title: strings.server,
+              trailing: const Icon(Icons.chevron_right),
+              onPressed: onServer,
+              last: true,
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+              child: ServerStatusLine(services: services),
+            ),
+            const Divider(height: 1),
+          ],
         ),
         _ToggleRow(
           title: strings.continueQueue,
@@ -84,20 +96,32 @@ class SettingsPage extends StatelessWidget {
           value: settings.skipForwardSeconds,
           onChange: (value) => settings.skipForwardSeconds = value,
         ),
-        if (downloadsAvailable)
-          _SecondsRow(
-            title: strings.playerRedraw,
-            options: const [1, 10, 60],
-            value: redrawSeconds,
-            onChange: onRedrawSeconds,
-            showMinute: true,
-          ),
+        _SecondsRow(
+          title: strings.playerRedraw,
+          options: const [1, 10, 60],
+          value: redrawSeconds,
+          onChange: onRedrawSeconds,
+          showMinute: true,
+        ),
+        _SecondsRow(
+          title: strings.listRedraw,
+          options: const [1, 10, 60],
+          value: settings.positionRedrawSeconds,
+          onChange: (value) => settings.positionRedrawSeconds = value,
+          showMinute: true,
+        ),
         if (downloadsAvailable) ...[
           _ToggleRow(
             title: strings.downloadWifi,
             value: settings.downloadOnWifiOnly,
             onPressed: () =>
                 settings.downloadOnWifiOnly = !settings.downloadOnWifiOnly,
+          ),
+          _ToggleRow(
+            title: strings.keepQueueDownloaded,
+            value: settings.keepQueueDownloaded,
+            onPressed: () =>
+                settings.keepQueueDownloaded = !settings.keepQueueDownloaded,
           ),
           _ToggleRow(
             title: strings.deletePlayedDownloads,
@@ -241,33 +265,80 @@ class _SecondsRow extends StatelessWidget {
   }
 }
 
-class ServerStatusLine extends StatelessWidget {
+class ServerStatusLine extends StatefulWidget {
   const ServerStatusLine({super.key, required this.services});
 
   final AppServices services;
 
   @override
-  Widget build(BuildContext context) => ValueListenableBuilder(
-    valueListenable: services.sync.status,
-    builder: (context, status, _) {
-      final strings = context.strings;
-      final problem = switch (status.phase) {
-        SyncPhase.offline => strings.offline,
-        SyncPhase.error => strings.syncError,
-        _ => null,
-      };
-      if (problem != null) {
-        return Padding(
-          padding: const EdgeInsets.only(top: 4),
-          child: DefaultTextStyle.merge(
-            style: detailStyle,
-            child: EinkError(problem),
-          ),
-        );
-      }
-      return Text(strings.serverConnected, style: detailStyle);
-    },
-  );
+  State<ServerStatusLine> createState() => _ServerStatusLineState();
+}
+
+class _ServerStatusLineState extends State<ServerStatusLine> {
+  bool _sending = false;
+  bool _failed = false;
+
+  Future<void> _send() async {
+    if (_sending) return;
+    _sending = true;
+    if (_failed) setState(() => _failed = false);
+    try {
+      await widget.services.sync.syncNow();
+    } on Exception {
+      if (mounted) setState(() => _failed = true);
+    } finally {
+      _sending = false;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final feedback = SyncFeedback.of(context);
+    final status = feedback.status;
+    final strings = context.strings;
+    final problem =
+        feedback.problem(context) ?? (_failed ? strings.syncError : null);
+    final last = status.lastSuccess;
+    final lastSync = last == null
+        ? (feedback.loadingLibrary(widget.services.library)
+              ? strings.syncLoading
+              : strings.serverConnected)
+        : strings.serverLastSync(
+            [
+              if (!DateUtils.isSameDay(last.toLocal(), DateTime.now()))
+                dateText(strings, last),
+              clockText(strings, last),
+            ].join(' '),
+          );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      spacing: 4,
+      children: [
+        if (status.pending > 0)
+          TextButton(
+            onPressed: _send,
+            style: const ButtonStyle(
+              alignment: AlignmentDirectional.centerStart,
+              padding: WidgetStatePropertyAll(EdgeInsets.zero),
+            ),
+            child: Text.rich(
+              TextSpan(
+                text:
+                    strings.pendingChanges(status.pending) + metadataSeparator,
+                children: [
+                  TextSpan(text: strings.sendNow, style: underlineStyle),
+                ],
+              ),
+              style: detailStyle,
+            ),
+          )
+        else if (last != null || problem == null)
+          Text(lastSync, style: detailStyle),
+        if (problem != null)
+          DefaultTextStyle.merge(style: detailStyle, child: EinkError(problem)),
+      ],
+    );
+  }
 }
 
 class ServerPage extends StatefulWidget {
@@ -353,19 +424,52 @@ class AboutPodcastPage extends StatefulWidget {
 class _AboutPodcastPageState extends State<AboutPodcastPage> {
   bool _working = false;
   bool _failed = false;
+  bool? _subscribing;
+  Timer? _tapGuard;
 
-  Future<void> _unsubscribe() async {
-    if (_working) return;
+  @override
+  void dispose() {
+    _tapGuard?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _changeSubscription() async {
+    if (_working || _tapGuard?.isActive == true) return;
+    final podcast = widget.podcast;
+    final strings = context.strings;
     setState(() {
       _working = true;
       _failed = false;
     });
     try {
-      await widget.services.library.unsubscribe(widget.podcast.id);
+      if (podcast.subscribed) {
+        final confirmed = await confirmAction(
+          context,
+          title: strings.unsubscribeTitle,
+          message: strings.unsubscribeHelp,
+          action: strings.unsubscribe,
+        );
+        if (confirmed && mounted) {
+          setState(() => _subscribing = false);
+          await widget.services.library.unsubscribe(podcast.id);
+        }
+      } else {
+        setState(() => _subscribing = true);
+        await widget.services.library.subscribe(podcast.feedUrl);
+      }
     } on Exception {
       _failed = true;
     } finally {
-      if (mounted) setState(() => _working = false);
+      if (mounted) {
+        _tapGuard = Timer(
+          const Duration(milliseconds: 600),
+          () => _tapGuard = null,
+        );
+        setState(() {
+          _working = false;
+          _subscribing = null;
+        });
+      }
     }
   }
 
@@ -388,25 +492,39 @@ class _AboutPodcastPageState extends State<AboutPodcastPage> {
         const SizedBox(height: 8),
         FeedStatusText(podcast),
         const SizedBox(height: 16),
+        EinkButton(
+          switch (_subscribing) {
+            true => strings.addingPodcast,
+            false => strings.unsubscribing,
+            null =>
+              podcast.subscribed ? strings.unsubscribe : strings.resubscribe,
+          },
+          onPressed: _changeSubscription,
+          alternatives: [
+            strings.unsubscribe,
+            strings.unsubscribing,
+            strings.resubscribe,
+            strings.addingPodcast,
+          ],
+        ),
         if (_failed) ProblemBox(strings.actionFailed),
-        if (podcast.subscribed) ...[
-          Text(strings.unsubscribeHelp, style: detailStyle),
-          const SizedBox(height: 8),
-          EinkButton(
-            _working ? strings.unsubscribing : strings.unsubscribe,
-            onPressed: _unsubscribe,
-          ),
-        ] else
-          Text(strings.notSubscribed, style: buttonLabelStyle),
+        if (!podcast.subscribed) PageMessage(strings.notSubscribed),
       ],
     );
   }
 }
 
 class FeedStatusText extends StatelessWidget {
-  const FeedStatusText(this.podcast, {super.key});
+  const FeedStatusText(
+    this.podcast, {
+    super.key,
+    this.showLastLoaded = true,
+    this.liveRegion = true,
+  });
 
   final Podcast podcast;
+  final bool showLastLoaded;
+  final bool liveRegion;
 
   @override
   Widget build(BuildContext context) {
@@ -416,19 +534,23 @@ class FeedStatusText extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       spacing: 4,
       children: [
-        Text(
-          time == null
-              ? strings.feedNeverLoaded
-              : strings.feedLastLoaded(
-                  dateText(strings, time),
-                  clockText(strings, time),
-                ),
-          style: detailStyle,
-        ),
+        if (showLastLoaded)
+          Text(
+            time == null
+                ? strings.feedNeverLoaded
+                : strings.feedLastLoaded(
+                    dateText(strings, time),
+                    clockText(strings, time),
+                  ),
+            style: detailStyle,
+          ),
         if (podcast.lastError case final String error when error.isNotEmpty)
           DefaultTextStyle.merge(
             style: detailStyle,
-            child: EinkError('${strings.feedUnavailable} $error'),
+            child: EinkError(
+              '${strings.feedUnavailable} ${maskUrlCredentials(error)}',
+              liveRegion: liveRegion,
+            ),
           ),
       ],
     );
@@ -450,12 +572,13 @@ class FeedStatusPage extends StatelessWidget {
     final podcasts = services.library.podcasts;
     if (podcasts.isEmpty) return PageMessage(context.strings.podcastsEmpty);
     return ListView.builder(
+      key: const PageStorageKey('feed-status-list'),
       itemCount: podcasts.length,
       itemBuilder: (context, index) {
         final podcast = podcasts[index];
         return EinkRow(
           title: podcast.title,
-          details: [FeedStatusText(podcast)],
+          details: [FeedStatusText(podcast, liveRegion: false)],
           trailing: const Icon(Icons.chevron_right),
           onPressed: () => onOpen(podcast),
         );
@@ -480,6 +603,7 @@ class _OpmlPageState extends State<OpmlPage> {
   _OpmlAction? _busy;
   String? _message;
   bool _failed = false;
+  List<({String feedUrl, String error})> _failedFeeds = const [];
 
   Future<void> _run(_OpmlAction action) async {
     if (_busy != null) return;
@@ -489,6 +613,7 @@ class _OpmlPageState extends State<OpmlPage> {
       setState(() {
         _failed = true;
         _message = strings.opmlInvalid;
+        _failedFeeds = const [];
       });
       return;
     }
@@ -497,13 +622,15 @@ class _OpmlPageState extends State<OpmlPage> {
       _busy = action;
       _message = null;
       _failed = false;
+      _failedFeeds = const [];
     });
     final services = widget.services;
     try {
       switch (action) {
         case _OpmlAction.import:
           final result = await services.api.importOpml(contents);
-          _failed = result.failed.isNotEmpty;
+          _failedFeeds = result.failed;
+          _failed = _failedFeeds.isNotEmpty;
           _message = strings.opmlSummary(
             result.added,
             result.existing,
@@ -538,33 +665,51 @@ class _OpmlPageState extends State<OpmlPage> {
   @override
   Widget build(BuildContext context) {
     final strings = context.strings;
-    return PageList(
-      inset: true,
-      children: [
-        Text(strings.opmlHelp, style: buttonLabelStyle),
-        const SizedBox(height: 12),
-        LabeledField(
-          label: strings.opmlContent,
-          controller: _contents,
-          enabled: _busy == null,
-          lines: 4,
+    return CustomScrollView(
+      slivers: [
+        SliverPadding(
+          padding: const EdgeInsets.all(12),
+          sliver: SliverList.list(
+            children: [
+              Text(strings.opmlHelp, style: buttonLabelStyle),
+              const SizedBox(height: 12),
+              LabeledField(
+                label: strings.opmlContent,
+                controller: _contents,
+                enabled: _busy == null,
+                lines: 4,
+              ),
+              EinkButton(
+                _busy == _OpmlAction.import
+                    ? strings.opmlImporting
+                    : strings.opmlImport,
+                primary: true,
+                onPressed: () => _run(_OpmlAction.import),
+              ),
+              const SizedBox(height: 8),
+              EinkButton(
+                _busy == _OpmlAction.export
+                    ? strings.opmlExporting
+                    : strings.opmlExport,
+                onPressed: () => _run(_OpmlAction.export),
+              ),
+              if (_message case final String message)
+                _failed ? ProblemBox(message) : PageMessage(message),
+            ],
+          ),
         ),
-        EinkButton(
-          _busy == _OpmlAction.import
-              ? strings.opmlImporting
-              : strings.opmlImport,
-          primary: true,
-          onPressed: () => _run(_OpmlAction.import),
+        SliverList.builder(
+          itemCount: _failedFeeds.length,
+          itemBuilder: (context, index) {
+            final failure = _failedFeeds[index];
+            return EinkRow(
+              title: maskUrlCredentials(failure.feedUrl),
+              details: [
+                Text(maskUrlCredentials(failure.error), style: detailStyle),
+              ],
+            );
+          },
         ),
-        const SizedBox(height: 8),
-        EinkButton(
-          _busy == _OpmlAction.export
-              ? strings.opmlExporting
-              : strings.opmlExport,
-          onPressed: () => _run(_OpmlAction.export),
-        ),
-        if (_message case final String message)
-          _failed ? ProblemBox(message) : PageMessage(message),
       ],
     );
   }

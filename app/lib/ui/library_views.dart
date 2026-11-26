@@ -1,14 +1,15 @@
-import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../core/downloads.dart';
 import '../core/models.dart';
-import '../core/sync.dart';
 import 'eink_widgets.dart';
 import 'episode_queue.dart';
 import 'episode_text.dart';
 import 'feed_refresh.dart';
 import 'playback_actions.dart';
+import 'queue_edits.dart';
+import 'sync_feedback.dart';
 import 'theme.dart';
 
 enum LibrarySection {
@@ -32,24 +33,13 @@ enum LibrarySection {
 enum EpisodeListKind { inProgress, queue, newEpisodes, podcast, downloads }
 
 class ListProblems extends StatelessWidget {
-  const ListProblems({super.key, required this.playback});
-
-  final PlaybackActions playback;
+  const ListProblems({super.key});
 
   @override
-  Widget build(BuildContext context) => ValueListenableBuilder(
-    valueListenable: playback.services.sync.status,
-    builder: (context, status, _) => Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        if (status.phase == SyncPhase.offline)
-          ProblemBox(context.strings.offline),
-        if (status.phase == SyncPhase.error)
-          ProblemBox(context.strings.syncError),
-        if (playback.failed) ProblemBox(context.strings.playbackFailed),
-      ],
-    ),
-  );
+  Widget build(BuildContext context) {
+    final problem = SyncFeedback.of(context).problem(context);
+    return problem == null ? const SizedBox.shrink() : ProblemBox(problem);
+  }
 }
 
 class RefreshRow extends StatelessWidget {
@@ -68,13 +58,18 @@ class RefreshRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final strings = context.strings;
     final last = lastLoaded;
+    final running = refresh.runningFor(podcastId);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         LayoutBuilder(
           builder: (context, constraints) => EinkRow(
-            title: refresh.running ? strings.refreshing : strings.refresh,
-            underlined: !refresh.running,
+            title: running
+                ? strings.refreshing
+                : refresh.requestedFor(podcastId, last)
+                ? strings.refreshRequested
+                : strings.refresh,
+            underlined: !running,
             compact: true,
             onPressed: () => refresh.request(podcastId: podcastId),
             trailing: last == null
@@ -84,14 +79,16 @@ class RefreshRow extends StatelessWidget {
                       maxWidth: constraints.maxWidth * 0.5,
                     ),
                     child: Text(
-                      strings.loadedAt(clockText(strings, last)),
+                      DateUtils.isSameDay(last.toLocal(), DateTime.now())
+                          ? strings.loadedAt(clockText(strings, last))
+                          : strings.loadedOn(dateText(strings, last)),
                       style: detailStyle,
                       textAlign: TextAlign.end,
                     ),
                   ),
           ),
         ),
-        if (refresh.failed) ProblemBox(strings.refreshFailed),
+        if (refresh.failedFor(podcastId)) ProblemBox(strings.refreshFailed),
       ],
     );
   }
@@ -109,7 +106,7 @@ class EpisodeList extends StatelessWidget {
     required this.playback,
     required this.onOpen,
     required this.onMenu,
-    required this.wifiConnected,
+    required this.queueEdits,
     this.actions = const [],
     this.desktop = false,
     this.downloadsAvailable = true,
@@ -122,7 +119,7 @@ class EpisodeList extends StatelessWidget {
   final PlaybackActions playback;
   final ValueChanged<Episode> onOpen;
   final ValueChanged<Episode> onMenu;
-  final ValueListenable<bool?> wifiConnected;
+  final QueueEdits queueEdits;
   final List<Widget> actions;
   final bool desktop;
   final bool downloadsAvailable;
@@ -132,12 +129,16 @@ class EpisodeList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final strings = context.strings;
+    final loading =
+        episodes.isEmpty &&
+        SyncFeedback.of(context).loadingLibrary(playback.services.library);
     if (kind == EpisodeListKind.queue) {
       return EpisodeQueue(
         key: key ?? PageStorageKey(kind),
-        library: playback.services.library,
+        edits: queueEdits,
         episodes: episodes,
-        header: ListProblems(playback: playback),
+        header: const ListProblems(),
+        emptyMessage: loading ? strings.syncLoading : strings.queueEmpty,
         onMenu: onMenu,
         rowBuilder: (context, episode, index, lifted) =>
             _episodeRow(context, episode, index, queued: true, lifted: lifted),
@@ -145,23 +146,27 @@ class EpisodeList extends StatelessWidget {
     }
     final queued = switch (kind) {
       EpisodeListKind.podcast || EpisodeListKind.newEpisodes =>
-        playback.services.library.queue.map((episode) => episode.id).toSet(),
+        queueEdits.episodes.map((episode) => episode.id).toSet(),
       _ => const <int>{},
     };
     return CustomScrollView(
       key: key ?? PageStorageKey(kind),
       slivers: [
-        SliverToBoxAdapter(child: ListProblems(playback: playback)),
+        const SliverToBoxAdapter(child: ListProblems()),
         for (final action in actions) SliverToBoxAdapter(child: action),
         if (episodes.isEmpty)
           SliverToBoxAdapter(
-            child: PageMessage(switch (kind) {
-              EpisodeListKind.inProgress => strings.inProgressEmpty,
-              EpisodeListKind.queue => strings.queueEmpty,
-              EpisodeListKind.newEpisodes => strings.newEmpty,
-              EpisodeListKind.podcast => strings.podcastEmpty,
-              EpisodeListKind.downloads => strings.downloadsEmpty,
-            }),
+            child: PageMessage(
+              loading
+                  ? strings.syncLoading
+                  : switch (kind) {
+                      EpisodeListKind.inProgress => strings.inProgressEmpty,
+                      EpisodeListKind.queue => strings.queueEmpty,
+                      EpisodeListKind.newEpisodes => strings.newEmpty,
+                      EpisodeListKind.podcast => strings.podcastEmpty,
+                      EpisodeListKind.downloads => strings.downloadsEmpty,
+                    },
+            ),
           ),
         SliverList.builder(
           itemCount: episodes.length,
@@ -201,6 +206,10 @@ class EpisodeList extends StatelessWidget {
             return row;
           },
         ),
+        if (kind == EpisodeListKind.newEpisodes && !loading)
+          SliverToBoxAdapter(
+            child: PageMessage(strings.olderEpisodesInPodcasts),
+          ),
       ],
     );
   }
@@ -217,9 +226,7 @@ class EpisodeList extends StatelessWidget {
     final state = library.stateOf(episode.id);
     final playing = playback.playing(episode.id);
     final duration = episodeDuration(episode, state);
-    final length = duration == null
-        ? null
-        : strings.minutes(durationMinutes(duration));
+    final length = duration == null ? null : minuteLength(strings, duration);
     final podcast = library.podcast(episode.podcastId)?.title;
     final status = switch ((playing, state.status, state.isInProgress)) {
       (true, _, _) => strings.statePlaying,
@@ -237,6 +244,7 @@ class EpisodeList extends StatelessWidget {
     Widget buildRow(BuildContext context, DownloadDisplay download) {
       final downloadText = downloadStateText(strings, download);
       final downloaded = download.status == DownloadStatus.done;
+      final inverted = lifted || (desktop && episode.id == selectedId);
       final parts = switch (kind) {
         EpisodeListKind.inProgress => [status, ?downloadText],
         EpisodeListKind.queue => [
@@ -277,43 +285,43 @@ class EpisodeList extends StatelessWidget {
           if (kind != EpisodeListKind.podcast && podcast != null)
             Text(podcast, style: detailStyle),
           if (parts.isNotEmpty || downloaded)
-            metadataLine(
-              parts.firstOrNull ?? '',
-              parts.skip(1),
+            _EpisodeMetadata(
+              parts: parts,
               bold:
                   parts.isNotEmpty &&
                   ((playing && parts.first == status) ||
                       (kind == EpisodeListKind.podcast && state.isNew)),
-              trailing: downloaded
-                  ? Icon(
-                      Icons.download_done,
-                      size: 16,
-                      color: lifted || (desktop && episode.id == selectedId)
-                          ? Colors.white
-                          : Colors.black,
-                      semanticLabel: strings.stateDownloaded,
-                    )
-                  : null,
+              downloaded: downloaded,
+              inverted: inverted,
             ),
           if (download.status == DownloadStatus.failed)
             Padding(
               padding: const EdgeInsets.only(top: 4),
               child: DefaultTextStyle.merge(
                 style: detailStyle,
-                child: EinkError(strings.stateDownloadFailed),
+                child: EinkError(
+                  strings.stateDownloadFailed,
+                  liveRegion: false,
+                ),
               ),
             ),
         ],
       );
       void showMenu() => onMenu(episode);
-      return Semantics(
-        onLongPress: showMenu,
-        onLongPressHint: strings.episodeActions,
-        child: GestureDetector(
-          excludeFromSemantics: true,
-          onLongPress: kind == EpisodeListKind.queue ? null : showMenu,
-          onSecondaryTap: showMenu,
-          child: content,
+      return CallbackShortcuts(
+        bindings: {
+          const SingleActivator(LogicalKeyboardKey.f10, shift: true): showMenu,
+          const SingleActivator(LogicalKeyboardKey.contextMenu): showMenu,
+        },
+        child: Semantics(
+          onLongPress: showMenu,
+          onLongPressHint: strings.episodeActions,
+          child: GestureDetector(
+            excludeFromSemantics: true,
+            onLongPress: kind == EpisodeListKind.queue ? null : showMenu,
+            onSecondaryTap: showMenu,
+            child: content,
+          ),
         ),
       );
     }
@@ -322,9 +330,61 @@ class EpisodeList extends StatelessWidget {
     return DownloadStatusView(
       key: ValueKey(episode.id),
       services: playback.services,
-      wifiConnected: wifiConnected,
       episodeId: episode.id,
       builder: buildRow,
+    );
+  }
+}
+
+class _EpisodeMetadata extends StatelessWidget {
+  const _EpisodeMetadata({
+    required this.parts,
+    required this.bold,
+    required this.downloaded,
+    required this.inverted,
+  });
+
+  final List<String> parts;
+  final bool bold;
+  final bool downloaded;
+  final bool inverted;
+
+  @override
+  Widget build(BuildContext context) {
+    final first = parts.firstOrNull ?? '';
+    final rest = parts.skip(1);
+    final metadata = metadataLine(first, rest, bold: bold);
+    if (!downloaded) return metadata;
+    final label = context.strings.stateDownloaded;
+    return LayoutBuilder(
+      builder: (context, bounds) {
+        final painter = TextPainter(
+          text: TextSpan(
+            style: DefaultTextStyle.of(context).style.merge(detailStyle),
+            children: [
+              metadata.textSpan!,
+              TextSpan(text: label),
+            ],
+          ),
+          textDirection: Directionality.of(context),
+          textScaler: MediaQuery.textScalerOf(context),
+        )..layout();
+        final showLabel = painter.width + 24 <= bounds.maxWidth;
+        painter.dispose();
+        return Row(
+          spacing: 4,
+          children: [
+            if (parts.isNotEmpty) Flexible(child: metadata),
+            Icon(
+              Icons.download_outlined,
+              size: 16,
+              color: inverted ? Colors.white : Colors.black,
+              semanticLabel: showLabel ? null : label,
+            ),
+            if (showLabel) Text(label, style: detailStyle),
+          ],
+        );
+      },
     );
   }
 }
@@ -355,7 +415,7 @@ class PodcastList extends StatelessWidget {
     return CustomScrollView(
       key: const PageStorageKey(LibrarySection.podcasts),
       slivers: [
-        SliverToBoxAdapter(child: ListProblems(playback: playback)),
+        const SliverToBoxAdapter(child: ListProblems()),
         SliverToBoxAdapter(
           child: EinkRow(
             title: strings.addPodcast,
@@ -366,7 +426,13 @@ class PodcastList extends StatelessWidget {
           ),
         ),
         if (sorted.isEmpty)
-          SliverToBoxAdapter(child: PageMessage(strings.podcastsEmpty)),
+          SliverToBoxAdapter(
+            child: PageMessage(
+              SyncFeedback.of(context).loadingLibrary(playback.services.library)
+                  ? strings.syncLoading
+                  : strings.podcastsEmpty,
+            ),
+          ),
         SliverList.builder(
           itemCount: sorted.length,
           itemBuilder: (context, index) {
@@ -386,7 +452,10 @@ class PodcastList extends StatelessWidget {
                     padding: const EdgeInsets.only(top: 4),
                     child: DefaultTextStyle.merge(
                       style: detailStyle,
-                      child: EinkError(strings.feedUnavailable),
+                      child: EinkError(
+                        strings.feedUnavailable,
+                        liveRegion: false,
+                      ),
                     ),
                   ),
               ],

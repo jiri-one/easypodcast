@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:material_ui/material_ui.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/api.dart';
 import '../core/models.dart';
@@ -24,15 +27,46 @@ class LoginPage extends StatefulWidget {
 }
 
 class _LoginPageState extends State<LoginPage> {
-  late final _server = TextEditingController(
-    text: widget.services.settings.serverUrl,
-  );
+  static const _lastAddress = 'lastServerAddress';
+
+  final _server = TextEditingController();
   final _name = TextEditingController();
   final _password = TextEditingController();
   final _device = TextEditingController();
+  late final Future<SharedPreferences> _preferences;
+  bool _serverEdited = false;
   bool _prefilled = false;
   bool _busy = false;
   String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _preferences = SharedPreferences.getInstance();
+    unawaited(_restoreServer());
+  }
+
+  Future<void> _restoreServer() async {
+    try {
+      final prefs = await _preferences;
+      if (mounted && !_serverEdited) {
+        _server.text =
+            prefs.getString(_lastAddress) ?? prefs.getString('serverUrl') ?? '';
+      }
+    } on Exception {
+      return;
+    }
+  }
+
+  Future<void> _rememberServer(String text) async {
+    _serverEdited = true;
+    try {
+      final prefs = await _preferences;
+      await prefs.setString(_lastAddress, text);
+    } on Exception {
+      return;
+    }
+  }
 
   @override
   void didChangeDependencies() {
@@ -130,12 +164,17 @@ class _LoginPageState extends State<LoginPage> {
                               label: strings.serverAddress,
                               controller: _server,
                               keyboardType: TextInputType.url,
+                              hint: 'https://…',
+                              onChanged: (text) =>
+                                  unawaited(_rememberServer(text)),
+                              textInputAction: TextInputAction.next,
                               enabled: !_busy,
                             ),
                             LabeledField(
                               key: const ValueKey('login-name'),
                               label: strings.username,
                               controller: _name,
+                              textInputAction: TextInputAction.next,
                               enabled: !_busy,
                             ),
                             LabeledField(
@@ -143,6 +182,7 @@ class _LoginPageState extends State<LoginPage> {
                               label: strings.password,
                               controller: _password,
                               obscure: true,
+                              textInputAction: TextInputAction.next,
                               enabled: !_busy,
                             ),
                             LabeledField(

@@ -6,23 +6,27 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/rendering.dart';
 import 'package:material_ui/material_ui.dart';
 
-import '../core/library.dart';
 import '../core/models.dart';
 import 'eink_widgets.dart';
+import 'queue_edits.dart';
 
 class EpisodeQueue extends StatefulWidget {
   const EpisodeQueue({
     super.key,
-    required this.library,
+    required this.edits,
     required this.episodes,
     required this.header,
+    required this.emptyMessage,
     required this.onMenu,
     required this.rowBuilder,
   });
 
-  final Library library;
+  static const holdDuration = Duration(milliseconds: 800);
+
+  final QueueEdits edits;
   final List<Episode> episodes;
   final Widget header;
+  final String emptyMessage;
   final ValueChanged<Episode> onMenu;
   final Widget Function(BuildContext, Episode, int, bool) rowBuilder;
 
@@ -57,7 +61,6 @@ class _EpisodeQueueState extends State<EpisodeQueue> {
   final _rowsKey = GlobalKey();
   _QueueDrag? _drag;
   Timer? _edgeScroll;
-  bool _saving = false;
   bool _failed = false;
 
   RenderSliverList? get _rows =>
@@ -73,8 +76,7 @@ class _EpisodeQueueState extends State<EpisodeQueue> {
   void didUpdateWidget(EpisodeQueue oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (_drag != null &&
-        (oldWidget.library != widget.library ||
-            !_sameOrder(oldWidget.episodes))) {
+        (oldWidget.edits != widget.edits || !_sameOrder(oldWidget.episodes))) {
       _stopEdgeScroll();
       _drag = null;
     }
@@ -89,7 +91,7 @@ class _EpisodeQueueState extends State<EpisodeQueue> {
 
   void _hold(Offset position, {required bool menuOnRelease}) {
     final rows = _rows;
-    if (_saving || _drag != null || rows == null) return;
+    if (widget.edits.saving || _drag != null || rows == null) return;
     for (var row = rows.firstChild; row != null; row = rows.childAfter(row)) {
       if (!row.size.contains(row.globalToLocal(position))) continue;
       final drag = _QueueDrag(
@@ -157,11 +159,12 @@ class _EpisodeQueueState extends State<EpisodeQueue> {
 
   void _move(Offset position) {
     final drag = _drag;
-    if (drag == null || _saving) return;
+    if (drag == null || widget.edits.saving) return;
     drag.position = position;
     if ((position - drag.origin).distance > kTouchSlop) drag.moved = true;
+    if (!drag.moved) return;
     _preview(drag);
-    if (!drag.moved || _edgeOffset(drag) == null) {
+    if (_edgeOffset(drag) == null) {
       _stopEdgeScroll();
       return;
     }
@@ -193,7 +196,7 @@ class _EpisodeQueueState extends State<EpisodeQueue> {
     }
     _scroll.jumpTo(offset);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && identical(_drag, drag) && !_saving) _preview(drag);
+      if (mounted && identical(_drag, drag)) _preview(drag);
     });
   }
 
@@ -203,40 +206,28 @@ class _EpisodeQueueState extends State<EpisodeQueue> {
   }
 
   void _cancel() {
-    if (_drag == null || _saving) return;
+    if (_drag == null) return;
     _stopEdgeScroll();
     setState(() => _drag = null);
   }
 
   Future<void> _drop() async {
     final drag = _drag;
-    if (drag == null || _saving) return;
-    _stopEdgeScroll();
-    if (!_sameOrder(widget.library.queue)) {
-      _cancel();
+    if (drag == null) return;
+    _cancel();
+    if (widget.edits.saving || !_sameOrder(widget.edits.episodes)) {
       return;
     }
     final episode = widget.episodes[drag.from];
     if (drag.from == drag.to) {
-      _cancel();
       if (drag.menuOnRelease && !drag.moved) widget.onMenu(episode);
       return;
     }
-    setState(() {
-      _saving = true;
-      _failed = false;
-    });
+    setState(() => _failed = false);
     try {
-      await widget.library.moveInQueue(episode.id, drag.to);
-    } on Exception {
-      _failed = true;
-    } finally {
-      if (mounted) {
-        setState(() {
-          _saving = false;
-          _drag = null;
-        });
-      }
+      await widget.edits.move(episode, drag.to);
+    } on Object {
+      if (mounted) setState(() => _failed = true);
     }
   }
 
@@ -251,6 +242,8 @@ class _EpisodeQueueState extends State<EpisodeQueue> {
     final indices = {
       for (final (index, episode) in episodes.indexed) episode.id: index,
     };
+    final strings = context.strings;
+    final saving = widget.edits.saving;
     return Listener(
       onPointerCancel: (_) => _cancel(),
       child: GestureDetector(
@@ -261,24 +254,61 @@ class _EpisodeQueueState extends State<EpisodeQueue> {
             _hold(details.globalPosition, menuOnRelease: false),
         onVerticalDragUpdate: (details) => _move(details.globalPosition),
         onVerticalDragEnd: (_) => unawaited(_drop()),
-        child: GestureDetector(
+        child: RawGestureDetector(
           behavior: HitTestBehavior.opaque,
           excludeFromSemantics: true,
-          onLongPressStart: (details) =>
-              _hold(details.globalPosition, menuOnRelease: true),
-          onLongPressMoveUpdate: (details) => _move(details.globalPosition),
-          onLongPressUp: () => unawaited(_drop()),
+          gestures: {
+            LongPressGestureRecognizer:
+                GestureRecognizerFactoryWithHandlers<
+                  LongPressGestureRecognizer
+                >(
+                  () => LongPressGestureRecognizer(
+                    duration: EpisodeQueue.holdDuration,
+                  ),
+                  (recognizer) {
+                    recognizer.onLongPressStart = (details) =>
+                        _hold(details.globalPosition, menuOnRelease: true);
+                    recognizer.onLongPressMoveUpdate = (details) =>
+                        _move(details.globalPosition);
+                    recognizer.onLongPressUp = () => unawaited(_drop());
+                    recognizer.onLongPressCancel = _cancel;
+                  },
+                ),
+          },
           child: CustomScrollView(
             controller: _scroll,
             slivers: [
               SliverToBoxAdapter(child: widget.header),
               if (_failed)
-                SliverToBoxAdapter(
-                  child: ProblemBox(context.strings.actionFailed),
-                ),
+                SliverToBoxAdapter(child: ProblemBox(strings.actionFailed)),
               if (episodes.isEmpty)
+                SliverToBoxAdapter(child: PageMessage(widget.emptyMessage))
+              else
                 SliverToBoxAdapter(
-                  child: PageMessage(context.strings.queueEmpty),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
+                    child: Stack(
+                      children: [
+                        Opacity(
+                          opacity: saving ? 0 : 1,
+                          child: Text(
+                            strings.queueDragHint,
+                            style: detailStyle,
+                          ),
+                        ),
+                        Opacity(
+                          opacity: saving ? 1 : 0,
+                          child: Semantics(
+                            liveRegion: saving,
+                            child: Text(
+                              strings.queueSaving,
+                              style: detailStyle,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
               SliverList.builder(
                 key: _rowsKey,
@@ -293,7 +323,7 @@ class _EpisodeQueueState extends State<EpisodeQueue> {
                       context,
                       episode,
                       index,
-                      !_saving && index == drag?.to,
+                      index == drag?.to,
                     ),
                   );
                 },

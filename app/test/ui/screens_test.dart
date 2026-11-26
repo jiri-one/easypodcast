@@ -23,6 +23,8 @@ void main() {
     for (final (size, desktop) in const [
       (Size(392, 785), false),
       (Size(360, 720), false),
+      (Size(760, 700), true),
+      (Size(950, 700), true),
       (Size(1000, 700), true),
     ]) {
       testWidgets('all $locale screens fit at ${size.width} × ${size.height}', (
@@ -41,6 +43,15 @@ void main() {
 
         try {
           if (desktop) {
+            final heading = find.descendant(
+              of: find.widgetWithText(EinkRow, app.strings.inProgress),
+              matching: find.text(app.strings.inProgress),
+            );
+            final scale = MediaQuery.textScalerOf(tester.element(heading));
+            expect(
+              tester.getSize(heading).height,
+              lessThan(scale.scale(14) * 1.5),
+            );
             await tourDesktop(app, check);
           } else {
             await tourPhone(app, check);
@@ -87,7 +98,9 @@ void main() {
       expect(tester.getRect(mini), original);
       await app.mini(episode.title);
       expect(find.byType(PlayerPage), findsOneWidget);
-      await app.tapText('+${app.services.settings.skipForwardSeconds}');
+      await app.tapText(
+        l.skipForwardValue(app.services.settings.skipForwardSeconds),
+      );
       expect(player.position.value, stored + const Duration(seconds: 30));
       expect(tester.takeException(), isNull);
     } finally {
@@ -110,7 +123,7 @@ void main() {
         expect(find.text('32:01'), findsOneWidget);
         expect(find.text('−22:59'), findsOneWidget);
 
-        await app.tapText('+30');
+        await app.tapText(app.strings.skipForwardValue(30));
         expect(player.position.value, const Duration(minutes: 32, seconds: 31));
         expect(find.text('32:31'), findsOneWidget);
       } finally {
@@ -119,7 +132,7 @@ void main() {
     },
   );
 
-  testWidgets('episode-end sleep pauses when the queue advances', (
+  testWidgets('episode-end sleep stops before the next queued episode', (
     tester,
   ) async {
     final app = await _phone(tester);
@@ -130,15 +143,15 @@ void main() {
       await app.mini(app.episode(101));
       await app.tapText(l.sleep);
       await app.dialog(l.sleepEndOfEpisode);
-      expect(
-        find.textContaining(RegExp(r'^do \d{1,2}:\d{2}$')),
-        findsOneWidget,
-      );
+      expect(find.text(l.sleepEndValue), findsOneWidget);
+      expect(player.sleepAtEndOfEpisode, isTrue);
+      expect(player.sleepRemaining, isNull);
       final nextId = app.services.library.queue.first.id;
       await player.seekTo(player.duration!);
       await tester.pumpAndSettle();
       expect(app.services.library.stateOf(101).isPlayed, isTrue);
-      expect(player.current?.id, nextId);
+      expect(player.current, isNull);
+      expect(app.services.library.queue.first.id, nextId);
       expect(player.isPlaying, isFalse);
       expect(app.services.settings.autoplayQueue, isTrue);
     } finally {
@@ -164,6 +177,7 @@ void main() {
       expect(library.stateOf(204).positionMs, 2460000);
       expect(app.services.downloads.statusOf(204).status, DownloadStatus.done);
 
+      await tester.pump(const Duration(milliseconds: 601));
       await app.tapText(l.dismiss);
       await app.dialog(l.dismiss);
       expect(library.stateOf(204).isDismissed, isTrue);
@@ -189,7 +203,9 @@ void main() {
         await app.tapText(l.dismiss);
         expect(find.byType(EinkDialogPanel), findsNothing);
         expect(library.stateOf(201).isDismissed, isTrue);
+        await tester.pump(const Duration(milliseconds: 601));
         await app.tapText(l.markNew);
+        await tester.pump(const Duration(milliseconds: 601));
         await app.tapText(l.markPlayed);
         expect(library.stateOf(201).isPlayed, isTrue);
         expect(find.text(l.dismiss), findsNothing);
@@ -295,7 +311,12 @@ void main() {
       expect(find.byType(LoginPage), findsOneWidget);
       Iterable<TextField> fields() =>
           tester.widgetList<TextField>(find.byType(TextField));
-      expect(fields().first.controller!.text, 'https://easypodcast.jiri.one');
+      expect(fields().first.controller!.text, isEmpty);
+      expect(fields().first.decoration!.hintText, 'https://…');
+      expect(
+        fields().take(3).map((field) => field.textInputAction),
+        everyElement(TextInputAction.next),
+      );
       expect(fields().last.controller!.text, l.defaultAndroidDevice);
       expect(fields().elementAt(2).obscureText, isTrue);
       await app.login(reject: true);

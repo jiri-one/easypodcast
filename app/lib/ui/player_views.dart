@@ -3,10 +3,13 @@ import 'dart:math' as math;
 import 'package:material_ui/material_ui.dart';
 
 import '../core/models.dart';
+import '../core/player.dart';
+import 'cover_image.dart';
 import 'eink_widgets.dart';
 import 'episode_text.dart';
 import 'playback_actions.dart';
 import 'playback_position.dart';
+import 'sync_feedback.dart';
 import 'theme.dart';
 
 class MiniPlayer extends StatelessWidget {
@@ -18,112 +21,167 @@ class MiniPlayer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final episode = playback.target;
-    if (episode == null) return const SizedBox.shrink();
+    if (episode == null) return PlaybackProblem(playback: playback);
     final strings = context.strings;
     final playing = playback.playing(episode.id);
-    final checking = playback.checkingId != null;
-    return RepaintBoundary(
-      child: Stack(
-        children: [
-          SizedBox(
-            height: 72,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: TextButton(
-                      onPressed: onOpen,
-                      style: const ButtonStyle(
-                        alignment: AlignmentDirectional.centerStart,
-                        padding: WidgetStatePropertyAll(
-                          EdgeInsets.symmetric(horizontal: 4),
-                        ),
-                      ),
-                      child: Text(
-                        checking
-                            ? strings.checkingPosition
-                            : playback.loading(episode.id)
-                            ? strings.loadingPlayback
-                            : episode.title,
-                        style: buttonLabelStyle.merge(underlineStyle),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  SizedBox(
-                    width: 84,
-                    height: 58,
-                    child: FilledButton(
-                      onPressed: () => playback.toggle(),
-                      style: const ButtonStyle(
-                        padding: WidgetStatePropertyAll(
-                          EdgeInsets.symmetric(horizontal: 4),
-                        ),
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      ),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            playing ? Icons.pause : Icons.play_arrow,
-                            size: 24,
-                          ),
-                          Flexible(
-                            child: FittedBox(
-                              fit: BoxFit.scaleDown,
-                              child: Text(
-                                playing ? strings.pause : strings.play,
-                                style: detailStyle,
-                                maxLines: 1,
-                              ),
+    final checking = !playing && playback.checkingId != null;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        PlaybackProblem(playback: playback),
+        RepaintBoundary(
+          child: Stack(
+            children: [
+              SizedBox(
+                height: 72,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: TextButton(
+                          onPressed: onOpen,
+                          style: const ButtonStyle(
+                            alignment: AlignmentDirectional.centerStart,
+                            padding: WidgetStatePropertyAll(
+                              EdgeInsets.symmetric(horizontal: 4),
                             ),
                           ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          Positioned(
-            left: 0,
-            right: 0,
-            top: 0,
-            child: IgnorePointer(
-              child: PlaybackPositionView(
-                playback: playback,
-                episode: episode,
-                redrawSeconds: playback.services.settings.positionRedrawSeconds,
-                builder: (context, elapsed, duration) => SizedBox(
-                  height: 3,
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      const Align(
-                        alignment: Alignment.bottomCenter,
-                        child: SizedBox(
-                          width: double.infinity,
-                          height: 1,
-                          child: ColoredBox(color: Colors.black),
+                          child: Text(
+                            checking
+                                ? strings.checkingPosition
+                                : !playing && playback.loading(episode.id)
+                                ? strings.loadingPlayback
+                                : episode.title,
+                            style: buttonLabelStyle.merge(underlineStyle),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
                       ),
-                      FractionallySizedBox(
-                        key: const ValueKey('mini-progress'),
-                        alignment: Alignment.centerLeft,
-                        widthFactor: playedFraction(elapsed, duration),
-                        child: const ColoredBox(color: Colors.black),
+                      const SizedBox(width: 8),
+                      SizedBox(
+                        width: 84,
+                        height: 58,
+                        child: FilledButton(
+                          onPressed: () => playback.toggle(),
+                          style: const ButtonStyle(
+                            padding: WidgetStatePropertyAll(
+                              EdgeInsets.symmetric(horizontal: 4),
+                            ),
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                playing ? Icons.pause : Icons.play_arrow,
+                                size: 24,
+                              ),
+                              Flexible(
+                                child: FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  child: Text(
+                                    playing ? strings.pause : strings.play,
+                                    style: detailStyle,
+                                    maxLines: 1,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                       ),
                     ],
                   ),
                 ),
               ),
-            ),
+              Positioned(
+                left: 0,
+                right: 0,
+                top: 0,
+                child: IgnorePointer(
+                  child: PlaybackPositionView(
+                    playback: playback,
+                    episode: episode,
+                    redrawSeconds:
+                        playback.services.settings.positionRedrawSeconds,
+                    builder: (context, elapsed, duration) => SizedBox(
+                      height: 3,
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          const Align(
+                            alignment: Alignment.bottomCenter,
+                            child: SizedBox(
+                              width: double.infinity,
+                              height: 1,
+                              child: ColoredBox(color: Colors.black),
+                            ),
+                          ),
+                          FractionallySizedBox(
+                            key: const ValueKey('mini-progress'),
+                            alignment: Alignment.centerLeft,
+                            widthFactor: playedFraction(elapsed, duration),
+                            child: const ColoredBox(color: Colors.black),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
+      ],
+    );
+  }
+}
+
+class PlaybackProblem extends StatelessWidget {
+  const PlaybackProblem({super.key, required this.playback, this.episodeId});
+
+  final PlaybackActions playback;
+  final int? episodeId;
+
+  @override
+  Widget build(BuildContext context) {
+    final services = playback.services;
+    final error = services.player.lastPlaybackError;
+    final id = error?.episode.id ?? playback.failedEpisodeId;
+    if ((error == null && !playback.failed) ||
+        (episodeId != null && episodeId != id)) {
+      return const SizedBox.shrink();
+    }
+    final strings = context.strings;
+    final offline =
+        id != null &&
+        SyncFeedback.of(context).offline &&
+        services.downloads.localFileOf(id) == null;
+    final reason = switch (error?.reason) {
+      PlaybackErrorReason.loadFailed =>
+        offline ? strings.playbackOffline : strings.playbackLoadFailed,
+      PlaybackErrorReason.streamFailed =>
+        offline ? strings.playbackOffline : strings.playbackStreamFailed,
+      PlaybackErrorReason.seekFailed => strings.playbackSeekFailed,
+      PlaybackErrorReason.audioFocusUnavailable =>
+        strings.playbackFocusUnavailable,
+      null =>
+        offline && playback.failedPlaying
+            ? strings.playbackOffline
+            : strings.playbackFailed,
+    };
+    if (error == null) return ProblemBox(reason);
+    return Padding(
+      padding: const EdgeInsets.all(8),
+      child: DefaultTextStyle.merge(
+        style: detailStyle,
+        child: EinkError(
+          '${error.episode.title}\n$reason',
+          action: EinkButton(strings.retry, onPressed: playback.retry),
+        ),
       ),
     );
   }
@@ -150,7 +208,8 @@ class PlayerPage extends StatelessWidget {
     if (episode == null) {
       return PageList(
         children: [
-          if (playback.failed) ProblemBox(strings.playbackFailed),
+          PlaybackProblem(playback: playback),
+          if (playback.seekUnavailable) PageMessage(strings.seekUnavailable),
           PageMessage(strings.noPlayback),
         ],
       );
@@ -166,10 +225,10 @@ class PlayerPage extends StatelessWidget {
     final playText = playLabel(context, playback, episode);
     final sleepEnd = playback.sleepDeadline;
     final sleepOn = playback.sleepUntilEnd || sleepEnd != null;
-    final sleepValue = sleepEnd != null
+    final sleepValue = playback.sleepUntilEnd
+        ? strings.sleepEndValue
+        : sleepEnd != null
         ? strings.sleepUntil(clockText(strings, sleepEnd))
-        : playback.sleepUntilEnd
-        ? strings.sleepEndOfEpisode
         : strings.sleepOff;
 
     return Padding(
@@ -202,14 +261,9 @@ class PlayerPage extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
-                  if (podcast != null)
-                    Text(
-                      podcast.title,
-                      style: detailStyle,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  if (playback.failed) ProblemBox(strings.playbackFailed),
+                  if (services.player.lastPlaybackError != null ||
+                      playback.failed)
+                    PlaybackProblem(playback: playback),
                   PlaybackTimeline(
                     key: ValueKey(episode.id),
                     playback: playback,
@@ -251,6 +305,11 @@ class PlayerPage extends StatelessWidget {
                       ),
                     ],
                   ),
+                  if (playback.seekUnavailable)
+                    Semantics(
+                      liveRegion: true,
+                      child: Text(strings.seekUnavailable, style: detailStyle),
+                    ),
                   Text(
                     playText,
                     textAlign: TextAlign.center,
@@ -377,8 +436,17 @@ class _PlayerCover extends StatelessWidget {
     builder: (context, bounds) {
       final side = math.min(bounds.maxWidth, bounds.maxHeight);
       if (side < 1) return const SizedBox.shrink();
-      Widget cover(int index) => Image.network(
-        urls[index],
+      final pixels = math.max(
+        1,
+        (side * MediaQuery.devicePixelRatioOf(context)).round(),
+      );
+      Widget cover(int index) => Image(
+        image: ResizeImage(
+          CoverImage(urls[index]),
+          width: pixels,
+          height: pixels,
+          policy: ResizeImagePolicy.fit,
+        ),
         width: side,
         height: side,
         fit: BoxFit.cover,
@@ -408,6 +476,7 @@ class _SkipControl extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final quickBack = seconds < 0;
+    final strings = context.strings;
     return TextButton(
       onPressed: onPressed,
       style: const ButtonStyle(
@@ -418,7 +487,9 @@ class _SkipControl extends StatelessWidget {
         children: [
           Icon(quickBack ? Icons.replay : Icons.rotate_right, size: 24),
           Text(
-            '${quickBack ? '−' : '+'}${seconds.abs()}',
+            quickBack
+                ? strings.skipBackValue(-seconds)
+                : strings.skipForwardValue(seconds),
             style: buttonLabelStyle,
           ),
         ],
@@ -435,8 +506,8 @@ String playLabel(
 }) {
   final strings = context.strings;
   if (playback.checkingId == episode.id) return strings.checkingPosition;
-  if (playback.loading(episode.id)) return strings.loadingPlayback;
   if (playback.playing(episode.id)) return strings.pause;
+  if (playback.loading(episode.id)) return strings.loadingPlayback;
   if (showPosition) {
     final state = playback.services.library.stateOf(episode.id);
     if (state.status == EpisodeStatus.none && state.positionMs > 0) {
@@ -487,10 +558,12 @@ class DesktopPlayer extends StatelessWidget {
     super.key,
     required this.playback,
     required this.onEpisode,
+    required this.redrawSeconds,
   });
 
   final PlaybackActions playback;
   final ValueChanged<Episode> onEpisode;
+  final int redrawSeconds;
 
   @override
   Widget build(BuildContext context) {
@@ -504,8 +577,78 @@ class DesktopPlayer extends StatelessWidget {
     final covers = episode == null
         ? const <String>[]
         : _coverUrls(episode, podcast);
-    final speed = strings.desktopSpeed(
-      speedText(strings, playback.services.player.speed),
+    final buttons = [
+      EinkButton(
+        strings.skipBackValue(settings.skipBackSeconds),
+        minHeight: 56,
+        onPressed: episode == null
+            ? null
+            : () => playback.skip(Duration(seconds: -settings.skipBackSeconds)),
+      ),
+      EinkButton(
+        episode == null ? strings.play : playLabel(context, playback, episode),
+        primary: true,
+        icon: playing ? Icons.pause : Icons.play_arrow,
+        minHeight: 56,
+        onPressed: episode == null ? null : () => playback.toggle(),
+      ),
+      EinkButton(
+        strings.skipForwardValue(settings.skipForwardSeconds),
+        minHeight: 56,
+        onPressed: episode == null
+            ? null
+            : () =>
+                  playback.skip(Duration(seconds: settings.skipForwardSeconds)),
+      ),
+      EinkButton(
+        strings.desktopSpeed(
+          speedText(strings, playback.services.player.speed),
+        ),
+        minHeight: 56,
+        onPressed: () => showSpeedChoices(context, playback),
+      ),
+    ];
+    final heading = Row(
+      spacing: 6,
+      children: [
+        if (covers.isNotEmpty)
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 52, maxHeight: 52),
+            child: _PlayerCover(urls: covers),
+          ),
+        Expanded(
+          child: episode == null
+              ? Text(strings.noPlayback, style: detailStyle)
+              : TextButton(
+                  style: const ButtonStyle(
+                    alignment: AlignmentDirectional.centerStart,
+                    padding: WidgetStatePropertyAll(EdgeInsets.all(6)),
+                  ),
+                  onPressed: () => onEpisode(episode),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        episode.title,
+                        style: buttonLabelStyle
+                            .merge(underlineStyle)
+                            .copyWith(fontWeight: FontWeight.w700),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      if (podcast != null)
+                        Text(
+                          podcast.title,
+                          style: detailStyle,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                    ],
+                  ),
+                ),
+        ),
+      ],
     );
     return DecoratedBox(
       decoration: const BoxDecoration(
@@ -520,94 +663,49 @@ class DesktopPlayer extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             spacing: 4,
             children: [
+              if (playback.services.player.lastPlaybackError != null ||
+                  playback.failed)
+                PlaybackProblem(playback: playback),
               if (episode != null)
                 PlaybackTimeline(
                   key: ValueKey(episode.id),
                   playback: playback,
                   episode: episode,
-                  redrawSeconds: 1,
+                  redrawSeconds: redrawSeconds,
                 ),
-              Row(
-                spacing: 12,
-                children: [
-                  EinkButton(
-                    strings.skipBackValue(settings.skipBackSeconds),
-                    minHeight: 56,
-                    onPressed: episode == null
-                        ? null
-                        : () => playback.skip(
-                            Duration(seconds: -settings.skipBackSeconds),
-                          ),
-                  ),
-                  EinkButton(
-                    episode == null
-                        ? strings.play
-                        : playLabel(context, playback, episode),
-                    primary: true,
-                    icon: playing ? Icons.pause : Icons.play_arrow,
-                    minHeight: 56,
-                    onPressed: episode == null ? null : () => playback.toggle(),
-                  ),
-                  EinkButton(
-                    strings.skipForwardValue(settings.skipForwardSeconds),
-                    minHeight: 56,
-                    onPressed: episode == null
-                        ? null
-                        : () => playback.skip(
-                            Duration(seconds: settings.skipForwardSeconds),
-                          ),
-                  ),
-                  if (covers.isNotEmpty)
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(
-                        maxWidth: 52,
-                        maxHeight: 52,
-                      ),
-                      child: _PlayerCover(urls: covers),
-                    ),
-                  Expanded(
-                    child: episode == null
-                        ? Text(strings.noPlayback, style: detailStyle)
-                        : TextButton(
-                            style: const ButtonStyle(
-                              alignment: AlignmentDirectional.centerStart,
-                              padding: WidgetStatePropertyAll(
-                                EdgeInsets.all(6),
-                              ),
-                            ),
-                            onPressed: () => onEpisode(episode),
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  episode.title,
-                                  style: buttonLabelStyle
-                                      .merge(underlineStyle)
-                                      .copyWith(fontWeight: FontWeight.w700),
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                                if (podcast != null)
-                                  Text(
-                                    podcast.title,
-                                    style: detailStyle,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                              ],
-                            ),
-                          ),
-                  ),
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 160),
-                    child: EinkButton(
-                      speed,
-                      minHeight: 56,
-                      onPressed: () => showSpeedChoices(context, playback),
-                    ),
-                  ),
-                ],
+              if (playback.seekUnavailable)
+                Semantics(
+                  liveRegion: true,
+                  child: Text(strings.seekUnavailable, style: detailStyle),
+                ),
+              LayoutBuilder(
+                builder: (context, bounds) {
+                  if (bounds.maxWidth < 800) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      spacing: 4,
+                      children: [
+                        heading,
+                        Row(
+                          spacing: 8,
+                          children: [
+                            for (final button in buttons)
+                              Expanded(child: button),
+                          ],
+                        ),
+                      ],
+                    );
+                  }
+                  return Row(
+                    spacing: 8,
+                    children: [
+                      for (final button in buttons.take(3))
+                        Expanded(child: button),
+                      Expanded(flex: 3, child: heading),
+                      Expanded(child: buttons.last),
+                    ],
+                  );
+                },
               ),
             ],
           ),
@@ -673,9 +771,7 @@ Future<void> _showSleepChoices(
   final deadline = playback.sleepDeadline;
   final endTime = deadline == null ? null : clockText(strings, deadline);
   final message = playback.sleepUntilEnd
-      ? (endTime == null
-            ? strings.sleepEndHelp
-            : strings.sleepEndEstimate(endTime))
+      ? strings.sleepEndHelp
       : (endTime == null
             ? strings.sleepOffHelp
             : strings.sleepUntilHelp(endTime));

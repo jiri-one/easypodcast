@@ -49,12 +49,17 @@ void main() {
       tester,
       size: const Size(392, 785),
       locale: const Locale('cs'),
+      loggedIn: false,
       playerCover: true,
     );
     try {
+      await write(app, '16-login');
+      await app.login();
       await app.services.player.setSpeed(1.2);
       await tester.pumpAndSettle();
-      await tourPhone(app, (name) => write(app, name));
+      await tourPhone(app, (name) async {
+        if (name != '16-login') await write(app, name);
+      });
     } finally {
       await app.finish();
     }

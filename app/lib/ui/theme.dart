@@ -116,6 +116,10 @@ ThemeData einkTheme({String? fontFamily}) {
       labelLarge: TextStyle(fontWeight: FontWeight.w600),
     ),
     dividerTheme: const DividerThemeData(color: Colors.black, thickness: 1),
+    tooltipTheme: const TooltipThemeData(
+      decoration: BoxDecoration(color: Colors.black),
+      textStyle: TextStyle(color: Colors.white),
+    ),
     filledButtonTheme: FilledButtonThemeData(style: filledButton),
     elevatedButtonTheme: ElevatedButtonThemeData(style: filledButton),
     outlinedButtonTheme: OutlinedButtonThemeData(
@@ -225,14 +229,24 @@ Future<T?> showEinkDialog<T>({
 );
 
 class EinkError extends StatelessWidget {
-  const EinkError(this.message, {super.key});
+  const EinkError(
+    this.message, {
+    super.key,
+    this.liveRegion = true,
+    this.action,
+  });
 
   final String message;
+  final bool liveRegion;
+  final Widget? action;
 
   @override
-  Widget build(BuildContext context) => Semantics(
-    liveRegion: true,
-    child: DecoratedBox(
+  Widget build(BuildContext context) {
+    final text = Text(
+      message,
+      style: const TextStyle(color: Colors.black, fontWeight: FontWeight.w700),
+    );
+    return DecoratedBox(
       decoration: const BoxDecoration(
         color: Colors.white,
         border: Border.fromBorderSide(_errorBorder),
@@ -240,14 +254,19 @@ class EinkError extends StatelessWidget {
       ),
       child: Padding(
         padding: const EdgeInsets.all(12),
-        child: Text(
-          message,
-          style: const TextStyle(
-            color: Colors.black,
-            fontWeight: FontWeight.w700,
-          ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          spacing: 6,
+          children: [
+            Semantics(
+              container: liveRegion,
+              liveRegion: liveRegion,
+              child: text,
+            ),
+            ?action,
+          ],
         ),
       ),
-    ),
-  );
+    );
+  }
 }

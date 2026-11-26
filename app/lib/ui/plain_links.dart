@@ -4,6 +4,14 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'eink_widgets.dart';
 
+final _urlCredentials = RegExp(
+  r'''([a-z][a-z0-9+.-]*://)[^/\s?#<>"“”]+@''',
+  caseSensitive: false,
+);
+
+String maskUrlCredentials(String text) =>
+    text.replaceAllMapped(_urlCredentials, (match) => match[1]!);
+
 class PlainLinks extends StatefulWidget {
   const PlainLinks(this.text, {super.key, this.style = detailStyle});
 

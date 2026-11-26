@@ -10,6 +10,7 @@ import 'eink_widgets.dart';
 import 'episode_text.dart';
 import 'library_views.dart';
 import 'playback_actions.dart';
+import 'queue_edits.dart';
 
 typedef _Download = (DownloadStatus status, String? path);
 typedef _Storage = ({Map<int, int?> sizes, int? free});
@@ -18,15 +19,15 @@ class DownloadsPage extends StatefulWidget {
   const DownloadsPage({
     super.key,
     required this.playback,
+    required this.queueEdits,
     required this.requestedIds,
-    required this.wifiConnected,
     required this.onOpen,
     required this.onMenu,
   });
 
   final PlaybackActions playback;
+  final QueueEdits queueEdits;
   final Set<int> requestedIds;
-  final ValueListenable<bool?> wifiConnected;
   final ValueChanged<Episode> onOpen;
   final ValueChanged<Episode> onMenu;
 
@@ -185,7 +186,7 @@ class _DownloadsPageState extends State<DownloadsPage> {
           kind: EpisodeListKind.downloads,
           episodes: episodes,
           playback: widget.playback,
-          wifiConnected: widget.wifiConnected,
+          queueEdits: widget.queueEdits,
           onOpen: widget.onOpen,
           onMenu: widget.onMenu,
           fileSizes: storage?.sizes ?? const {},

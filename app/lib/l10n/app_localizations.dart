@@ -159,11 +159,23 @@ abstract class AppLocalizations {
   /// **'Player time refresh interval'**
   String get playerRedraw;
 
+  /// No description provided for @listRedraw.
+  ///
+  /// In en, this message translates to:
+  /// **'List playback progress refresh interval'**
+  String get listRedraw;
+
   /// No description provided for @seekPlayback.
   ///
   /// In en, this message translates to:
   /// **'Playback position'**
   String get seekPlayback;
+
+  /// No description provided for @seekUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'The playback position can’t be changed yet.'**
+  String get seekUnavailable;
 
   /// No description provided for @nextInQueue.
   ///
@@ -200,6 +212,36 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Couldn\'t play the episode. Try again.'**
   String get playbackFailed;
+
+  /// No description provided for @playbackOffline.
+  ///
+  /// In en, this message translates to:
+  /// **'Only downloaded episodes can play offline.'**
+  String get playbackOffline;
+
+  /// No description provided for @playbackLoadFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t load the episode.'**
+  String get playbackLoadFailed;
+
+  /// No description provided for @playbackStreamFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Playback was interrupted.'**
+  String get playbackStreamFailed;
+
+  /// No description provided for @playbackSeekFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t change the playback position.'**
+  String get playbackSeekFailed;
+
+  /// No description provided for @playbackFocusUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Another app is using audio.'**
+  String get playbackFocusUnavailable;
 
   /// No description provided for @noPlayback.
   ///
@@ -258,7 +300,7 @@ abstract class AppLocalizations {
   /// No description provided for @stateWaitingForWifi.
   ///
   /// In en, this message translates to:
-  /// **'waiting for Wi-Fi'**
+  /// **'Waiting for Wi-Fi'**
   String get stateWaitingForWifi;
 
   /// No description provided for @stateWaitingForDownload.
@@ -282,8 +324,14 @@ abstract class AppLocalizations {
   /// No description provided for @syncError.
   ///
   /// In en, this message translates to:
-  /// **'Sync failed. Try refreshing the list.'**
+  /// **'Sync failed. The app will try again.'**
   String get syncError;
+
+  /// No description provided for @syncLoading.
+  ///
+  /// In en, this message translates to:
+  /// **'Loading…'**
+  String get syncLoading;
 
   /// No description provided for @inProgressEmpty.
   ///
@@ -302,6 +350,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'You have no new episodes.'**
   String get newEmpty;
+
+  /// No description provided for @olderEpisodesInPodcasts.
+  ///
+  /// In en, this message translates to:
+  /// **'Find older episodes under Podcasts'**
+  String get olderEpisodesInPodcasts;
 
   /// No description provided for @podcastsEmpty.
   ///
@@ -357,6 +411,36 @@ abstract class AppLocalizations {
   /// **'Remove from queue'**
   String get removeFromQueue;
 
+  /// No description provided for @queueDragHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Hold an episode and drag it.'**
+  String get queueDragHint;
+
+  /// No description provided for @queueSaving.
+  ///
+  /// In en, this message translates to:
+  /// **'Saving queue…'**
+  String get queueSaving;
+
+  /// No description provided for @moveQueueUp.
+  ///
+  /// In en, this message translates to:
+  /// **'Move up'**
+  String get moveQueueUp;
+
+  /// No description provided for @moveQueueDown.
+  ///
+  /// In en, this message translates to:
+  /// **'Move down'**
+  String get moveQueueDown;
+
+  /// No description provided for @moveQueueFirst.
+  ///
+  /// In en, this message translates to:
+  /// **'Move to top'**
+  String get moveQueueFirst;
+
   /// No description provided for @download.
   ///
   /// In en, this message translates to:
@@ -402,7 +486,7 @@ abstract class AppLocalizations {
   /// No description provided for @retryDownload.
   ///
   /// In en, this message translates to:
-  /// **'Download failed, try again'**
+  /// **'Retry download'**
   String get retryDownload;
 
   /// No description provided for @markPlayed.
@@ -440,6 +524,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Dismiss older too'**
   String get dismissOlder;
+
+  /// No description provided for @dismissOlderOffline.
+  ///
+  /// In en, this message translates to:
+  /// **'Dismissing older episodes requires a connection to the server.'**
+  String get dismissOlderOffline;
 
   /// No description provided for @dismissOlderKept.
   ///
@@ -525,6 +615,12 @@ abstract class AppLocalizations {
   /// **'End of episode'**
   String get sleepEndOfEpisode;
 
+  /// No description provided for @sleepEndValue.
+  ///
+  /// In en, this message translates to:
+  /// **'until episode ends'**
+  String get sleepEndValue;
+
   /// No description provided for @sleepEndHelp.
   ///
   /// In en, this message translates to:
@@ -542,6 +638,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Refreshing…'**
   String get refreshing;
+
+  /// No description provided for @refreshRequested.
+  ///
+  /// In en, this message translates to:
+  /// **'Refresh requested'**
+  String get refreshRequested;
 
   /// No description provided for @refreshFailed.
   ///
@@ -633,6 +735,18 @@ abstract class AppLocalizations {
   /// **'Unsubscribe'**
   String get unsubscribe;
 
+  /// No description provided for @unsubscribeTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Unsubscribe?'**
+  String get unsubscribeTitle;
+
+  /// No description provided for @resubscribe.
+  ///
+  /// In en, this message translates to:
+  /// **'Subscribe again'**
+  String get resubscribe;
+
   /// No description provided for @unsubscribing.
   ///
   /// In en, this message translates to:
@@ -675,11 +789,29 @@ abstract class AppLocalizations {
   /// **'Connected'**
   String get serverConnected;
 
+  /// No description provided for @sendNow.
+  ///
+  /// In en, this message translates to:
+  /// **'Send now'**
+  String get sendNow;
+
   /// No description provided for @serverChangeHelp.
   ///
   /// In en, this message translates to:
   /// **'To use a different server address, sign out and enter it when you sign in.'**
   String get serverChangeHelp;
+
+  /// No description provided for @serverLastSync.
+  ///
+  /// In en, this message translates to:
+  /// **'Last synced {time}'**
+  String serverLastSync(String time);
+
+  /// No description provided for @pendingChanges.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 change waiting to send} other{{count} changes waiting to send}}'**
+  String pendingChanges(int count);
 
   /// No description provided for @deviceName.
   ///
@@ -758,6 +890,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Download on Wi-Fi only'**
   String get downloadWifi;
+
+  /// No description provided for @keepQueueDownloaded.
+  ///
+  /// In en, this message translates to:
+  /// **'Keep the first two queued episodes downloaded (Wi-Fi only)'**
+  String get keepQueueDownloaded;
 
   /// No description provided for @deletePlayedDownloads.
   ///
@@ -1047,12 +1185,6 @@ abstract class AppLocalizations {
   /// **'Playback will stop at {time}.'**
   String sleepUntilHelp(String time);
 
-  /// No description provided for @sleepEndEstimate.
-  ///
-  /// In en, this message translates to:
-  /// **'Playback will stop at the end of the episode, at about {time}.'**
-  String sleepEndEstimate(String time);
-
   /// No description provided for @loadedAt.
   ///
   /// In en, this message translates to:
@@ -1064,6 +1196,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Last fetched on {date} at {time}.'**
   String feedLastLoaded(String date, String time);
+
+  /// No description provided for @loadedOn.
+  ///
+  /// In en, this message translates to:
+  /// **'fetched on {date}'**
+  String loadedOn(String date);
 
   /// No description provided for @kilobytes.
   ///

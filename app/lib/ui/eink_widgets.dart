@@ -1,11 +1,10 @@
 import 'dart:math' as math;
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../core/downloads.dart';
 import '../core/services.dart';
-import '../core/sync.dart';
 import '../l10n/app_localizations.dart';
 import 'theme.dart';
 
@@ -51,16 +50,17 @@ class EinkHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final label = FittedBox(
-      fit: BoxFit.scaleDown,
-      alignment: AlignmentDirectional.centerStart,
-      child: Text(title, style: headingStyle, maxLines: 1),
+    final label = Text(
+      title,
+      style: headingStyle,
+      maxLines: 4,
+      overflow: TextOverflow.ellipsis,
     );
     final menu = onMenu;
     return DecoratedBox(
       decoration: const BoxDecoration(border: Border(bottom: BorderSide())),
-      child: SizedBox(
-        height: 52,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 52),
         child: menu != null
             ? Semantics(
                 expanded: expanded,
@@ -69,8 +69,11 @@ class EinkHeader extends StatelessWidget {
                   onPressed: menu,
                   style: const ButtonStyle(
                     alignment: AlignmentDirectional.centerStart,
+                    minimumSize: WidgetStatePropertyAll(
+                      Size(double.infinity, 52),
+                    ),
                     padding: WidgetStatePropertyAll(
-                      EdgeInsets.symmetric(horizontal: 12),
+                      EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     ),
                   ),
                   child: Row(
@@ -93,7 +96,12 @@ class EinkHeader extends StatelessWidget {
                     )
                   else
                     const SizedBox(width: 12),
-                  Expanded(child: Semantics(header: true, child: label)),
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 6),
+                      child: Semantics(header: true, child: label),
+                    ),
+                  ),
                   const SizedBox(width: 12),
                 ],
               ),
@@ -216,6 +224,7 @@ class EinkButton extends StatelessWidget {
     this.alternatives = const [],
     this.progress,
     this.error = false,
+    this.reserveSpaceOnly = false,
   });
 
   final String label;
@@ -227,8 +236,10 @@ class EinkButton extends StatelessWidget {
   final List<String> alternatives;
   final int? progress;
   final bool error;
+  final bool reserveSpaceOnly;
 
   Widget _button(TextStyle labelStyle, double height) {
+    if (reserveSpaceOnly) return SizedBox(height: height);
     const padding = EdgeInsets.symmetric(horizontal: 8, vertical: 6);
     var style =
         (selected == null
@@ -393,31 +404,52 @@ class EinkDialogPanel extends StatelessWidget {
   final List<Widget> actions;
 
   @override
-  Widget build(BuildContext context) => Dialog(
-    alignment: MediaQuery.sizeOf(context).width < 760
-        ? const Alignment(0, -0.6)
-        : Alignment.center,
-    insetAnimationDuration: Duration.zero,
-    child: SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Semantics(header: true, child: Text(title, style: headingStyle)),
-          if (message case final String message) ...[
-            const SizedBox(height: 8),
-            Text(message, style: buttonLabelStyle),
-          ],
-          if (children.isNotEmpty) ...[const SizedBox(height: 12), ...children],
-          const SizedBox(height: 14),
-          Wrap(
-            alignment: WrapAlignment.end,
-            spacing: 6,
-            runSpacing: 6,
-            children: actions,
+  Widget build(BuildContext context) => CallbackShortcuts(
+    bindings: {
+      const SingleActivator(LogicalKeyboardKey.escape): () =>
+          Navigator.maybePop(context),
+    },
+    child: Focus(
+      autofocus: true,
+      child: Dialog(
+        alignment: MediaQuery.sizeOf(context).width < 760
+            ? const Alignment(0, -0.6)
+            : Alignment.center,
+        insetAnimationDuration: Duration.zero,
+        child: Semantics(
+          scopesRoute: true,
+          namesRoute: true,
+          explicitChildNodes: true,
+          label: title,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Semantics(
+                  header: true,
+                  child: Text(title, style: headingStyle),
+                ),
+                if (message case final String message) ...[
+                  const SizedBox(height: 8),
+                  Text(message, style: buttonLabelStyle),
+                ],
+                if (children.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  ...children,
+                ],
+                const SizedBox(height: 14),
+                Wrap(
+                  alignment: WrapAlignment.end,
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: actions,
+                ),
+              ],
+            ),
           ),
-        ],
+        ),
       ),
     ),
   );
@@ -462,6 +494,8 @@ class LabeledField extends StatelessWidget {
     this.enabled = true,
     this.lines = 1,
     this.onSubmitted,
+    this.onChanged,
+    this.textInputAction,
     this.hint,
   });
 
@@ -472,6 +506,8 @@ class LabeledField extends StatelessWidget {
   final bool enabled;
   final int lines;
   final ValueChanged<String>? onSubmitted;
+  final ValueChanged<String>? onChanged;
+  final TextInputAction? textInputAction;
   final String? hint;
 
   @override
@@ -488,10 +524,13 @@ class LabeledField extends StatelessWidget {
             controller: controller,
             keyboardType: keyboardType,
             onSubmitted: onSubmitted,
-            textInputAction: onSubmitted == null || lines > 1
-                ? null
-                : TextInputAction.done,
-            cursorOpacityAnimates: false,
+            onChanged: onChanged,
+            textInputAction:
+                textInputAction ??
+                (onSubmitted == null || lines > 1
+                    ? null
+                    : TextInputAction.done),
+            showCursor: false,
             obscureText: obscure,
             autocorrect: false,
             enableSuggestions: false,
@@ -532,13 +571,11 @@ class DownloadStatusView extends StatefulWidget {
   const DownloadStatusView({
     super.key,
     required this.services,
-    required this.wifiConnected,
     required this.episodeId,
     required this.builder,
   });
 
   final AppServices services;
-  final ValueListenable<bool?> wifiConnected;
   final int episodeId;
   final Widget Function(BuildContext context, DownloadDisplay download) builder;
 
@@ -547,15 +584,16 @@ class DownloadStatusView extends StatefulWidget {
 }
 
 class _DownloadStatusViewState extends State<DownloadStatusView> {
-  late ({DownloadStatus status, int percent}) _download;
+  late DownloadDisplay _download;
 
-  ({DownloadStatus status, int percent}) get _current {
+  DownloadDisplay get _current {
     final info = widget.services.downloads.statusOf(widget.episodeId);
     return (
       status: info.status,
       percent: info.status == DownloadStatus.running
           ? (info.progress.clamp(0.0, 1.0) * 10).floor() * 10
           : 0,
+      waitingForWifi: info.waitingForWifi,
     );
   }
 
@@ -588,29 +626,5 @@ class _DownloadStatusViewState extends State<DownloadStatusView> {
   }
 
   @override
-  Widget build(BuildContext context) {
-    if (_download.status != DownloadStatus.queued ||
-        !widget.services.settings.downloadOnWifiOnly) {
-      return _build(context, waitingForWifi: false);
-    }
-    return ValueListenableBuilder(
-      valueListenable: widget.wifiConnected,
-      builder: (context, wifi, _) => wifi == null
-          ? ValueListenableBuilder(
-              valueListenable: widget.services.sync.status,
-              builder: (context, sync, _) => _build(
-                context,
-                waitingForWifi: sync.phase == SyncPhase.offline,
-              ),
-            )
-          : _build(context, waitingForWifi: !wifi),
-    );
-  }
-
-  Widget _build(BuildContext context, {required bool waitingForWifi}) =>
-      widget.builder(context, (
-        status: _download.status,
-        percent: _download.percent,
-        waitingForWifi: waitingForWifi,
-      ));
+  Widget build(BuildContext context) => widget.builder(context, _download);
 }

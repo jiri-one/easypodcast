@@ -1,11 +1,13 @@
 import 'dart:async';
 
-import 'package:connectivity_plus/connectivity_plus.dart';
+import 'dart:math' as math;
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../core/library.dart' show BulkDismissNeedsConnection;
 import '../core/models.dart';
 import '../core/services.dart';
 import 'account_pages.dart';
@@ -18,7 +20,9 @@ import 'feed_refresh.dart';
 import 'library_views.dart';
 import 'playback_actions.dart';
 import 'player_views.dart';
+import 'queue_edits.dart';
 import 'settings_pages.dart';
+import 'sync_feedback.dart';
 import 'theme.dart';
 
 class PodcastHome extends StatelessWidget {
@@ -37,7 +41,17 @@ class PodcastHome extends StatelessWidget {
   }
 }
 
-enum _Screen { episode, player, podcast, about, add, server, feeds, opml }
+enum _Screen {
+  episode,
+  player,
+  podcast,
+  about,
+  add,
+  settings,
+  server,
+  feeds,
+  opml,
+}
 
 typedef _Page = ({_Screen screen, int? id});
 
@@ -50,24 +64,24 @@ class _LibraryHome extends StatefulWidget {
   State<_LibraryHome> createState() => _LibraryHomeState();
 }
 
-class _LibraryHomeState extends State<_LibraryHome>
-    with WidgetsBindingObserver {
+class _LibraryHomeState extends State<_LibraryHome> {
   static const _sortPreference = 'alphabeticalPodcasts';
   static const _redrawPreference = 'playerRedrawSeconds';
 
   late final _playback = PlaybackActions(widget.services);
   late final _refresh = FeedRefresh(widget.services);
+  late final _queueEdits = QueueEdits(widget.services.library);
+  late final _syncFeedback = SyncFeedback(widget.services.sync.status);
   late final _updates = Listenable.merge([
     widget.services.library,
     widget.services.settings,
     _playback,
     _refresh,
+    _queueEdits,
   ]);
   final _pages = <_Page>[];
   final _requestedDownloads = <int>{};
-  final _downloadWifi = ValueNotifier<bool?>(null);
   final _scrollPositions = PageStorageBucket();
-  StreamSubscription<List<ConnectivityResult>>? _network;
 
   LibrarySection _section = LibrarySection.inProgress;
   bool _menuOpen = false;
@@ -84,6 +98,12 @@ class _LibraryHomeState extends State<_LibraryHome>
   bool get _atHome =>
       _section == LibrarySection.inProgress && _pages.isEmpty && !_menuOpen;
 
+  _Page? get _podcastPage =>
+      _pages.where((page) => page.screen == _Screen.podcast).firstOrNull;
+
+  _Page? get _settingsPage =>
+      _pages.where((page) => page.screen == _Screen.settings).firstOrNull;
+
   List<LibrarySection> get _sections => [
     for (final section in LibrarySection.values)
       if (!_linux || section != LibrarySection.downloads) section,
@@ -93,31 +113,6 @@ class _LibraryHomeState extends State<_LibraryHome>
   void initState() {
     super.initState();
     unawaited(_loadPreferences());
-    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
-      WidgetsBinding.instance.addObserver(this);
-      unawaited(_watchWifi());
-    }
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) unawaited(_watchWifi());
-  }
-
-  Future<void> _watchWifi() async {
-    final connectivity = Connectivity();
-    try {
-      final current = await connectivity.checkConnectivity();
-      if (!mounted) return;
-      _downloadWifi.value = current.contains(ConnectivityResult.wifi);
-      _network ??= connectivity.onConnectivityChanged.listen(
-        (connections) =>
-            _downloadWifi.value = connections.contains(ConnectivityResult.wifi),
-        onError: (Object _) => _downloadWifi.value = null,
-      );
-    } on Exception {
-      if (mounted) _downloadWifi.value = null;
-    }
   }
 
   Future<void> _loadPreferences() async {
@@ -174,9 +169,8 @@ class _LibraryHomeState extends State<_LibraryHome>
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    unawaited(_network?.cancel());
-    _downloadWifi.dispose();
+    _queueEdits.dispose();
+    _syncFeedback.dispose();
     _playback.dispose();
     _refresh.dispose();
     super.dispose();
@@ -196,9 +190,15 @@ class _LibraryHomeState extends State<_LibraryHome>
   }
 
   void _switchList(LibrarySection section) => setState(() {
-    _section = section;
     _menuOpen = false;
-    _pages.clear();
+    if (section == LibrarySection.settings) {
+      if (_settingsPage == null) {
+        _pages.add((screen: _Screen.settings, id: null));
+      }
+    } else {
+      _section = section;
+      _pages.clear();
+    }
   });
 
   void _open(_Screen screen, [int? id]) =>
@@ -220,15 +220,23 @@ class _LibraryHomeState extends State<_LibraryHome>
         episode: episode,
         playback: _playback,
         downloadsAvailable: !_linux,
-        wifiConnected: _downloadWifi,
+        queueEdits: _queueEdits,
         onTrackDownload: _requestedDownloads.add,
-      ).showMenu(context);
-    } on Exception {
+      ).showMenu(
+        context,
+        queueMoves:
+            _section == LibrarySection.queue &&
+            _podcastPage == null &&
+            _settingsPage == null,
+      );
+    } on Object catch (error) {
       if (!mounted) return;
       await showEinkDialog<void>(
         context: context,
         builder: (context) => EinkDialogPanel(
-          title: context.strings.actionFailed,
+          title: error is BulkDismissNeedsConnection
+              ? context.strings.dismissOlderOffline
+              : context.strings.actionFailed,
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
@@ -248,17 +256,29 @@ class _LibraryHomeState extends State<_LibraryHome>
   });
 
   List<Episode> _activeEpisodeList() {
+    if (_settingsPage != null) return const [];
+    final podcast = _podcastPage;
+    return podcast == null
+        ? _sectionEpisodes()
+        : widget.services.library.episodesOf(podcast.id!);
+  }
+
+  List<Episode> _sectionEpisodes() {
     final library = widget.services.library;
-    final podcast = _pages
-        .where((page) => page.screen == _Screen.podcast)
-        .firstOrNull;
-    if (podcast != null) return library.episodesOf(podcast.id!);
     return switch (_section) {
       LibrarySection.inProgress => library.inProgress,
-      LibrarySection.queue => library.queue,
-      LibrarySection.newEpisodes => library.newEpisodes(limit: 0x7fffffff),
+      LibrarySection.queue => _queueEdits.episodes,
+      LibrarySection.newEpisodes => _recentNewEpisodes(),
       _ => const [],
     };
+  }
+
+  List<Episode> _recentNewEpisodes() {
+    final cutoff = DateTime.now().subtract(const Duration(days: 30));
+    return widget.services.library
+        .newEpisodes(limit: 0x7fffffff)
+        .takeWhile((episode) => episode.publishedAt?.isBefore(cutoff) == false)
+        .toList(growable: false);
   }
 
   KeyEventResult _desktopKey(FocusNode node, KeyEvent event) {
@@ -315,106 +335,159 @@ class _LibraryHomeState extends State<_LibraryHome>
   @override
   Widget build(BuildContext context) {
     final desktop = _wide;
-    return ListenableBuilder(
-      listenable: _updates,
-      builder: (context, _) {
-        final content = Scaffold(
-          body: SafeArea(
-            child: PageStorage(
-              bucket: _scrollPositions,
-              child: desktop ? _desktopBody(context) : _phoneBody(context),
+    return SyncFeedbackScope(
+      notifier: _syncFeedback,
+      child: ListenableBuilder(
+        listenable: _updates,
+        builder: (context, _) {
+          final content = Scaffold(
+            body: SafeArea(
+              child: PageStorage(
+                bucket: _scrollPositions,
+                child: desktop ? _desktopBody(context) : _phoneBody(context),
+              ),
             ),
-          ),
-        );
-        return PopScope(
-          canPop: _atHome,
-          onPopInvokedWithResult: (didPop, _) {
-            if (!didPop) _back();
-          },
-          child: _linux
-              ? Focus(autofocus: true, onKeyEvent: _desktopKey, child: content)
-              : content,
-        );
-      },
+          );
+          return PopScope(
+            canPop: _atHome,
+            onPopInvokedWithResult: (didPop, _) {
+              if (!didPop) _back();
+            },
+            child: _linux
+                ? Focus(
+                    autofocus: true,
+                    onKeyEvent: _desktopKey,
+                    child: content,
+                  )
+                : content,
+          );
+        },
+      ),
     );
   }
 
   Widget _phoneBody(BuildContext context) {
     final page = _pages.lastOrNull;
-    final settings = _section == LibrarySection.settings;
-    final showMini = page == null ? !settings : page.screen == _Screen.podcast;
+    final podcast = _podcastPage;
+    final settings = _settingsPage;
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Visibility(
+          visible: page == null,
+          maintainState: true,
+          child: _phoneFrame(
+            context,
+            title: _section.label(context),
+            body: _sectionBody(context),
+            switcher: true,
+            mini: true,
+          ),
+        ),
+        if (podcast != null)
+          Visibility(
+            visible: page == podcast,
+            maintainState: true,
+            child: _phoneFrame(
+              context,
+              title: _title(context, podcast),
+              body: _podcastBody(context, podcast.id!, desktop: false),
+              onBack: _back,
+              mini: true,
+            ),
+          ),
+        if (settings != null)
+          Visibility(
+            visible: page == settings,
+            maintainState: true,
+            child: _phoneFrame(
+              context,
+              title: context.strings.settings,
+              body: _settingsBody(),
+              onBack: _back,
+            ),
+          ),
+        if (page != null && page != podcast && page != settings)
+          _phoneFrame(
+            context,
+            title: _title(context, page),
+            body: _pageBody(context, page),
+            onBack: _back,
+          ),
+      ],
+    );
+  }
+
+  Widget _phoneFrame(
+    BuildContext context, {
+    required String title,
+    required Widget body,
+    VoidCallback? onBack,
+    bool switcher = false,
+    bool mini = false,
+  }) {
+    final menu = switcher && _menuOpen;
+    final content = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(child: body),
+        if (mini)
+          MiniPlayer(playback: _playback, onOpen: () => _open(_Screen.player)),
+      ],
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         EinkHeader(
-          page == null ? _section.label(context) : _title(context, page),
-          onBack: page != null || settings ? _back : null,
-          onMenu: page != null || settings
-              ? null
-              : () => setState(() => _menuOpen = !_menuOpen),
-          expanded: _menuOpen,
+          title,
+          onBack: onBack,
+          onMenu: switcher
+              ? () => setState(() => _menuOpen = !_menuOpen)
+              : null,
+          expanded: menu,
         ),
         Expanded(
-          child: LayoutBuilder(
-            builder: (context, bounds) => Stack(
-              fit: StackFit.expand,
-              children: [
-                ExcludeSemantics(
-                  excluding: _menuOpen,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Expanded(
-                        child: page == null
-                            ? _sectionBody(context)
-                            : _pageBody(context, page),
-                      ),
-                      if (showMini)
-                        MiniPlayer(
-                          playback: _playback,
-                          onOpen: () => _open(_Screen.player),
-                        ),
-                    ],
-                  ),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              ExcludeFocus(
+                excluding: menu,
+                child: ExcludeSemantics(excluding: menu, child: content),
+              ),
+              if (menu) ...[
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: _back,
+                  excludeFromSemantics: true,
+                  child: const SizedBox.expand(),
                 ),
-                if (_menuOpen) ...[
-                  GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: _back,
-                    excludeFromSemantics: true,
-                    child: const SizedBox.expand(),
-                  ),
-                  Align(
-                    alignment: Alignment.topCenter,
-                    child: ConstrainedBox(
-                      constraints: BoxConstraints(maxHeight: bounds.maxHeight),
-                      child: DecoratedBox(
-                        decoration: const BoxDecoration(
-                          color: Colors.white,
-                          border: Border.fromBorderSide(BorderSide(width: 2)),
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.all(2),
-                          child: ListView(
-                            shrinkWrap: true,
-                            padding: EdgeInsets.zero,
-                            children: [
-                              for (final section in _sections)
-                                EinkRow(
-                                  title: section.label(context),
-                                  onPressed: () => _switchList(section),
-                                  selected: section == _section,
-                                  last: section == _sections.last,
-                                ),
-                            ],
-                          ),
-                        ),
+                Align(
+                  alignment: Alignment.topCenter,
+                  child: DecoratedBox(
+                    decoration: const BoxDecoration(
+                      color: Colors.white,
+                      border: Border.fromBorderSide(BorderSide(width: 2)),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(2),
+                      child: ListView(
+                        shrinkWrap: true,
+                        padding: EdgeInsets.zero,
+                        children: [
+                          for (final section in _sections)
+                            EinkRow(
+                              title: section.label(context),
+                              onPressed: () => _switchList(section),
+                              selected: section == _section,
+                              last: section == _sections.last,
+                            ),
+                        ],
                       ),
                     ),
                   ),
-                ],
+                ),
               ],
-            ),
+            ],
           ),
         ),
       ],
@@ -422,15 +495,14 @@ class _LibraryHomeState extends State<_LibraryHome>
   }
 
   Widget _desktopBody(BuildContext context) {
-    final podcast = _pages
-        .where((page) => page.screen == _Screen.podcast)
-        .firstOrNull;
+    final podcast = _podcastPage;
+    final settings = _settingsPage;
+    final listPage = settings ?? podcast;
     final last = _pages.lastOrNull;
-    final detail = last?.screen == _Screen.podcast ? null : last;
-    final widthFactor = (MediaQuery.sizeOf(context).width / 1000).clamp(
-      0.0,
-      1.0,
-    );
+    final detail = last == listPage ? null : last;
+    final width = MediaQuery.sizeOf(context).width;
+    final navWidth = _desktopNavWidth(context).clamp(220.0, width - 480);
+    final listWidth = math.min(360.0, (width - navWidth) * 0.46);
     final strings = context.strings;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -440,7 +512,7 @@ class _LibraryHomeState extends State<_LibraryHome>
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               SizedBox(
-                width: 220 * widthFactor,
+                width: navWidth,
                 child: _columnDivider(
                   Column(
                     children: [
@@ -452,7 +524,8 @@ class _LibraryHomeState extends State<_LibraryHome>
                               if (section != LibrarySection.settings)
                                 EinkRow(
                                   title: section.label(context),
-                                  selected: _section == section,
+                                  selected:
+                                      settings == null && _section == section,
                                   desktop: true,
                                   onPressed: () => _switchList(section),
                                 ),
@@ -465,7 +538,7 @@ class _LibraryHomeState extends State<_LibraryHome>
                         ),
                         child: EinkRow(
                           title: strings.settings,
-                          selected: _section == LibrarySection.settings,
+                          selected: settings != null,
                           desktop: true,
                           last: true,
                           onPressed: () => _switchList(LibrarySection.settings),
@@ -476,23 +549,46 @@ class _LibraryHomeState extends State<_LibraryHome>
                 ),
               ),
               SizedBox(
-                width: 360 * widthFactor,
+                width: listWidth,
                 child: _columnDivider(
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       EinkHeader(
-                        podcast == null
+                        listPage == null
                             ? _section.label(context)
-                            : _title(context, podcast),
-                        onBack: podcast == null
+                            : _title(context, listPage),
+                        onBack: listPage == null
                             ? null
-                            : () => setState(_pages.clear),
+                            : () => setState(
+                                () => _pages.removeRange(
+                                  _pages.indexOf(listPage),
+                                  _pages.length,
+                                ),
+                              ),
                       ),
                       Expanded(
-                        child: podcast == null
-                            ? _sectionBody(context, desktop: true)
-                            : _podcastBody(context, podcast.id!, desktop: true),
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            Visibility(
+                              visible: listPage == null,
+                              maintainState: true,
+                              child: _sectionBody(context, desktop: true),
+                            ),
+                            if (podcast != null)
+                              Visibility(
+                                visible: settings == null,
+                                maintainState: true,
+                                child: _podcastBody(
+                                  context,
+                                  podcast.id!,
+                                  desktop: true,
+                                ),
+                              ),
+                            if (settings != null) _settingsBody(),
+                          ],
+                        ),
                       ),
                     ],
                   ),
@@ -500,7 +596,7 @@ class _LibraryHomeState extends State<_LibraryHome>
               ),
               Expanded(
                 child: detail == null
-                    ? (_section == LibrarySection.settings ||
+                    ? (settings != null ||
                               (_section == LibrarySection.podcasts &&
                                   podcast == null)
                           ? const SizedBox.shrink()
@@ -520,9 +616,30 @@ class _LibraryHomeState extends State<_LibraryHome>
             ],
           ),
         ),
-        DesktopPlayer(playback: _playback, onEpisode: _openEpisode),
+        DesktopPlayer(
+          playback: _playback,
+          onEpisode: _openEpisode,
+          redrawSeconds: _redrawSeconds,
+        ),
       ],
     );
+  }
+
+  double _desktopNavWidth(BuildContext context) {
+    final style = Theme.of(context).textTheme.labelLarge!
+        .merge(rowTitleStyle.copyWith(fontSize: 14));
+    final painter = TextPainter(
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+    );
+    var widest = 0.0;
+    for (final section in _sections) {
+      painter.text = TextSpan(text: section.label(context), style: style);
+      painter.layout();
+      widest = math.max(widest, painter.width);
+    }
+    painter.dispose();
+    return widest.ceilToDouble() + 33;
   }
 
   Widget _columnDivider(Widget child) => DecoratedBox(
@@ -546,6 +663,7 @@ class _LibraryHomeState extends State<_LibraryHome>
       },
       _Screen.about => strings.aboutPodcast,
       _Screen.add => strings.addPodcast,
+      _Screen.settings => strings.settings,
       _Screen.server => strings.server,
       _Screen.feeds => strings.feedStatus,
       _Screen.opml => strings.opml,
@@ -571,13 +689,13 @@ class _LibraryHomeState extends State<_LibraryHome>
     if (kind != null) {
       return EpisodeList(
         kind: kind,
-        episodes: _activeEpisodeList(),
+        episodes: _sectionEpisodes(),
         playback: _playback,
         onOpen: _openEpisode,
         onMenu: _openEpisodeMenu,
         desktop: desktop,
         downloadsAvailable: !_linux,
-        wifiConnected: _downloadWifi,
+        queueEdits: _queueEdits,
         selectedId: selected?.screen == _Screen.episode ? selected?.id : null,
         actions: [
           if (_section == LibrarySection.newEpisodes)
@@ -596,25 +714,26 @@ class _LibraryHomeState extends State<_LibraryHome>
       LibrarySection.downloads => DownloadsPage(
         playback: _playback,
         requestedIds: _requestedDownloads,
-        wifiConnected: _downloadWifi,
+        queueEdits: _queueEdits,
         onOpen: _openEpisode,
         onMenu: _openEpisodeMenu,
-      ),
-      LibrarySection.settings => SettingsPage(
-        playback: _playback,
-        alphabetical: _alphabetical,
-        preferencesFailed: _sortFailed || _redrawFailed,
-        onAlphabetical: _toggleSort,
-        redrawSeconds: _redrawSeconds,
-        onRedrawSeconds: _setRedrawSeconds,
-        downloadsAvailable: !_linux,
-        onServer: () => _open(_Screen.server),
-        onFeeds: () => _open(_Screen.feeds),
-        onOpml: () => _open(_Screen.opml),
       ),
       _ => const SizedBox.shrink(),
     };
   }
+
+  Widget _settingsBody() => SettingsPage(
+    playback: _playback,
+    alphabetical: _alphabetical,
+    preferencesFailed: _sortFailed || _redrawFailed,
+    onAlphabetical: _toggleSort,
+    redrawSeconds: _redrawSeconds,
+    onRedrawSeconds: _setRedrawSeconds,
+    downloadsAvailable: !_linux,
+    onServer: () => _open(_Screen.server),
+    onFeeds: () => _open(_Screen.feeds),
+    onOpml: () => _open(_Screen.opml),
+  );
 
   Widget _podcastBody(BuildContext context, int id, {required bool desktop}) {
     final library = widget.services.library;
@@ -631,7 +750,7 @@ class _LibraryHomeState extends State<_LibraryHome>
       onMenu: _openEpisodeMenu,
       desktop: desktop,
       downloadsAvailable: !_linux,
-      wifiConnected: _downloadWifi,
+      queueEdits: _queueEdits,
       selectedId: last?.screen == _Screen.episode ? last?.id : null,
       actions: [
         if (podcast.subscribed)
@@ -639,6 +758,11 @@ class _LibraryHomeState extends State<_LibraryHome>
             refresh: _refresh,
             lastLoaded: podcast.lastSuccessAt,
             podcastId: id,
+          ),
+        if (podcast.lastError?.isNotEmpty ?? false)
+          Padding(
+            padding: const EdgeInsets.all(8),
+            child: FeedStatusText(podcast, showLastLoaded: !podcast.subscribed),
           ),
         EinkRow(
           title: strings.aboutPodcast,
@@ -665,7 +789,7 @@ class _LibraryHomeState extends State<_LibraryHome>
           playback: _playback,
           desktopPanel: desktop,
           downloadsAvailable: !_linux,
-          wifiConnected: _downloadWifi,
+          queueEdits: _queueEdits,
           onTrackDownload: _requestedDownloads.add,
         );
       case _Screen.podcast:
@@ -684,10 +808,12 @@ class _LibraryHomeState extends State<_LibraryHome>
           playback: _playback,
           onEpisode: _openEpisode,
           sleepAvailable: !_linux,
-          redrawSeconds: _linux ? 1 : _redrawSeconds,
+          redrawSeconds: _redrawSeconds,
         );
       case _Screen.add:
         return AddPodcastPage(services: services, onAdded: _openPodcast);
+      case _Screen.settings:
+        return _settingsBody();
       case _Screen.server:
         return ServerPage(services: services);
       case _Screen.feeds:

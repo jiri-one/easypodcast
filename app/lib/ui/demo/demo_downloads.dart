@@ -18,9 +18,12 @@ class DemoDownloadService extends DownloadService {
   final _completed = {204, 101};
   final _active = <int, DownloadInfo>{};
 
-  void queueDownload(int episodeId) {
+  void queueDownload(int episodeId, {bool waitingForWifi = false}) {
     if (_completed.contains(episodeId)) return;
-    setDownloadInfo(episodeId, const DownloadInfo(DownloadStatus.queued));
+    setDownloadInfo(
+      episodeId,
+      DownloadInfo(DownloadStatus.queued, waitingForWifi: waitingForWifi),
+    );
   }
 
   void setDownloadInfo(int episodeId, DownloadInfo info) {

@@ -12,6 +12,9 @@ class FeedRefresh extends ChangeNotifier {
   final AppServices services;
   bool running = false;
   bool failed = false;
+  int? _podcastId;
+  bool _noNewLoad = false;
+  DateTime? _previousLoad;
   bool _disposed = false;
   Timer? _poll;
   Completer<void>? _waiting;
@@ -30,6 +33,11 @@ class FeedRefresh extends ChangeNotifier {
   (DateTime?, String?) _resultOf(Podcast? podcast) =>
       (podcast?.lastSuccessAt, podcast?.lastError);
 
+  bool runningFor(int? podcastId) => running && podcastId == _podcastId;
+  bool failedFor(int? podcastId) => failed && podcastId == _podcastId;
+  bool requestedFor(int? podcastId, DateTime? lastLoaded) =>
+      _noNewLoad && podcastId == _podcastId && lastLoaded == _previousLoad;
+
   Future<void> request({int? podcastId}) async {
     if (running || _disposed) return;
     final before = {
@@ -39,6 +47,11 @@ class FeedRefresh extends ChangeNotifier {
     };
     running = true;
     failed = false;
+    _noNewLoad = false;
+    _podcastId = podcastId;
+    _previousLoad = podcastId == null
+        ? lastLoaded
+        : services.library.podcast(podcastId)?.lastSuccessAt;
     notifyListeners();
 
     try {
@@ -62,6 +75,7 @@ class FeedRefresh extends ChangeNotifier {
           return;
         }
       }
+      _noNewLoad = true;
     } on Exception {
       failed = true;
     } finally {

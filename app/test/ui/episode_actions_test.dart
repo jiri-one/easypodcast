@@ -1,10 +1,12 @@
+import 'dart:async';
+
 import 'package:easypodcast/core/downloads.dart';
 import 'package:easypodcast/ui/demo/demo_downloads.dart';
+import 'package:easypodcast/ui/demo/demo_library.dart';
 import 'package:easypodcast/ui/demo/demo_sync.dart';
 import 'package:easypodcast/ui/eink_widgets.dart';
 import 'package:easypodcast/ui/episode_page.dart';
 import 'package:easypodcast/ui/library_views.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -28,9 +30,9 @@ void main() {
         expect(_labels(tester), [
           l.playFrom('41:00'),
           l.addToQueue,
-          l.deleteFile,
           l.markPlayed,
           l.dismiss,
+          l.deleteFile,
         ]);
         await app.dialog(l.dismiss);
         expect(find.text(l.dismissPositionAndFile('41:00')), findsOneWidget);
@@ -73,9 +75,9 @@ void main() {
         expect(_labels(tester), [
           l.play,
           l.addToQueue,
-          l.download,
           l.markPlayed,
           l.dismiss,
+          l.download,
           l.dismissOlder,
         ]);
         await app.dialog(l.addToQueue);
@@ -129,7 +131,7 @@ void main() {
         expect(library.stateOf(201).isPlayed, isTrue);
 
         await app.holdRow(title);
-        expect(_labels(tester), [l.play, l.addToQueue, l.download, l.markNew]);
+        expect(_labels(tester), [l.play, l.addToQueue, l.markNew, l.download]);
         await app.dialog(l.markNew);
         expect(library.stateOf(201).isNew, isTrue);
 
@@ -139,7 +141,12 @@ void main() {
         expect(_dialog, findsNothing);
 
         await app.holdRow(title);
-        expect(_labels(tester), [l.play, l.addToQueue, l.markNew]);
+        expect(_labels(tester), [
+          l.play,
+          l.addToQueue,
+          l.markPlayed,
+          l.markNew,
+        ]);
       } finally {
         await app.finish();
       }
@@ -187,7 +194,7 @@ void main() {
         );
 
         (app.services.sync as DemoSyncService).setOffline();
-        downloads.queueDownload(203);
+        downloads.queueDownload(203, waitingForWifi: true);
         await tester.pumpAndSettle();
         expect(find.text(l.waitingForWifi), findsOneWidget);
         expect(
@@ -278,34 +285,21 @@ void main() {
     }
   });
 
-  testWidgets('a Wi-Fi-only download shows the Wi-Fi wait on cellular', (
+  testWidgets('the download service controls the Wi-Fi wait label', (
     tester,
   ) async {
-    final messenger = tester.binding.defaultBinaryMessenger;
-    messenger.setMockMethodCallHandler(
-      const MethodChannel('dev.fluttercommunity.plus/connectivity'),
-      (_) async => ['mobile'],
-    );
-    late MockStreamHandlerEventSink networkEvents;
-    messenger.setMockStreamHandler(
-      const EventChannel('dev.fluttercommunity.plus/connectivity_status'),
-      MockStreamHandler.inline(
-        onListen: (_, events) {
-          networkEvents = events;
-        },
-      ),
-    );
     final app = await _phone(tester);
     final downloads = app.services.downloads as DemoDownloadService;
     final l = app.strings;
     try {
-      downloads.queueDownload(704);
+      downloads.queueDownload(704, waitingForWifi: true);
       await tester.pumpAndSettle();
       expect(find.textContaining(l.stateWaitingForWifi), findsOneWidget);
       await app.holdRow(app.episode(704));
       expect(_labels(tester), contains(l.waitingForWifi));
 
-      networkEvents.success(['wifi']);
+      (app.services.sync as DemoSyncService).setOffline();
+      downloads.queueDownload(704);
       await tester.pumpAndSettle();
       expect(find.textContaining(l.stateWaitingForDownload), findsOneWidget);
       expect(_labels(tester), contains(l.waitingForDownload));
@@ -313,13 +307,134 @@ void main() {
       await app.finish();
     }
   });
+
+  testWidgets('episode actions stay in place and ignore taps for 600 ms', (
+    tester,
+  ) async {
+    final app = await _phone(tester);
+    final l = app.strings;
+    final library = app.services.library;
+    Finder button(String label) => find.widgetWithText(EinkButton, label);
+
+    try {
+      await app.openEpisode(204);
+      final dismiss = tester.getRect(button(l.dismiss));
+      final markPlayed = tester.getRect(button(l.markPlayed));
+      await app.tapText(l.dismiss);
+      final confirm = tester.getCenter(
+        find.descendant(of: _dialog, matching: find.text(l.dismiss)),
+      );
+      await tester.tapAt(confirm);
+      await tester.pumpAndSettle(const Duration(milliseconds: 1));
+      expect(tester.getRect(button(l.markNew)), dismiss);
+      expect(tester.getRect(button(l.markPlayed)), markPlayed);
+
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.tapAt(confirm);
+      await tester.pump();
+      await tester.tap(button(l.markNew));
+      await tester.pump();
+      expect(library.stateOf(204).isDismissed, isTrue);
+
+      await tester.pump(const Duration(milliseconds: 301));
+      await app.tapText(l.markNew);
+      expect(library.stateOf(204).isNew, isTrue);
+      final download = tester.getRect(button(l.download));
+      await tester.pump(const Duration(milliseconds: 601));
+      await app.tapText(l.markPlayed);
+      expect(tester.getRect(button(l.markNew)), markPlayed);
+      expect(tester.getRect(button(l.download)), download);
+      await app.tapText(l.markNew);
+      expect(library.stateOf(204).isPlayed, isTrue);
+    } finally {
+      await app.finish();
+    }
+  });
+
+  testWidgets('queue label flips while saving and rolls back on failure', (
+    tester,
+  ) async {
+    final library = _FailingQueueLibrary();
+    final app = await _phone(tester, library: library);
+    final l = app.strings;
+    try {
+      await app.openEpisode(204);
+      final queueButton = find.widgetWithText(EinkButton, l.addToQueue);
+      final bounds = tester.getRect(queueButton);
+      await app.tap(queueButton);
+      expect(
+        tester.getRect(find.widgetWithText(EinkButton, l.removeFromQueue)),
+        bounds,
+      );
+      expect(library.queue.any((item) => item.id == 204), isFalse);
+      await app.tapText(l.removeFromQueue);
+      expect(library.attempts, 1);
+      library.save.completeError(Exception('Queue write failed'));
+      await tester.pumpAndSettle();
+      expect(tester.getRect(queueButton), bounds);
+      expect(find.text(l.actionFailed), findsOneWidget);
+    } finally {
+      if (!library.save.isCompleted) library.save.complete();
+      await app.finish();
+    }
+  });
+
+  testWidgets(
+    'bulk dismissal reports when the server snapshot is unavailable',
+    (tester) async {
+      final library = _UnavailableBulkLibrary();
+      final app = await _phone(tester, library: library);
+      final l = app.strings;
+      final count = library.dismissOlderCandidates(201).length;
+      try {
+        await app.section(LibrarySection.newEpisodes);
+        await app.openEpisode(201);
+        await app.tapText(l.dismissOlder);
+        await app.dialog(l.dismissCount(count));
+        expect(find.text(l.dismissOlderOffline), findsOneWidget);
+        expect(library.stateOf(201).isNew, isTrue);
+
+        await app.back();
+        await app.holdRow(app.episode(201));
+        await app.dialog(l.dismissOlder);
+        await app.dialog(l.dismissCount(count));
+        expect(
+          find.widgetWithText(EinkDialogPanel, l.dismissOlderOffline),
+          findsOneWidget,
+        );
+        expect(library.stateOf(201).isNew, isTrue);
+      } finally {
+        await app.finish();
+      }
+    },
+  );
 }
 
-Future<UiHarness> _phone(WidgetTester tester) => UiHarness.open(
-  tester,
-  size: const Size(360, 720),
-  locale: const Locale('cs'),
-);
+Future<UiHarness> _phone(WidgetTester tester, {DemoLibrary? library}) =>
+    UiHarness.open(
+      tester,
+      size: const Size(360, 720),
+      locale: const Locale('cs'),
+      library: library,
+    );
+
+class _FailingQueueLibrary extends DemoLibrary {
+  final save = Completer<void>();
+  int attempts = 0;
+
+  @override
+  Future<void> enqueue(int episodeId, {bool next = false}) async {
+    attempts++;
+    await save.future;
+    await super.enqueue(episodeId, next: next);
+  }
+}
+
+class _UnavailableBulkLibrary extends DemoLibrary {
+  @override
+  Future<void> dismissOlder(int episodeId) async =>
+      throw StateError('Stale snapshot');
+}
 
 List<String> _labels(WidgetTester tester) => [
   for (final button in tester.widgetList<EinkButton>(
@@ -331,14 +446,16 @@ List<String> _labels(WidgetTester tester) => [
 void _expectDownloadMarker(WidgetTester tester, String title, String label) {
   final row = find.widgetWithText(EinkRow, title);
   final marker = tester.widget<Icon>(
-    find.descendant(of: row, matching: find.byIcon(Icons.download_done)),
+    find.descendant(of: row, matching: find.byIcon(Icons.download_outlined)),
   );
-  expect(marker.semanticLabel, label);
   expect(marker.color, Colors.black);
-  expect(
-    find.descendant(of: row, matching: find.textContaining('stažený')),
-    findsNothing,
-  );
+  final caption = find.descendant(of: row, matching: find.text(label));
+  if (marker.semanticLabel == null) {
+    expect(caption, findsOneWidget);
+  } else {
+    expect(marker.semanticLabel, label);
+    expect(caption, findsNothing);
+  }
 }
 
 void _reportProgress(DemoDownloadService downloads, int id, double progress) {

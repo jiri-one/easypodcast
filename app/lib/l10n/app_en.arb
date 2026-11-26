@@ -10,7 +10,9 @@
   "changeList": "Switch list",
   "player": "Player",
   "playerRedraw": "Player time refresh interval",
+  "listRedraw": "List playback progress refresh interval",
   "seekPlayback": "Playback position",
+  "seekUnavailable": "The playback position can’t be changed yet.",
   "nextInQueue": "Next in queue: {title}",
   "@nextInQueue": {"placeholders": {"title": {"type": "String"}}},
   "play": "Play",
@@ -18,6 +20,11 @@
   "checkingPosition": "Checking position…",
   "loadingPlayback": "Loading…",
   "playbackFailed": "Couldn't play the episode. Try again.",
+  "playbackOffline": "Only downloaded episodes can play offline.",
+  "playbackLoadFailed": "Couldn’t load the episode.",
+  "playbackStreamFailed": "Playback was interrupted.",
+  "playbackSeekFailed": "Couldn’t change the playback position.",
+  "playbackFocusUnavailable": "Another app is using audio.",
   "noPlayback": "Nothing is playing yet.",
   "stateNew": "new",
   "statePlaying": "playing",
@@ -28,14 +35,16 @@
   "stateInQueue": "queued",
   "stateDownloading": "downloading {percent}%",
   "@stateDownloading": {"placeholders": {"percent": {"type": "int"}}},
-  "stateWaitingForWifi": "waiting for Wi-Fi",
+  "stateWaitingForWifi": "Waiting for Wi-Fi",
   "stateWaitingForDownload": "waiting to download",
   "stateDownloadFailed": "Couldn't download the episode.",
   "offline": "Offline. Positions will sync when the server is reachable.",
-  "syncError": "Sync failed. Try refreshing the list.",
+  "syncError": "Sync failed. The app will try again.",
+  "syncLoading": "Loading…",
   "inProgressEmpty": "You have no episodes in progress.",
   "queueEmpty": "The queue is empty.",
   "newEmpty": "You have no new episodes.",
+  "olderEpisodesInPodcasts": "Find older episodes under Podcasts",
   "podcastsEmpty": "You haven't subscribed to any podcasts yet.",
   "downloadsEmpty": "There are no downloads on this phone yet.",
   "podcastEmpty": "This podcast has no episodes yet.",
@@ -45,6 +54,11 @@
   "episodeActions": "Episode actions",
   "addToQueue": "Add to queue",
   "removeFromQueue": "Remove from queue",
+  "queueDragHint": "Hold an episode and drag it.",
+  "queueSaving": "Saving queue…",
+  "moveQueueUp": "Move up",
+  "moveQueueDown": "Move down",
+  "moveQueueFirst": "Move to top",
   "download": "Download",
   "downloadProgress": "Downloading… {percent}%",
   "@downloadProgress": {"placeholders": {"percent": {"type": "int"}}},
@@ -53,13 +67,14 @@
   "deleteFile": "Delete file",
   "cancelDownload": "Cancel download",
   "cancelDownloadTitle": "Cancel download?",
-  "retryDownload": "Download failed, try again",
+  "retryDownload": "Retry download",
   "markPlayed": "Mark as played",
   "markNew": "Mark as new",
   "dismiss": "Dismiss",
   "dismissTitle": "Dismiss episode?",
   "dismissFile": "The downloaded file will be deleted.",
   "dismissOlder": "Dismiss older too",
+  "dismissOlderOffline": "Dismissing older episodes requires a connection to the server.",
   "dismissOlderKept": "Episodes in progress, played episodes, and queued episodes will be kept.",
   "dismissOlderDownloads": "Downloads of these episodes will be deleted.",
   "cancel": "Cancel",
@@ -74,9 +89,11 @@
   "sleepOff": "Off",
   "sleepOffHelp": "Choose when playback should stop.",
   "sleepEndOfEpisode": "End of episode",
+  "sleepEndValue": "until episode ends",
   "sleepEndHelp": "Playback will stop at the end of the episode.",
   "refresh": "Refresh",
   "refreshing": "Refreshing…",
+  "refreshRequested": "Refresh requested",
   "refreshFailed": "Couldn't refresh the feeds. Try again.",
   "today": "Today",
   "yesterday": "Yesterday",
@@ -92,6 +109,8 @@
   "feedStatus": "Feed status",
   "aboutPodcast": "About podcast",
   "unsubscribe": "Unsubscribe",
+  "unsubscribeTitle": "Unsubscribe?",
+  "resubscribe": "Subscribe again",
   "unsubscribing": "Unsubscribing…",
   "unsubscribeHelp": "The server will stop fetching new episodes. Existing episodes and their listening status will be kept.",
   "notSubscribed": "This podcast is unsubscribed.",
@@ -99,7 +118,24 @@
   "server": "Server",
   "serverAddress": "Server address",
   "serverConnected": "Connected",
+  "sendNow": "Send now",
   "serverChangeHelp": "To use a different server address, sign out and enter it when you sign in.",
+  "serverLastSync": "Last synced {time}",
+  "@serverLastSync": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "pendingChanges": "{count, plural, =1{1 change waiting to send} other{{count} changes waiting to send}}",
+  "@pendingChanges": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "deviceName": "Device name",
   "defaultAndroidDevice": "Android phone",
   "defaultLinuxDevice": "Linux computer",
@@ -113,6 +149,7 @@
   "skipForward": "Skip forward",
   "alphabeticalPodcasts": "Sort podcasts alphabetically",
   "downloadWifi": "Download on Wi-Fi only",
+  "keepQueueDownloaded": "Keep the first two queued episodes downloaded (Wi-Fi only)",
   "deletePlayedDownloads": "Delete files after playback",
   "opml": "Import and export OPML",
   "opmlHelp": "Paste the contents of an OPML file, or copy your subscriptions as OPML.",
@@ -344,14 +381,6 @@
       }
     }
   },
-  "sleepEndEstimate": "Playback will stop at the end of the episode, at about {time}.",
-  "@sleepEndEstimate": {
-    "placeholders": {
-      "time": {
-        "type": "String"
-      }
-    }
-  },
   "loadedAt": "fetched at {time}",
   "@loadedAt": {
     "placeholders": {
@@ -367,6 +396,14 @@
         "type": "String"
       },
       "time": {
+        "type": "String"
+      }
+    }
+  },
+  "loadedOn": "fetched on {date}",
+  "@loadedOn": {
+    "placeholders": {
+      "date": {
         "type": "String"
       }
     }

@@ -31,6 +31,7 @@ class _PlaybackPositionViewState extends State<PlaybackPositionView>
     with WidgetsBindingObserver {
   late (Duration, Duration?) _time;
   Timer? _timer;
+  bool _visible = true;
 
   bool get _isCurrent =>
       widget.playback.services.player.current?.id == widget.episode.id;
@@ -66,6 +67,15 @@ class _PlaybackPositionViewState extends State<PlaybackPositionView>
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final visible = TickerMode.valuesOf(context).enabled;
+    if (visible && !_visible) _time = _read();
+    _visible = visible;
+    _schedule();
+  }
+
+  @override
   void didUpdateWidget(PlaybackPositionView oldWidget) {
     super.didUpdateWidget(oldWidget);
     final changed = oldWidget.playback != widget.playback;
@@ -85,14 +95,13 @@ class _PlaybackPositionViewState extends State<PlaybackPositionView>
   }
 
   void _sample() {
-    if (!mounted) return;
+    if (!mounted || !_visible) return;
     final next = _read();
     if (next != _time) setState(() => _time = next);
   }
 
   void _positionChanged() {
-    if (widget.redrawSeconds <= 1 ||
-        !widget.playback.playing(widget.episode.id)) {
+    if (!widget.playback.playing(widget.episode.id)) {
       _sample();
     }
   }
@@ -110,13 +119,13 @@ class _PlaybackPositionViewState extends State<PlaybackPositionView>
 
   void _schedule() {
     final lifecycle = WidgetsBinding.instance.lifecycleState;
-    if (widget.redrawSeconds > 1 &&
+    if (_visible &&
         widget.playback.playing(widget.episode.id) &&
         (lifecycle == null ||
             lifecycle == AppLifecycleState.resumed ||
             lifecycle == AppLifecycleState.inactive)) {
       _timer ??= Timer.periodic(
-        Duration(seconds: widget.redrawSeconds),
+        Duration(seconds: math.max(1, widget.redrawSeconds)),
         (_) => _sample(),
       );
     } else {
@@ -208,9 +217,7 @@ class _PlaybackTimelineState extends State<PlaybackTimeline> {
     redrawSeconds: widget.redrawSeconds,
     builder: (context, elapsed, duration) {
       final known = duration != null && duration > Duration.zero;
-      final canSeek =
-          known &&
-          widget.playback.services.player.current?.id == widget.episode.id;
+      final canSeek = known && widget.playback.canSeek(widget.episode.id);
       final remaining = known
           ? (elapsed >= duration ? Duration.zero : duration - elapsed)
           : null;
@@ -247,27 +254,36 @@ class _PlaybackTimelineState extends State<PlaybackTimeline> {
                   behavior: HitTestBehavior.opaque,
                   excludeFromSemantics: true,
                   gestures: {
-                    if (canSeek)
-                      HorizontalDragGestureRecognizer:
-                          GestureRecognizerFactoryWithHandlers<
-                            HorizontalDragGestureRecognizer
-                          >(
-                            () =>
-                                HorizontalDragGestureRecognizer()
-                                  ..onlyAcceptDragOnThreshold = true,
-                            (recognizer) {
-                              void move(Offset position) =>
-                                  _drag(position.dx, bounds.maxWidth, duration);
-                              recognizer.gestureSettings =
-                                  MediaQuery.maybeGestureSettingsOf(context);
-                              recognizer.onStart = (details) =>
-                                  move(details.localPosition);
-                              recognizer.onUpdate = (details) =>
-                                  move(details.localPosition);
-                              recognizer.onEnd = (_) => unawaited(_seek());
-                              recognizer.onCancel = _cancel;
-                            },
-                          ),
+                    HorizontalDragGestureRecognizer:
+                        GestureRecognizerFactoryWithHandlers<
+                          HorizontalDragGestureRecognizer
+                        >(
+                          () =>
+                              HorizontalDragGestureRecognizer()
+                                ..onlyAcceptDragOnThreshold = true,
+                          (recognizer) {
+                            void move(Offset position) {
+                              if (canSeek) {
+                                _drag(position.dx, bounds.maxWidth, duration);
+                              }
+                            }
+
+                            recognizer.gestureSettings =
+                                MediaQuery.maybeGestureSettingsOf(context);
+                            recognizer.onStart = (details) =>
+                                move(details.localPosition);
+                            recognizer.onUpdate = (details) =>
+                                move(details.localPosition);
+                            recognizer.onEnd = (_) {
+                              if (canSeek) {
+                                unawaited(_seek());
+                              } else {
+                                widget.playback.showSeekUnavailable();
+                              }
+                            };
+                            recognizer.onCancel = _cancel;
+                          },
+                        ),
                   },
                   child: SizedBox(
                     width: double.infinity,

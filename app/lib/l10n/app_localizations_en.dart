@@ -42,7 +42,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get playerRedraw => 'Player time refresh interval';
 
   @override
+  String get listRedraw => 'List playback progress refresh interval';
+
+  @override
   String get seekPlayback => 'Playback position';
+
+  @override
+  String get seekUnavailable => 'The playback position can’t be changed yet.';
 
   @override
   String nextInQueue(String title) {
@@ -63,6 +69,21 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get playbackFailed => 'Couldn\'t play the episode. Try again.';
+
+  @override
+  String get playbackOffline => 'Only downloaded episodes can play offline.';
+
+  @override
+  String get playbackLoadFailed => 'Couldn’t load the episode.';
+
+  @override
+  String get playbackStreamFailed => 'Playback was interrupted.';
+
+  @override
+  String get playbackSeekFailed => 'Couldn’t change the playback position.';
+
+  @override
+  String get playbackFocusUnavailable => 'Another app is using audio.';
 
   @override
   String get noPlayback => 'Nothing is playing yet.';
@@ -94,7 +115,7 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get stateWaitingForWifi => 'waiting for Wi-Fi';
+  String get stateWaitingForWifi => 'Waiting for Wi-Fi';
 
   @override
   String get stateWaitingForDownload => 'waiting to download';
@@ -107,7 +128,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'Offline. Positions will sync when the server is reachable.';
 
   @override
-  String get syncError => 'Sync failed. Try refreshing the list.';
+  String get syncError => 'Sync failed. The app will try again.';
+
+  @override
+  String get syncLoading => 'Loading…';
 
   @override
   String get inProgressEmpty => 'You have no episodes in progress.';
@@ -117,6 +141,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get newEmpty => 'You have no new episodes.';
+
+  @override
+  String get olderEpisodesInPodcasts => 'Find older episodes under Podcasts';
 
   @override
   String get podcastsEmpty => 'You haven\'t subscribed to any podcasts yet.';
@@ -146,6 +173,21 @@ class AppLocalizationsEn extends AppLocalizations {
   String get removeFromQueue => 'Remove from queue';
 
   @override
+  String get queueDragHint => 'Hold an episode and drag it.';
+
+  @override
+  String get queueSaving => 'Saving queue…';
+
+  @override
+  String get moveQueueUp => 'Move up';
+
+  @override
+  String get moveQueueDown => 'Move down';
+
+  @override
+  String get moveQueueFirst => 'Move to top';
+
+  @override
   String get download => 'Download';
 
   @override
@@ -169,7 +211,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get cancelDownloadTitle => 'Cancel download?';
 
   @override
-  String get retryDownload => 'Download failed, try again';
+  String get retryDownload => 'Retry download';
 
   @override
   String get markPlayed => 'Mark as played';
@@ -188,6 +230,10 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get dismissOlder => 'Dismiss older too';
+
+  @override
+  String get dismissOlderOffline =>
+      'Dismissing older episodes requires a connection to the server.';
 
   @override
   String get dismissOlderKept =>
@@ -234,6 +280,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get sleepEndOfEpisode => 'End of episode';
 
   @override
+  String get sleepEndValue => 'until episode ends';
+
+  @override
   String get sleepEndHelp => 'Playback will stop at the end of the episode.';
 
   @override
@@ -241,6 +290,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get refreshing => 'Refreshing…';
+
+  @override
+  String get refreshRequested => 'Refresh requested';
 
   @override
   String get refreshFailed => 'Couldn\'t refresh the feeds. Try again.';
@@ -291,6 +343,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get unsubscribe => 'Unsubscribe';
 
   @override
+  String get unsubscribeTitle => 'Unsubscribe?';
+
+  @override
+  String get resubscribe => 'Subscribe again';
+
+  @override
   String get unsubscribing => 'Unsubscribing…';
 
   @override
@@ -313,8 +371,27 @@ class AppLocalizationsEn extends AppLocalizations {
   String get serverConnected => 'Connected';
 
   @override
+  String get sendNow => 'Send now';
+
+  @override
   String get serverChangeHelp =>
       'To use a different server address, sign out and enter it when you sign in.';
+
+  @override
+  String serverLastSync(String time) {
+    return 'Last synced $time';
+  }
+
+  @override
+  String pendingChanges(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count changes waiting to send',
+      one: '1 change waiting to send',
+    );
+    return '$_temp0';
+  }
 
   @override
   String get deviceName => 'Device name';
@@ -354,6 +431,10 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get downloadWifi => 'Download on Wi-Fi only';
+
+  @override
+  String get keepQueueDownloaded =>
+      'Keep the first two queued episodes downloaded (Wi-Fi only)';
 
   @override
   String get deletePlayedDownloads => 'Delete files after playback';
@@ -578,11 +659,6 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String sleepEndEstimate(String time) {
-    return 'Playback will stop at the end of the episode, at about $time.';
-  }
-
-  @override
   String loadedAt(String time) {
     return 'fetched at $time';
   }
@@ -590,6 +666,11 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String feedLastLoaded(String date, String time) {
     return 'Last fetched on $date at $time.';
+  }
+
+  @override
+  String loadedOn(String date) {
+    return 'fetched on $date';
   }
 
   @override

@@ -42,7 +42,13 @@ class AppLocalizationsCs extends AppLocalizations {
   String get playerRedraw => 'Překreslování času v přehrávači';
 
   @override
+  String get listRedraw => 'Překreslování průběhu v seznamech';
+
+  @override
   String get seekPlayback => 'Pozice přehrávání';
+
+  @override
+  String get seekUnavailable => 'Pozici teď nejde změnit.';
 
   @override
   String nextInQueue(String title) {
@@ -63,6 +69,21 @@ class AppLocalizationsCs extends AppLocalizations {
 
   @override
   String get playbackFailed => 'Díl se nepodařilo přehrát. Zkus to znovu.';
+
+  @override
+  String get playbackOffline => 'Bez spojení jde přehrát jen stažený díl.';
+
+  @override
+  String get playbackLoadFailed => 'Díl se nepodařilo načíst.';
+
+  @override
+  String get playbackStreamFailed => 'Přehrávání se přerušilo.';
+
+  @override
+  String get playbackSeekFailed => 'Pozici se nepodařilo změnit.';
+
+  @override
+  String get playbackFocusUnavailable => 'Zvuk teď používá jiná aplikace.';
 
   @override
   String get noPlayback => 'Zatím nic nehraje.';
@@ -94,7 +115,7 @@ class AppLocalizationsCs extends AppLocalizations {
   }
 
   @override
-  String get stateWaitingForWifi => 'čeká na Wi-Fi';
+  String get stateWaitingForWifi => 'Čeká na Wi-Fi';
 
   @override
   String get stateWaitingForDownload => 'čeká na stažení';
@@ -106,7 +127,11 @@ class AppLocalizationsCs extends AppLocalizations {
   String get offline => 'Bez spojení. Pozice se odešlou po připojení.';
 
   @override
-  String get syncError => 'Synchronizace se nezdařila. Zkus obnovit seznam.';
+  String get syncError =>
+      'Synchronizace se nezdařila. Aplikace to zkusí znovu sama.';
+
+  @override
+  String get syncLoading => 'Načítám…';
 
   @override
   String get inProgressEmpty => 'Nemáš žádné rozposlouchané díly.';
@@ -116,6 +141,9 @@ class AppLocalizationsCs extends AppLocalizations {
 
   @override
   String get newEmpty => 'Nemáš žádné nové díly.';
+
+  @override
+  String get olderEpisodesInPodcasts => 'Starší díly najdeš u podcastů';
 
   @override
   String get podcastsEmpty => 'Zatím nemáš žádné odběry.';
@@ -145,6 +173,21 @@ class AppLocalizationsCs extends AppLocalizations {
   String get removeFromQueue => 'Odebrat z fronty';
 
   @override
+  String get queueDragHint => 'Podrž díl a přetáhni ho.';
+
+  @override
+  String get queueSaving => 'Ukládám frontu…';
+
+  @override
+  String get moveQueueUp => 'Posunout výš';
+
+  @override
+  String get moveQueueDown => 'Posunout níž';
+
+  @override
+  String get moveQueueFirst => 'Posunout na začátek';
+
+  @override
   String get download => 'Stáhnout';
 
   @override
@@ -168,7 +211,7 @@ class AppLocalizationsCs extends AppLocalizations {
   String get cancelDownloadTitle => 'Zrušit stahování?';
 
   @override
-  String get retryDownload => 'Stahování selhalo, zkusit znovu';
+  String get retryDownload => 'Zkusit stáhnout znovu';
 
   @override
   String get markPlayed => 'Označit jako přehrané';
@@ -187,6 +230,10 @@ class AppLocalizationsCs extends AppLocalizations {
 
   @override
   String get dismissOlder => 'Vyřadit i starší';
+
+  @override
+  String get dismissOlderOffline =>
+      'Hromadné vyřazení potřebuje spojení se serverem.';
 
   @override
   String get dismissOlderKept =>
@@ -232,6 +279,9 @@ class AppLocalizationsCs extends AppLocalizations {
   String get sleepEndOfEpisode => 'Do konce dílu';
 
   @override
+  String get sleepEndValue => 'do konce dílu';
+
+  @override
   String get sleepEndHelp => 'Přehrávání se zastaví po dohrání dílu.';
 
   @override
@@ -239,6 +289,9 @@ class AppLocalizationsCs extends AppLocalizations {
 
   @override
   String get refreshing => 'Obnovuji…';
+
+  @override
+  String get refreshRequested => 'Obnovení vyžádáno';
 
   @override
   String get refreshFailed => 'Feedy se nepodařilo obnovit. Zkus to znovu.';
@@ -289,6 +342,12 @@ class AppLocalizationsCs extends AppLocalizations {
   String get unsubscribe => 'Zrušit odběr';
 
   @override
+  String get unsubscribeTitle => 'Zrušit odběr?';
+
+  @override
+  String get resubscribe => 'Odebírat znovu';
+
+  @override
   String get unsubscribing => 'Ruším odběr…';
 
   @override
@@ -311,8 +370,28 @@ class AppLocalizationsCs extends AppLocalizations {
   String get serverConnected => 'Spojeno';
 
   @override
+  String get sendNow => 'Odeslat teď';
+
+  @override
   String get serverChangeHelp =>
       'Jinou adresu serveru můžeš zadat po odhlášení.';
+
+  @override
+  String serverLastSync(String time) {
+    return 'Poslední synchronizace $time';
+  }
+
+  @override
+  String pendingChanges(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count změn čeká na odeslání',
+      few: '$count změny čekají na odeslání',
+      one: '1 změna čeká na odeslání',
+    );
+    return '$_temp0';
+  }
 
   @override
   String get deviceName => 'Název zařízení';
@@ -330,7 +409,7 @@ class AppLocalizationsCs extends AppLocalizations {
   String get logout => 'Odhlásit se';
 
   @override
-  String get loggingOut => 'Odlašuji…';
+  String get loggingOut => 'Odhlašuji…';
 
   @override
   String get continueQueue => 'Pokračovat frontou';
@@ -352,6 +431,10 @@ class AppLocalizationsCs extends AppLocalizations {
 
   @override
   String get downloadWifi => 'Stahovat jen přes Wi-Fi';
+
+  @override
+  String get keepQueueDownloaded =>
+      'Držet první dva díly fronty stažené (jen Wi-Fi)';
 
   @override
   String get deletePlayedDownloads => 'Po přehrání smazat soubor';
@@ -581,11 +664,6 @@ class AppLocalizationsCs extends AppLocalizations {
   }
 
   @override
-  String sleepEndEstimate(String time) {
-    return 'Přehrávání se zastaví po dohrání dílu, přibližně v $time.';
-  }
-
-  @override
   String loadedAt(String time) {
     return 'načteno $time';
   }
@@ -593,6 +671,11 @@ class AppLocalizationsCs extends AppLocalizations {
   @override
   String feedLastLoaded(String date, String time) {
     return 'Naposledy načteno $date v $time.';
+  }
+
+  @override
+  String loadedOn(String date) {
+    return 'načteno $date';
   }
 
   @override
@@ -612,7 +695,7 @@ class AppLocalizationsCs extends AppLocalizations {
 
   @override
   String storageUsed(String used) {
-    return '$used';
+    return 'Staženo $used';
   }
 
   @override

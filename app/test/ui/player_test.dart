@@ -1,4 +1,8 @@
+import 'package:easypodcast/core/player.dart';
+import 'package:easypodcast/core/services.dart';
 import 'package:easypodcast/ui/demo/demo_library.dart';
+import 'package:easypodcast/ui/demo/demo_player.dart';
+import 'package:easypodcast/ui/demo/demo_sync.dart';
 import 'package:easypodcast/ui/eink_widgets.dart';
 import 'package:easypodcast/ui/episode_page.dart';
 import 'package:easypodcast/ui/episode_text.dart';
@@ -173,6 +177,7 @@ void main() {
       await _start(app);
       final podcast = app.services.library.podcast(1)!;
       expect(find.widgetWithText(EinkHeader, podcast.title), findsOneWidget);
+      expect(find.text(podcast.title), findsOneWidget);
       final cover = tester.getSize(find.byType(ColorFiltered));
       expect(cover.width, cover.height);
       expect(cover.width, greaterThan(100));
@@ -215,6 +220,147 @@ void main() {
       await app.finish();
     }
   });
+
+  testWidgets(
+    'a cold timeline and skip button explain when seeking is unavailable',
+    (tester) async {
+      final app = await UiHarness.open(
+        tester,
+        size: const Size(392, 785),
+        locale: const Locale('cs'),
+      );
+      final l = app.strings;
+      final player = app.services.player;
+      try {
+        await app.mini(app.episode(101));
+        final track = tester.getRect(find.byKey(PlaybackTimeline.trackKey));
+        final drag = await tester.startGesture(track.center);
+        await drag.moveBy(const Offset(70, 0));
+        await drag.up();
+        await tester.pumpAndSettle();
+        expect(find.text(l.seekUnavailable), findsOneWidget);
+        expect(player.current, isNull);
+        expect(app.services.library.stateOf(101).positionMs, 32 * 60 * 1000);
+
+        await app.tap(find.byIcon(Icons.play_arrow));
+        expect(find.text(l.seekUnavailable), findsNothing);
+        await player.stop();
+        await tester.pumpAndSettle();
+        await app.tapText(l.skipBackValue(15));
+        expect(find.text(l.seekUnavailable), findsOneWidget);
+      } finally {
+        await app.finish();
+      }
+    },
+  );
+
+  testWidgets('rebuffering keeps the mini player title and pause button', (
+    tester,
+  ) async {
+    final (app, player) = await _withProbedPlayer(tester);
+    try {
+      await app.mini(app.strings.play);
+      player.buffering = true;
+      player.refresh();
+      await tester.pumpAndSettle();
+      final mini = find.byType(MiniPlayer);
+      expect(
+        find.descendant(of: mini, matching: find.text(app.episode(101))),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: mini, matching: find.text(app.strings.pause)),
+        findsOneWidget,
+      );
+      expect(find.text(app.strings.loadingPlayback), findsNothing);
+    } finally {
+      await app.finish();
+    }
+  });
+
+  testWidgets('playback failures name the episode and retry through resume', (
+    tester,
+  ) async {
+    final (app, player) = await _withProbedPlayer(tester);
+    final l = app.strings;
+    final failed = app.services.library.episode(201)!;
+    try {
+      for (final (reason, message) in [
+        (PlaybackErrorReason.loadFailed, l.playbackLoadFailed),
+        (PlaybackErrorReason.streamFailed, l.playbackStreamFailed),
+        (PlaybackErrorReason.seekFailed, l.playbackSeekFailed),
+        (PlaybackErrorReason.audioFocusUnavailable, l.playbackFocusUnavailable),
+      ]) {
+        player.error = PlaybackError(failed, reason);
+        player.refresh();
+        await tester.pumpAndSettle();
+        expect(find.text('${failed.title}\n$message'), findsOneWidget);
+      }
+      await app.mini(failed.title);
+      expect(
+        find.text('${failed.title}\n${l.playbackFocusUnavailable}'),
+        findsOneWidget,
+      );
+      await app.tapText(l.retry);
+      expect(player.retries, 1);
+      expect(find.text(l.retry), findsNothing);
+
+      await app.back();
+      (app.services.sync as DemoSyncService).setOffline();
+      player.error = PlaybackError(failed, PlaybackErrorReason.loadFailed);
+      player.refresh();
+      await tester.pumpAndSettle();
+      expect(
+        find.text('${failed.title}\n${l.playbackOffline}'),
+        findsOneWidget,
+      );
+    } finally {
+      await app.finish();
+    }
+  });
+}
+
+Future<(UiHarness, _PlayerProbe)> _withProbedPlayer(WidgetTester tester) async {
+  late _PlayerProbe player;
+  final app = await UiHarness.open(
+    tester,
+    size: const Size(360, 720),
+    locale: const Locale('cs'),
+    configure: (demo) => AppServices(
+      api: demo.api,
+      sync: demo.sync,
+      library: demo.library,
+      downloads: demo.downloads,
+      settings: demo.settings,
+      player: player = _PlayerProbe(demo),
+    ),
+  );
+  return (app, player);
+}
+
+class _PlayerProbe extends DemoPlayerController {
+  _PlayerProbe(AppServices services)
+    : super(services.library, services.settings, services.sync);
+
+  PlaybackError? error;
+  bool buffering = false;
+  int retries = 0;
+
+  @override
+  PlaybackError? get lastPlaybackError => error;
+
+  @override
+  bool get isBuffering => buffering;
+
+  void refresh() => notifyListeners();
+
+  @override
+  Future<void> resume() async {
+    retries++;
+    error = null;
+    notifyListeners();
+    await super.resume();
+  }
 }
 
 Future<void> _start(UiHarness app) async {

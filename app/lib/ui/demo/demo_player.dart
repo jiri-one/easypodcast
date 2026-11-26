@@ -36,6 +36,7 @@ class DemoPlayerController extends PlayerController {
   Timer? _sleepTimer;
   Stopwatch? _sleepClock;
   Duration? _sleepDuration;
+  bool _sleepAtEndOfEpisode = false;
 
   @override
   Episode? get current => _current;
@@ -69,6 +70,16 @@ class DemoPlayerController extends PlayerController {
     final remaining = duration - _sleepClock!.elapsed;
     return remaining.isNegative ? Duration.zero : remaining;
   }
+
+  @override
+  bool get sleepAtEndOfEpisode => _sleepAtEndOfEpisode;
+
+  @override
+  Future<void> setSleepAtEndOfEpisode(bool on) => _run(() async {
+    if (on) _cancelSleepTimer();
+    _sleepAtEndOfEpisode = on;
+    notifyListeners();
+  });
 
   @override
   Future<void> play(int episodeId) => _run(() => _play(episodeId));
@@ -152,11 +163,13 @@ class DemoPlayerController extends PlayerController {
 
   Future<void> _complete({required bool advance}) async {
     final episodeId = _current!.id;
+    final stopAtEnd = _sleepAtEndOfEpisode;
+    _sleepAtEndOfEpisode = false;
     _clear();
     await _library.markCompleted(episodeId);
     if (_disposed) return;
     final next = _library.queue.firstOrNull;
-    if (advance && _settings.autoplayQueue && next != null) {
+    if (advance && !stopAtEnd && _settings.autoplayQueue && next != null) {
       await _play(next.id);
     } else {
       notifyListeners();
@@ -174,6 +187,7 @@ class DemoPlayerController extends PlayerController {
   @override
   Future<void> setSleepTimer(Duration? duration) => _run(() async {
     _cancelSleepTimer();
+    _sleepAtEndOfEpisode = false;
     if (duration != null) {
       _sleepDuration = duration;
       _sleepClock = Stopwatch()..start();
@@ -205,6 +219,7 @@ class DemoPlayerController extends PlayerController {
   @override
   Future<void> stop() => _run(() async {
     _cancelSleepTimer();
+    _sleepAtEndOfEpisode = false;
     _stopTicking();
     await _recordPosition();
     if (_disposed) return;

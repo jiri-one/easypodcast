@@ -44,18 +44,16 @@ String playbackTime(
   Duration? duration, {
   bool showTotal = false,
 }) {
-  if (duration == null) {
+  if (duration == null || position > duration) {
     return position == Duration.zero
         ? strings.stateInProgress
-        : strings.elapsed(strings.minutes(position.inMinutes));
+        : strings.elapsed(
+            minuteLength(strings, Duration(minutes: position.inMinutes)),
+          );
   }
   final remaining = minuteLength(strings, duration - position);
   if (!showTotal) return strings.remaining(remaining);
-  final totalMinutes = durationMinutes(duration);
-  final total = strings.localeName == 'cs'
-      ? '$totalMinutes'
-      : strings.minutes(totalMinutes);
-  return strings.remainingOfTotal(remaining, total);
+  return strings.remainingOfTotal(remaining, minuteLength(strings, duration));
 }
 
 String speedText(AppLocalizations strings, double speed) =>
@@ -79,8 +77,9 @@ String dayGroup(AppLocalizations strings, DateTime? time) {
   if (day == DateTime(now.year, now.month, now.day - 1)) {
     return strings.yesterday;
   }
+  final weekday = DateFormat.E(strings.localeName).format(day);
   return strings.olderDay(
-    DateFormat.E(strings.localeName).format(day),
+    weekday[0].toUpperCase() + weekday.substring(1),
     dateText(strings, day),
   );
 }
@@ -107,28 +106,16 @@ String? downloadStateText(AppLocalizations strings, DownloadDisplay download) =>
       _ => null,
     };
 
-Text metadataLine(
-  String first,
-  Iterable<String> rest, {
-  bool bold = false,
-  Widget? trailing,
-}) => Text.rich(
-  TextSpan(
-    children: [
+Text metadataLine(String first, Iterable<String> rest, {bool bold = false}) =>
+    Text.rich(
       TextSpan(
-        text: first,
-        style: bold ? const TextStyle(fontWeight: FontWeight.w700) : null,
-      ),
-      for (final text in rest) TextSpan(text: '$metadataSeparator$text'),
-      if (trailing != null)
-        WidgetSpan(
-          alignment: PlaceholderAlignment.middle,
-          child: Padding(
-            padding: EdgeInsetsDirectional.only(start: first.isEmpty ? 0 : 4),
-            child: trailing,
+        children: [
+          TextSpan(
+            text: first,
+            style: bold ? const TextStyle(fontWeight: FontWeight.w700) : null,
           ),
-        ),
-    ],
-  ),
-  style: detailStyle,
-);
+          for (final text in rest) TextSpan(text: '$metadataSeparator$text'),
+        ],
+      ),
+      style: detailStyle,
+    );
