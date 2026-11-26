@@ -62,7 +62,9 @@ func (a *api) searchDirectory(w http.ResponseWriter, r *http.Request) {
 	}
 	results, err := a.refresh.searchDirectory(r.Context(), query)
 	if err != nil {
-		slog.Warn("Podcast directory request failed", "reason", err.Error())
+		if r.Context().Err() == nil {
+			slog.Warn("Podcast directory request failed", "reason", err.Error())
+		}
 		apiError(w, http.StatusBadGateway, "podcast directory unavailable")
 		return
 	}

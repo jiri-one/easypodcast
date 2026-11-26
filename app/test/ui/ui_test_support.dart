@@ -218,12 +218,16 @@ class UiHarness {
     find.descendant(of: find.byType(MiniPlayer), matching: find.text(label)),
   );
 
-  Future<void> dialog(String label) => tap(
-    find.descendant(
-      of: find.byType(EinkDialogPanel),
-      matching: find.text(label),
-    ),
-  );
+  Future<void> dialog(String label) async {
+    // Confirmations ignore their action for the first 600 ms.
+    await tester.pump(const Duration(milliseconds: 600));
+    await tap(
+      find.descendant(
+        of: find.byType(EinkDialogPanel),
+        matching: find.text(label),
+      ),
+    );
+  }
 
   String episode(int id) => services.library.episode(id)!.title;
 

@@ -557,26 +557,35 @@ Future<bool> confirmAction(
   required String action,
 }) async {
   final cancel = context.strings.cancel;
-  return await showEinkDialog<bool>(
-        context: context,
-        barrierDismissible: false,
-        builder: (dialogContext) => EinkDialogPanel(
-          title: title,
-          message: message,
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: Text(cancel, style: buttonLabelStyle),
-            ),
-            EinkButton(
-              action,
-              primary: true,
-              onPressed: () => Navigator.pop(dialogContext, true),
-            ),
-          ],
-        ),
-      ) ??
-      false;
+  // The second tap of an e-ink double tap would otherwise confirm at once.
+  var armed = false;
+  final arming = Timer(const Duration(milliseconds: 600), () => armed = true);
+  try {
+    return await showEinkDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (dialogContext) => EinkDialogPanel(
+            title: title,
+            message: message,
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: Text(cancel, style: buttonLabelStyle),
+              ),
+              EinkButton(
+                action,
+                primary: true,
+                onPressed: () {
+                  if (armed) Navigator.pop(dialogContext, true);
+                },
+              ),
+            ],
+          ),
+        ) ??
+        false;
+  } finally {
+    arming.cancel();
+  }
 }
 
 class LabeledField extends StatelessWidget {

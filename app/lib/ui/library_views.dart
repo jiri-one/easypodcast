@@ -78,6 +78,14 @@ Widget listHeading(String text) => Padding(
   ),
 );
 
+Widget rowError(String message) => Padding(
+  padding: const EdgeInsets.only(top: 4),
+  child: DefaultTextStyle.merge(
+    style: detailStyle,
+    child: EinkError(message, liveRegion: false),
+  ),
+);
+
 class EpisodeRowKey extends GlobalObjectKey {
   const EpisodeRowKey(super.value);
 }
@@ -284,16 +292,7 @@ class EpisodeList extends StatelessWidget {
               inverted: inverted,
             ),
           if (download.status == DownloadStatus.failed)
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: DefaultTextStyle.merge(
-                style: detailStyle,
-                child: EinkError(
-                  strings.stateDownloadFailed,
-                  liveRegion: false,
-                ),
-              ),
-            ),
+            rowError(strings.stateDownloadFailed),
         ],
       );
       void showMenu() => onMenu(episode);
@@ -555,13 +554,7 @@ class PodcastList extends StatelessWidget {
         details: [
           Text(strings.playedCount(podcast.playedCount), style: metadataStyle),
           if (podcast.lastError?.isNotEmpty ?? false)
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: DefaultTextStyle.merge(
-                style: detailStyle,
-                child: EinkError(strings.feedUnavailable, liveRegion: false),
-              ),
-            ),
+            rowError(strings.feedUnavailable),
         ],
       );
     },

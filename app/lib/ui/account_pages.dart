@@ -4,7 +4,7 @@ import '../core/api.dart';
 import '../core/models.dart';
 import '../core/services.dart';
 import 'eink_widgets.dart';
-import 'library_views.dart' show PodcastThumbnail;
+import 'library_views.dart' show PodcastThumbnail, rowError;
 import 'theme.dart';
 
 bool _validAddress(String address) {
@@ -204,19 +204,18 @@ class AddPodcastPage extends StatefulWidget {
   State<AddPodcastPage> createState() => _AddPodcastPageState();
 }
 
-class _AddPodcastPageState extends State<AddPodcastPage> {
+class _AddPodcastPageState extends State<AddPodcastPage> with ActionTapGuard {
   final _query = TextEditingController();
   final _address = TextEditingController();
   List<DirectoryPodcast>? _results;
   bool _searching = false;
-  bool _confirming = false;
   bool _adding = false;
   String? _addingResult;
   String? _searchError;
   String? _addressError;
   final _resultErrors = <String, String>{};
 
-  bool get _busy => _searching || _confirming || _adding;
+  bool get _busy => _searching || _adding;
 
   Future<void> _search() async {
     if (_busy) return;
@@ -226,7 +225,6 @@ class _AddPodcastPageState extends State<AddPodcastPage> {
       setState(() => _searchError = strings.directoryTooShort);
       return;
     }
-    FocusScope.of(context).unfocus();
     setState(() {
       _searching = true;
       _results = null;
@@ -259,13 +257,11 @@ class _AddPodcastPageState extends State<AddPodcastPage> {
     await _subscribe(url);
   }
 
-  Future<void> _addResult(DirectoryPodcast result) async {
+  Future<void> _addResult(DirectoryPodcast result) => guardAction(() async {
     if (_busy) return;
     final strings = context.strings;
-    _confirming = true;
-    final bool confirmed;
-    try {
-      confirmed = await confirmAction(
+    if (!result.subscribed) {
+      final confirmed = await confirmAction(
         context,
         title: strings.subscribeTitle,
         message: result.author.isEmpty
@@ -273,16 +269,13 @@ class _AddPodcastPageState extends State<AddPodcastPage> {
             : '${result.title}\n${result.author}',
         action: strings.addPodcast,
       );
-    } finally {
-      _confirming = false;
+      if (!mounted || !confirmed) return;
     }
-    if (!mounted || !confirmed) return;
     await _subscribe(result.feedUrl, fromDirectory: true);
-  }
+  });
 
   Future<void> _subscribe(String url, {bool fromDirectory = false}) async {
     final strings = context.strings;
-    FocusScope.of(context).unfocus();
     setState(() {
       _adding = true;
       if (fromDirectory) {
@@ -329,29 +322,36 @@ class _AddPodcastPageState extends State<AddPodcastPage> {
     final strings = context.strings;
     final statusStyle = detailStyle.copyWith(fontWeight: FontWeight.w700);
     return PageList(
-      inset: true,
       children: [
-        LabeledField(
-          label: strings.directorySearch,
-          controller: _query,
-          textInputAction: TextInputAction.search,
-          enabled: !_busy,
-          onSubmitted: (_) => _search(),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              LabeledField(
+                label: strings.directorySearch,
+                controller: _query,
+                textInputAction: TextInputAction.search,
+                enabled: !_busy,
+                onSubmitted: (_) => _search(),
+              ),
+              EinkButton(
+                _searching ? strings.searching : strings.search,
+                primary: true,
+                minHeight: 52,
+                onPressed: _search,
+                alternatives: [strings.search, strings.searching],
+              ),
+              if (_searchError case final String error) ...[
+                const SizedBox(height: 8),
+                EinkError(error),
+              ] else if (_results?.isEmpty == true) ...[
+                const SizedBox(height: 8),
+                Text(strings.directoryEmpty, style: detailStyle),
+              ],
+            ],
+          ),
         ),
-        EinkButton(
-          _searching ? strings.searching : strings.search,
-          primary: true,
-          minHeight: 52,
-          onPressed: _search,
-          alternatives: [strings.search, strings.searching],
-        ),
-        if (_searchError case final String error) ...[
-          const SizedBox(height: 8),
-          EinkError(error),
-        ] else if (_results?.isEmpty == true) ...[
-          const SizedBox(height: 8),
-          Text(strings.directoryEmpty, style: detailStyle),
-        ],
         for (final result in _results ?? const <DirectoryPodcast>[])
           EinkRow(
             title: result.title,
@@ -365,35 +365,46 @@ class _AddPodcastPageState extends State<AddPodcastPage> {
               if (result.feedUrl == _addingResult)
                 Text(strings.addingPodcast, style: statusStyle),
               if (_resultErrors[result.feedUrl] case final String error)
-                EinkError(error, liveRegion: false),
+                rowError(error),
             ],
             trailing: result.subscribed
                 ? null
-                : Icon(Icons.add, semanticLabel: strings.addPodcast),
+                : Icon(
+                    Icons.add,
+                    size: MediaQuery.textScalerOf(context).scale(24),
+                    semanticLabel: strings.addPodcast,
+                  ),
             onPressed: () => _addResult(result),
           ),
-        const SizedBox(height: 24),
-        Text(strings.addPodcastHelp, style: buttonLabelStyle),
-        const SizedBox(height: 16),
-        LabeledField(
-          label: strings.feedAddress,
-          controller: _address,
-          keyboardType: TextInputType.url,
-          enabled: !_busy,
-          onSubmitted: (_) => _addByAddress(),
-        ),
-        if (_addressError case final String error) ...[
-          EinkError(error),
-          const SizedBox(height: 8),
-        ],
-        EinkButton(
-          _adding && _addingResult == null
-              ? strings.addingPodcast
-              : strings.addPodcast,
-          primary: true,
-          minHeight: 52,
-          onPressed: _addByAddress,
-          alternatives: [strings.addPodcast, strings.addingPodcast],
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 24, 12, 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(strings.addPodcastHelp, style: buttonLabelStyle),
+              const SizedBox(height: 16),
+              LabeledField(
+                label: strings.feedAddress,
+                controller: _address,
+                keyboardType: TextInputType.url,
+                enabled: !_busy,
+                onSubmitted: (_) => _addByAddress(),
+              ),
+              if (_addressError case final String error) ...[
+                EinkError(error),
+                const SizedBox(height: 8),
+              ],
+              EinkButton(
+                _adding && _addingResult == null
+                    ? strings.addingPodcast
+                    : strings.addPodcast,
+                primary: true,
+                minHeight: 52,
+                onPressed: _addByAddress,
+                alternatives: [strings.addPodcast, strings.addingPodcast],
+              ),
+            ],
+          ),
         ),
       ],
     );

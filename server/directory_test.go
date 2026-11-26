@@ -145,6 +145,21 @@ func TestDirectoryResponseFailures(t *testing.T) {
 		defer upstream.Close()
 		expectDirectoryFailure(t, directoryRefresher(t, upstream.URL), "response too large")
 	})
+	t.Run("endless", func(t *testing.T) {
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			chunk := []byte(strings.Repeat(" ", 64<<10))
+			for sent := 0; req.Context().Err() == nil; sent += len(chunk) {
+				// Socket buffers alone can take a few megabytes.
+				if sent > 64*maxDirectoryBytes {
+					t.Error("directory body was read far past its limit")
+					return
+				}
+				_, _ = w.Write(chunk)
+			}
+		}))
+		defer upstream.Close()
+		expectDirectoryFailure(t, directoryRefresher(t, upstream.URL), "response too large")
+	})
 }
 
 func TestDirectoryTransportFailures(t *testing.T) {
@@ -159,7 +174,7 @@ func TestDirectoryTransportFailures(t *testing.T) {
 			r := directoryRefresher(t, "https://directory.example/search")
 			r.client.Transport = feedRoundTripFunc(func(req *http.Request) (*http.Response, error) {
 				deadline, ok := req.Context().Deadline()
-				if !ok || time.Until(deadline) > directoryTimeout || time.Until(deadline) <= 0 {
+				if !ok || time.Until(deadline) > 8*time.Second || time.Until(deadline) <= 0 {
 					t.Errorf("unexpected directory deadline: %v", deadline)
 				}
 				return nil, tc.err

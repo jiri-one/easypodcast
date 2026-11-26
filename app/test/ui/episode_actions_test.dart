@@ -325,6 +325,7 @@ void main() {
       final confirm = tester.getCenter(
         find.descendant(of: _dialog, matching: find.text(l.dismiss)),
       );
+      await tester.pump(const Duration(milliseconds: 600));
       await tester.tapAt(confirm);
       await tester.pumpAndSettle(const Duration(milliseconds: 1));
       expect(tester.getRect(button(l.markNew)), dismiss);

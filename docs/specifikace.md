@@ -53,7 +53,9 @@ Aplikace se do telefonů instalují mimo Google Play, takže Android Auto vyžad
 
 ### 4.1 Odběry a díly
 
-- Nový podcast se přidá hledáním podle názvu v adresáři Apple Podcasts nebo vložením adresy feedu. Ve výsledcích jsou označené podcasty, které už jsou v odběrech. Klepnutí na výsledek zobrazí potvrzení. Po potvrzení se přidá chybějící odběr a podcast se otevře (O14).
+- Nový podcast se přidá hledáním podle názvu v adresáři Apple Podcasts nebo vložením adresy
+  feedu. Podcasty, které už jsou v odběrech, jsou ve výsledcích označené a klepnutí je rovnou
+  otevře. U ostatních se klepnutí nejdřív potvrdí, pak se podcast přidá a otevře (O14).
 - Import a export OPML. Import z PinePods: odběry, fronta, pozice a přehrané díly i s časy. Import
   lze spouštět opakovaně až do přechodu z PinePods. U každého dílu platí novější stav. Frontu
   import převezme, jen pokud je fronta v EasyPodcastu prázdná. Díly, které už ve feedu nejsou,
