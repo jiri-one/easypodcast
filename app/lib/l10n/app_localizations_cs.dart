@@ -152,6 +152,15 @@ class AppLocalizationsCs extends AppLocalizations {
   String get podcastEmpty => 'Tento podcast zatím nemá žádné díly.';
 
   @override
+  String get search => 'Hledat';
+
+  @override
+  String get searchHint => 'Název nebo popis';
+
+  @override
+  String get episodes => 'Díly';
+
+  @override
   String get searchThisPodcast => 'Hledat v podcastu';
 
   @override

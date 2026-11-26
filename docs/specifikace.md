@@ -65,6 +65,9 @@ Aplikace se do telefonů instalují mimo Google Play, takže Android Auto vyžad
 - Seznam podcastů je řazený podle počtu přehraných dílů, po přepnutí abecedně.
 - Detail podcastu ukazuje díly od nejnovějšího a u každého stav: nový, rozposlouchaný se
   zbývajícím časem, přehraný, vyřazený, stažený. Popis dílu je prostý text s klikacími odkazy.
+- Hledat jde v jednom podcastu nebo přes nabídku „Hledat“ ve všech odběrech. Hledání ve všech
+  odběrech ukáže podcasty podle názvu a až 100 odpovídajících dílů od nejnovějšího. Názvy fungují
+  i bez připojení, výsledky z popisů dílů doplní server.
 - **Rozposlouchané:** díly, které nejsou přehrané ani vyřazené a mají pozici aspoň jednu minutu,
   naposledy poslouchané nahoře. Samostatný seznam, nezávislý na frontě. Díl s menší pozicí zůstává
   mezi novými, takže omylem puštěný díl seznam nezaplevelí. Všechna zařízení to odvozují stejně,

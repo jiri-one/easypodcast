@@ -369,6 +369,24 @@ abstract class AppLocalizations {
   /// **'This podcast has no episodes yet.'**
   String get podcastEmpty;
 
+  /// No description provided for @search.
+  ///
+  /// In en, this message translates to:
+  /// **'Search'**
+  String get search;
+
+  /// No description provided for @searchHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Title or description'**
+  String get searchHint;
+
+  /// No description provided for @episodes.
+  ///
+  /// In en, this message translates to:
+  /// **'Episodes'**
+  String get episodes;
+
   /// No description provided for @searchThisPodcast.
   ///
   /// In en, this message translates to:

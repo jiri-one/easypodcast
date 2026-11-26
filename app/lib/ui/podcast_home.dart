@@ -18,6 +18,7 @@ import 'library_views.dart';
 import 'playback_actions.dart';
 import 'player_views.dart';
 import 'podcast_search.dart';
+import 'podcast_search_field.dart';
 import 'settings_pages.dart';
 import 'theme.dart';
 
@@ -63,24 +64,27 @@ class _LibraryHome extends StatefulWidget {
 class _LibraryHomeState extends State<_LibraryHome> {
   late final _playback = PlaybackActions(widget.services);
   late final _refresh = FeedRefresh(widget.services);
+  final _podcastSearch = EpisodeSearch();
+  final _globalSearch = EpisodeSearch();
   late final _updates = Listenable.merge([
     widget.services.library,
     widget.services.settings,
     _playback,
     _refresh,
+    _podcastSearch,
+    _globalSearch,
     widget.services.sync.status,
   ]);
   final _pages = <_Page>[];
   final _scrollPositions = PageStorageBucket();
-  final _searchText = TextEditingController();
-  final _searchFocus = FocusNode();
+  final _searchScroll = ScrollController();
+  PageStorageBucket _searchScrollPositions = PageStorageBucket();
   int? _searchPodcastId;
-  Timer? _searchTimer;
-  List<String> _searchWords = const [];
-  // Null while the server searches the descriptions.
-  Set<int>? _descriptionMatches = const {};
+  final _searchTitles = <String, String>{};
+  List<Episode>? _globalEpisodeMatches;
 
   LibrarySection _section = LibrarySection.inProgress;
+  LibrarySection _searchOrigin = LibrarySection.inProgress;
   bool _menuOpen = false;
   bool _episodeMenuOpen = false;
   bool get _linux => !kIsWeb && defaultTargetPlatform == TargetPlatform.linux;
@@ -100,10 +104,18 @@ class _LibraryHomeState extends State<_LibraryHome> {
   ];
 
   @override
+  void initState() {
+    super.initState();
+    widget.services.library.addListener(_invalidateGlobalMatches);
+    _globalSearch.addListener(_invalidateGlobalMatches);
+  }
+
+  @override
   void dispose() {
-    _searchTimer?.cancel();
-    _searchText.dispose();
-    _searchFocus.dispose();
+    widget.services.library.removeListener(_invalidateGlobalMatches);
+    _podcastSearch.dispose();
+    _globalSearch.dispose();
+    _searchScroll.dispose();
     _playback.dispose();
     _refresh.dispose();
     super.dispose();
@@ -115,31 +127,42 @@ class _LibraryHomeState extends State<_LibraryHome> {
       if (_menuOpen) {
         _menuOpen = false;
       } else if (_pages.lastOrNull case final page?) {
-        if (!_closeSearchOn(page)) _pages.removeLast();
+        if (!_closePodcastSearchOn(page)) _pages.removeLast();
+      } else if (_section == LibrarySection.search) {
+        _closeGlobalSearch();
       } else {
         _section = LibrarySection.inProgress;
       }
     });
   }
 
-  void _switchList(LibrarySection section) => setState(() {
-    _menuOpen = false;
-    if (section == LibrarySection.settings) {
-      if (_settingsPage == null) {
-        _pages.add((screen: _Screen.settings, id: null));
+  void _switchList(LibrarySection section) {
+    setState(() {
+      _menuOpen = false;
+      if (section == LibrarySection.settings) {
+        if (_settingsPage == null) {
+          _pages.add((screen: _Screen.settings, id: null));
+        }
+        return;
       }
-    } else {
-      _closeSearch();
+      if (section == LibrarySection.search) {
+        if (_section != section) _searchOrigin = _section;
+      } else if (_section == LibrarySection.search) {
+        _closeGlobalSearch();
+      }
+      _closePodcastSearch();
       _section = section;
       _pages.clear();
-    }
-  });
+    });
+    if (section == LibrarySection.search) _globalSearch.focus.requestFocus();
+  }
 
   void _open(_Screen screen, [int? id]) =>
       setState(() => _pages.add((screen: screen, id: id)));
 
   void _openEpisode(Episode episode) {
     final wide = _wide;
+    _globalSearch.focus.unfocus();
     setState(() {
       if (wide) _pages.removeWhere((page) => page.screen != _Screen.podcast);
       _pages.add((screen: _Screen.episode, id: episode.id));
@@ -169,58 +192,54 @@ class _LibraryHomeState extends State<_LibraryHome> {
   }
 
   void _openPodcast(Podcast podcast) => setState(() {
-    _closeSearch();
+    _globalSearch.focus.unfocus();
+    _closePodcastSearch();
     _pages.removeWhere((page) => page.screen == _Screen.add);
     _pages.add((screen: _Screen.podcast, id: podcast.id));
   });
 
-  void _openSearch(int podcastId) {
+  void _openPodcastSearch(int podcastId) {
     setState(() => _searchPodcastId = podcastId);
-    _searchFocus.requestFocus();
+    _podcastSearch.focus.requestFocus();
   }
 
-  void _closeSearch() {
+  void _closePodcastSearch() {
     if (_searchPodcastId == null) return;
-    _searchTimer?.cancel();
-    _searchFocus.unfocus();
-    _searchText.clear();
     _searchPodcastId = null;
-    _searchWords = const [];
-    _descriptionMatches = const {};
+    _podcastSearch.reset();
   }
 
-  bool _closeSearchOn(_Page page) {
+  bool _closePodcastSearchOn(_Page page) {
     if (page.screen != _Screen.podcast || _searchPodcastId != page.id) {
       return false;
     }
-    _closeSearch();
+    _closePodcastSearch();
     return true;
   }
 
-  void _searchChanged(String input) {
-    final id = _searchPodcastId;
-    if (id == null) return;
-    final words = podcastSearchWords(input);
-    final askServer =
-        words.length > 1 || (words.isNotEmpty && words.single.runes.length > 1);
-    _searchTimer?.cancel();
-    setState(() {
-      _searchWords = words;
-      _descriptionMatches = askServer ? null : const {};
-    });
-    if (!askServer) return;
-    final api = widget.services.api;
-    _searchTimer = Timer(const Duration(milliseconds: 400), () async {
-      var matches = const <int>{};
-      try {
-        matches = (await api.searchPodcast(id, input.trim())).toSet();
-      } on Exception {
-        // Local matches stay available when the server cannot answer.
-      }
-      if (mounted && identical(_searchWords, words)) {
-        setState(() => _descriptionMatches = matches);
-      }
-    });
+  void _closeGlobalSearch() {
+    _section = _searchOrigin;
+    _pages.clear();
+    _searchTitles.clear();
+    _searchScrollPositions = PageStorageBucket();
+    _globalSearch.reset();
+  }
+
+  void _changeGlobalSearch(String input) {
+    if (_searchScroll.hasClients) _searchScroll.jumpTo(0);
+    _globalSearch.change(input, widget.services.api.searchAll);
+  }
+
+  void _invalidateGlobalMatches() => _globalEpisodeMatches = null;
+
+  List<Episode> _globalEpisodes() {
+    final library = widget.services.library;
+    return _globalEpisodeMatches ??= matchLibraryEpisodes(
+      library.podcasts.expand((podcast) => library.episodesOf(podcast.id)),
+      _globalSearch.words,
+      _globalSearch.matches,
+      normalizedTitles: _searchTitles,
+    );
   }
 
   List<Episode> _podcastEpisodes(int id) {
@@ -228,8 +247,8 @@ class _LibraryHomeState extends State<_LibraryHome> {
     return _searchPodcastId == id
         ? matchPodcastEpisodes(
             episodes,
-            _searchWords,
-            _descriptionMatches ?? const {},
+            _podcastSearch.words,
+            _podcastSearch.matches,
           )
         : episodes;
   }
@@ -246,6 +265,7 @@ class _LibraryHomeState extends State<_LibraryHome> {
       LibrarySection.inProgress => library.inProgress,
       LibrarySection.queue => library.projectedQueue,
       LibrarySection.newEpisodes => _recentNewEpisodes(),
+      LibrarySection.search => _globalEpisodes(),
       _ => const [],
     };
   }
@@ -259,8 +279,10 @@ class _LibraryHomeState extends State<_LibraryHome> {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
     final key = event.logicalKey;
     if (key == LogicalKeyboardKey.escape && !_atHome) {
-      if (_searchFocus.hasFocus) {
-        setState(_closeSearch);
+      if (_podcastSearch.focus.hasFocus) {
+        setState(_closePodcastSearch);
+      } else if (_globalSearch.focus.hasFocus) {
+        setState(_closeGlobalSearch);
       } else {
         _back();
       }
@@ -338,12 +360,13 @@ class _LibraryHomeState extends State<_LibraryHome> {
 
   Widget _phoneBody(BuildContext context) {
     final page = _pages.lastOrNull;
+    final switcher = page == null && _section != LibrarySection.search;
     return _phoneFrame(
       context,
       title: page == null ? _section.label(context) : _title(context, page),
       body: page == null ? _sectionBody(context) : _pageBody(context, page),
-      onBack: page == null ? null : _back,
-      switcher: page == null,
+      onBack: switcher ? null : _back,
+      switcher: switcher,
       mini: page == null || page.screen == _Screen.podcast,
     );
   }
@@ -430,10 +453,36 @@ class _LibraryHomeState extends State<_LibraryHome> {
     final listPage = settings ?? podcast;
     final last = _pages.lastOrNull;
     final detail = last == listPage ? null : last;
+    final searchOnly =
+        _section == LibrarySection.search && listPage == null && detail == null;
     final width = MediaQuery.sizeOf(context).width;
     final navWidth = _desktopNavWidth(context).clamp(220.0, width - 480);
     final listWidth = math.min(360.0, (width - navWidth) * 0.46);
     final strings = context.strings;
+    final listPanel = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        EinkHeader(
+          listPage == null
+              ? _section.label(context)
+              : _title(context, listPage),
+          onBack: listPage == null
+              ? (_section == LibrarySection.search
+                    ? () => setState(_closeGlobalSearch)
+                    : null)
+              : () => setState(() {
+                  if (!_closePodcastSearchOn(listPage)) {
+                    _pages.removeRange(_pages.indexOf(listPage), _pages.length);
+                  }
+                }),
+        ),
+        Expanded(
+          child: listPage == null
+              ? _sectionBody(context, desktop: true)
+              : _pageBody(context, listPage, desktop: true),
+        ),
+      ],
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -478,55 +527,30 @@ class _LibraryHomeState extends State<_LibraryHome> {
                   ),
                 ),
               ),
-              SizedBox(
-                width: listWidth,
-                child: _columnDivider(
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      EinkHeader(
-                        listPage == null
-                            ? _section.label(context)
-                            : _title(context, listPage),
-                        onBack: listPage == null
-                            ? null
-                            : () => setState(() {
-                                if (!_closeSearchOn(listPage)) {
-                                  _pages.removeRange(
-                                    _pages.indexOf(listPage),
-                                    _pages.length,
-                                  );
-                                }
-                              }),
-                      ),
-                      Expanded(
-                        child: listPage == null
-                            ? _sectionBody(context, desktop: true)
-                            : _pageBody(context, listPage, desktop: true),
-                      ),
-                    ],
-                  ),
+              if (searchOnly)
+                Expanded(child: listPanel)
+              else ...[
+                SizedBox(width: listWidth, child: _columnDivider(listPanel)),
+                Expanded(
+                  child: detail == null
+                      ? (settings != null ||
+                                (_section == LibrarySection.podcasts &&
+                                    podcast == null)
+                            ? const SizedBox.shrink()
+                            : PageMessage(strings.selectEpisode))
+                      : detail.screen == _Screen.episode
+                      ? _pageBody(context, detail, desktop: true)
+                      : Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            EinkHeader(_title(context, detail), onBack: _back),
+                            Expanded(
+                              child: _pageBody(context, detail, desktop: true),
+                            ),
+                          ],
+                        ),
                 ),
-              ),
-              Expanded(
-                child: detail == null
-                    ? (settings != null ||
-                              (_section == LibrarySection.podcasts &&
-                                  podcast == null)
-                          ? const SizedBox.shrink()
-                          : PageMessage(strings.selectEpisode))
-                    : detail.screen == _Screen.episode
-                    ? _pageBody(context, detail, desktop: true)
-                    : Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          EinkHeader(_title(context, detail), onBack: _back),
-                          Expanded(
-                            child: _pageBody(context, detail, desktop: true),
-                          ),
-                        ],
-                      ),
-              ),
+              ],
             ],
           ),
         ),
@@ -617,6 +641,7 @@ class _LibraryHomeState extends State<_LibraryHome> {
         onAdd: () => _open(_Screen.add),
         desktop: desktop,
       ),
+      LibrarySection.search => _searchBody(context, desktop: desktop),
       LibrarySection.downloads => DownloadsPage(
         playback: _playback,
         onOpen: _openEpisode,
@@ -631,6 +656,77 @@ class _LibraryHomeState extends State<_LibraryHome> {
     onServer: () => _open(_Screen.server),
     onFeeds: () => _open(_Screen.feeds),
     onOpml: () => _open(_Screen.opml),
+  );
+
+  Widget _searchBody(BuildContext context, {required bool desktop}) {
+    final strings = context.strings;
+    final words = _globalSearch.words;
+    final library = widget.services.library;
+    final episodes = _globalEpisodes();
+    final selected = _pages.lastOrNull;
+    final podcasts = [
+      if (words.isNotEmpty)
+        for (final podcast in library.podcasts)
+          if (podcastTitleMatches(podcast.title, words)) podcast,
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        PodcastSearchField(
+          search: _globalSearch,
+          hint: strings.searchHint,
+          onChanged: _changeGlobalSearch,
+          onClose: () => setState(_closeGlobalSearch),
+        ),
+        if (words.isNotEmpty)
+          Expanded(
+            child: PageStorage(
+              bucket: _searchScrollPositions,
+              child: EpisodeList(
+                kind: EpisodeListKind.search,
+                controller: _searchScroll,
+                episodes: episodes,
+                playback: _playback,
+                onOpen: _openEpisode,
+                onMenu: _openEpisodeMenu,
+                desktop: desktop,
+                selectedId: selected?.screen == _Screen.episode
+                    ? selected?.id
+                    : null,
+                emptyMessage: _globalSearch.loading
+                    ? strings.syncLoading
+                    : strings.noMatchingEpisodes,
+                headerSlivers: [
+                  if (podcasts.isNotEmpty) ...[
+                    _searchHeading(strings.podcasts),
+                    PodcastList.rows(
+                      podcasts,
+                      onOpen: _openPodcast,
+                      desktop: desktop,
+                    ),
+                  ],
+                  _searchHeading(strings.episodes),
+                  if (_globalSearch.loading && episodes.isNotEmpty)
+                    SliverToBoxAdapter(child: PageMessage(strings.syncLoading)),
+                ],
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _searchHeading(String title) => SliverToBoxAdapter(
+    child: Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+      child: Semantics(
+        header: true,
+        child: Text(
+          title,
+          style: detailStyle.copyWith(fontWeight: FontWeight.w700),
+        ),
+      ),
+    ),
   );
 
   Widget _podcastBody(BuildContext context, int id, {required bool desktop}) {
@@ -649,35 +745,21 @@ class _LibraryHomeState extends State<_LibraryHome> {
       onMenu: _openEpisodeMenu,
       desktop: desktop,
       selectedId: last?.screen == _Screen.episode ? last?.id : null,
-      emptyMessage: searching && _searchWords.isNotEmpty
-          ? (_descriptionMatches == null
+      emptyMessage: searching && _podcastSearch.words.isNotEmpty
+          ? (_podcastSearch.loading
                 ? strings.syncLoading
                 : strings.noMatchingEpisodes)
           : null,
       actions: [
         if (searching)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
-            child: Semantics(
-              label: strings.searchThisPodcast,
-              child: TextField(
-                controller: _searchText,
-                focusNode: _searchFocus,
-                onChanged: _searchChanged,
-                textInputAction: TextInputAction.search,
-                showCursor: false,
-                autocorrect: false,
-                enableSuggestions: false,
-                decoration: InputDecoration(
-                  hintText: strings.searchThisPodcast,
-                  suffixIcon: IconButton(
-                    icon: const Icon(Icons.clear),
-                    tooltip: strings.clearSearch,
-                    onPressed: () => setState(_closeSearch),
-                  ),
-                ),
-              ),
+          PodcastSearchField(
+            search: _podcastSearch,
+            hint: strings.searchThisPodcast,
+            onChanged: (input) => _podcastSearch.change(
+              input,
+              (query) => widget.services.api.searchPodcast(id, query),
             ),
+            onClose: () => setState(_closePodcastSearch),
           )
         else
           EinkRow(
@@ -685,7 +767,7 @@ class _LibraryHomeState extends State<_LibraryHome> {
             compact: true,
             underlined: true,
             leading: const Icon(Icons.search),
-            onPressed: () => _openSearch(id),
+            onPressed: () => _openPodcastSearch(id),
           ),
         if (podcast.subscribed)
           RefreshRow(

@@ -18,6 +18,7 @@ enum LibrarySection {
   queue,
   newEpisodes,
   podcasts,
+  search,
   downloads,
   settings;
 
@@ -26,12 +27,20 @@ enum LibrarySection {
     queue => context.strings.queue,
     newEpisodes => context.strings.newEpisodes,
     podcasts => context.strings.podcasts,
+    search => context.strings.search,
     downloads => context.strings.downloads,
     settings => context.strings.settings,
   };
 }
 
-enum EpisodeListKind { inProgress, queue, newEpisodes, podcast, downloads }
+enum EpisodeListKind {
+  inProgress,
+  queue,
+  newEpisodes,
+  podcast,
+  search,
+  downloads,
+}
 
 String? syncProblem(BuildContext context, SyncStatus status) =>
     switch (status.phase) {
@@ -128,6 +137,8 @@ class EpisodeList extends StatelessWidget {
     required this.onOpen,
     required this.onMenu,
     this.actions = const [],
+    this.headerSlivers = const [],
+    this.controller,
     this.desktop = false,
     this.selectedId,
     this.emptyMessage,
@@ -140,6 +151,8 @@ class EpisodeList extends StatelessWidget {
   final ValueChanged<Episode> onOpen;
   final ValueChanged<Episode> onMenu;
   final List<Widget> actions;
+  final List<Widget> headerSlivers;
+  final ScrollController? controller;
   final bool desktop;
   final int? selectedId;
   final String? emptyMessage;
@@ -164,15 +177,19 @@ class EpisodeList extends StatelessWidget {
       );
     }
     final queued = switch (kind) {
-      EpisodeListKind.podcast || EpisodeListKind.newEpisodes =>
+      EpisodeListKind.podcast ||
+      EpisodeListKind.search ||
+      EpisodeListKind.newEpisodes =>
         library.projectedQueue.map((episode) => episode.id).toSet(),
       _ => const <int>{},
     };
     return CustomScrollView(
       key: key ?? PageStorageKey(kind),
+      controller: controller,
       slivers: [
         SliverToBoxAdapter(child: problem),
         for (final action in actions) SliverToBoxAdapter(child: action),
+        ...headerSlivers,
         if (episodes.isEmpty)
           SliverToBoxAdapter(
             child: PageMessage(
@@ -184,6 +201,7 @@ class EpisodeList extends StatelessWidget {
                           EpisodeListKind.queue => strings.queueEmpty,
                           EpisodeListKind.newEpisodes => strings.newEmpty,
                           EpisodeListKind.podcast => strings.podcastEmpty,
+                          EpisodeListKind.search => strings.noMatchingEpisodes,
                           EpisodeListKind.downloads => strings.downloadsEmpty,
                         }),
             ),
@@ -249,6 +267,8 @@ class EpisodeList extends StatelessWidget {
     final length = duration == null ? null : minuteLength(strings, duration);
     final podcast = library.podcast(episode.podcastId);
     final showPodcast = kind != EpisodeListKind.podcast;
+    final showDate =
+        kind == EpisodeListKind.podcast || kind == EpisodeListKind.search;
     final hasRemainingTime =
         !playing &&
         state.isInProgress &&
@@ -279,7 +299,7 @@ class EpisodeList extends StatelessWidget {
           if (queued) strings.stateInQueue,
           ?downloadText,
         ],
-        EpisodeListKind.podcast => [
+        EpisodeListKind.podcast || EpisodeListKind.search => [
           status,
           if (episode.publishedAt case final DateTime date)
             dateText(strings, date),
@@ -312,7 +332,7 @@ class EpisodeList extends StatelessWidget {
               bold:
                   parts.isNotEmpty &&
                   ((playing && parts.first == status) ||
-                      (kind == EpisodeListKind.podcast && state.isNew)),
+                      (showDate && state.isNew)),
               remaining: hasRemainingTime && parts.firstOrNull == status,
               downloaded: downloaded,
               inverted: inverted,
@@ -521,40 +541,41 @@ class PodcastList extends StatelessWidget {
                   : strings.podcastsEmpty,
             ),
           ),
-        SliverList.builder(
-          itemCount: sorted.length,
-          itemBuilder: (context, index) {
-            final podcast = sorted[index];
-            return EinkRow(
-              key: ValueKey(podcast.id),
-              title: podcast.title,
-              leading: _PodcastThumbnail(podcast.imageUrl),
-              topAligned: true,
-              desktop: desktop,
-              onPressed: () => onOpen(podcast),
-              details: [
-                Text(
-                  strings.playedCount(podcast.playedCount),
-                  style: metadataStyle,
-                ),
-                if (podcast.lastError?.isNotEmpty ?? false)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 4),
-                    child: DefaultTextStyle.merge(
-                      style: detailStyle,
-                      child: EinkError(
-                        strings.feedUnavailable,
-                        liveRegion: false,
-                      ),
-                    ),
-                  ),
-              ],
-            );
-          },
-        ),
+        rows(sorted, onOpen: onOpen, desktop: desktop),
       ],
     );
   }
+
+  static Widget rows(
+    List<Podcast> podcasts, {
+    required ValueChanged<Podcast> onOpen,
+    required bool desktop,
+  }) => SliverList.builder(
+    itemCount: podcasts.length,
+    itemBuilder: (context, index) {
+      final podcast = podcasts[index];
+      final strings = context.strings;
+      return EinkRow(
+        key: ValueKey(podcast.id),
+        title: podcast.title,
+        leading: _PodcastThumbnail(podcast.imageUrl),
+        topAligned: true,
+        desktop: desktop,
+        onPressed: () => onOpen(podcast),
+        details: [
+          Text(strings.playedCount(podcast.playedCount), style: metadataStyle),
+          if (podcast.lastError?.isNotEmpty ?? false)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: DefaultTextStyle.merge(
+                style: detailStyle,
+                child: EinkError(strings.feedUnavailable, liveRegion: false),
+              ),
+            ),
+        ],
+      );
+    },
+  );
 }
 
 List<Podcast> _alphabetical(List<Podcast> podcasts, String locale) {

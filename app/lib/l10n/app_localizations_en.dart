@@ -152,6 +152,15 @@ class AppLocalizationsEn extends AppLocalizations {
   String get podcastEmpty => 'This podcast has no episodes yet.';
 
   @override
+  String get search => 'Search';
+
+  @override
+  String get searchHint => 'Title or description';
+
+  @override
+  String get episodes => 'Episodes';
+
+  @override
   String get searchThisPodcast => 'Search this podcast';
 
   @override

@@ -61,6 +61,10 @@ class DemoApiClient implements ApiClient {
   }) async => const [];
 
   @override
+  Future<List<int>> searchAll(String query, {Duration? timeout}) async =>
+      const [];
+
+  @override
   Future<({Episode episode, String description})> episode(
     int episodeId, {
     Duration? timeout,

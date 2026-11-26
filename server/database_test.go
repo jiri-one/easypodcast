@@ -159,7 +159,8 @@ func TestUpgradeInitialSchema(t *testing.T) {
 	if err := s.migrate(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	ids, err := s.searchEpisodes(t.Context(), 1, []string{"tomas", "roud"})
+	podcastID := int64(1)
+	ids, err := s.searchEpisodes(t.Context(), &podcastID, []string{"tomas", "roud"})
 	if err != nil || !slices.Equal(ids, []int64{257, 1}) {
 		t.Fatalf("backfilled search: %v, %v", ids, err)
 	}

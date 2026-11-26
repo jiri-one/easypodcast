@@ -109,18 +109,23 @@ void main() {
     expect(detail.description, 'Links stay as https://example.test');
   });
 
-  test('podcast search encodes the query and returns episode ids', () async {
+  test('search encodes the query and returns episode ids', () async {
     handler = (_) async => json({
       'episode_ids': [7, 2, 8],
     });
     const query = 'Tomáš & Roud + další # díl';
     expect(await api.searchPodcast(3, query), [7, 2, 8]);
-    final request = requests.single;
-    expect(request.method, 'GET');
-    expect(request.url.path, '/api/podcasts/3/search');
-    expect(request.url.queryParameters, {'q': query});
-    expect(request.url.hasFragment, isFalse);
-    expect(request.headers['Authorization'], 'Bearer abc');
+    expect(await api.searchAll(query), [7, 2, 8]);
+    expect(requests.map((r) => r.url.path), [
+      '/api/podcasts/3/search',
+      '/api/search',
+    ]);
+    for (final request in requests) {
+      expect(request.method, 'GET');
+      expect(request.url.queryParameters, {'q': query});
+      expect(request.url.hasFragment, isFalse);
+      expect(request.headers['Authorization'], 'Bearer abc');
+    }
   });
 
   test(

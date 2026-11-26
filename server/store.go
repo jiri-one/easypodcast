@@ -189,9 +189,9 @@ func scanEpisode(row scanner, e *episode, extra ...any) error {
 const episodeListFrom = ` FROM episodes
 	LEFT JOIN (
 		SELECT f.episode_id, f.position FROM podcasts p CROSS JOIN LATERAL
-			unnest(p.feed_episode_order) WITH ORDINALITY AS f(episode_id, position) WHERE p.id = $1
+			unnest(p.feed_episode_order) WITH ORDINALITY AS f(episode_id, position) WHERE p.id = @podcast
 	) AS feed ON feed.episode_id = episodes.id
-	WHERE podcast_id = $1`
+	WHERE podcast_id = @podcast`
 
 const episodeListOrder = ` ORDER BY COALESCE(published_at, estimated_publication) DESC NULLS LAST,
 	COALESCE(feed.position - 1, feed_order) NULLS LAST, id DESC`
@@ -212,7 +212,8 @@ func (s store) episodes(ctx context.Context, podcastID int64) ([]episode, error)
 	if err := s.requirePodcast(ctx, podcastID); err != nil {
 		return nil, err
 	}
-	rows, err := s.db.Query(ctx, "SELECT "+episodeColumns+episodeListFrom+episodeListOrder, podcastID)
+	rows, err := s.db.Query(ctx, "SELECT "+episodeColumns+episodeListFrom+episodeListOrder,
+		pgx.NamedArgs{"podcast": podcastID})
 	if err != nil {
 		return nil, err
 	}

@@ -226,13 +226,19 @@ class HttpApiClient implements ApiClient {
     int podcastId,
     String query, {
     Duration? timeout,
-  }) async {
+  }) => _searchEpisodes('/api/podcasts/$podcastId/search', query, timeout);
+
+  @override
+  Future<List<int>> searchAll(String query, {Duration? timeout}) =>
+      _searchEpisodes('/api/search', query, timeout);
+
+  Future<List<int>> _searchEpisodes(
+    String path,
+    String query,
+    Duration? timeout,
+  ) async {
     final params = Uri(queryParameters: {'q': query}).query;
-    final response = await _send(
-      'GET',
-      '/api/podcasts/$podcastId/search?$params',
-      timeout: timeout,
-    );
+    final response = await _send('GET', '$path?$params', timeout: timeout);
     return (_object(response)['episode_ids'] as List?)?.cast<int>() ?? const [];
   }
 

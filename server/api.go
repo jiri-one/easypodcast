@@ -44,6 +44,7 @@ func (a *api) routes() http.Handler {
 	mux.HandleFunc("DELETE /api/podcasts/{id}", a.authenticated(a.unsubscribe))
 	mux.HandleFunc("GET /api/podcasts/{id}/episodes", a.authenticated(a.episodes))
 	mux.HandleFunc("GET /api/podcasts/{id}/search", a.authenticated(a.searchEpisodes))
+	mux.HandleFunc("GET /api/search", a.authenticated(a.searchEpisodes))
 	mux.HandleFunc("GET /api/episodes/{id}", a.authenticated(a.episode))
 	mux.HandleFunc("GET /api/episodes/{id}/state", a.authenticated(a.episodeState))
 	mux.HandleFunc("GET /api/state", a.authenticated(a.state))
@@ -316,9 +317,13 @@ func (a *api) episodes(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *api) searchEpisodes(w http.ResponseWriter, r *http.Request) {
-	id, ok := pathID(w, r)
-	if !ok {
-		return
+	var podcastID *int64
+	if r.PathValue("id") != "" {
+		id, ok := pathID(w, r)
+		if !ok {
+			return
+		}
+		podcastID = &id
 	}
 	query := strings.TrimSpace(normalizeSearchText(r.URL.Query().Get("q")))
 	if utf8.RuneCountInString(query) < 2 {
@@ -329,7 +334,7 @@ func (a *api) searchEpisodes(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadRequest, "q must be valid text")
 		return
 	}
-	ids, err := a.store.searchEpisodes(r.Context(), id, strings.Fields(query))
+	ids, err := a.store.searchEpisodes(r.Context(), podcastID, strings.Fields(query))
 	if err != nil {
 		storeError(w, r, err)
 		return

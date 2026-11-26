@@ -1,23 +1,33 @@
 import '../core/models.dart';
 
 final _whitespace = RegExp(r'\p{White_Space}+', unicode: true);
-final _nonAscii = RegExp(r'(\p{Mn})|[^\x00-\x7f]', unicode: true);
+final _combiningMark = RegExp(r'\p{Mn}', unicode: true);
 
 List<String> podcastSearchWords(String query) => [
   for (final word in _fold(query).split(_whitespace))
     if (word.isNotEmpty) word,
 ];
 
+bool podcastTitleMatches(String title, List<String> words) =>
+    words.every(_fold(title).contains);
+
 List<Episode> matchPodcastEpisodes(
-  List<Episode> episodes,
+  Iterable<Episode> episodes,
   List<String> words,
-  Set<int> descriptionMatches,
-) {
-  if (words.isEmpty) return episodes;
+  Set<int> descriptionMatches, {
+  Map<String, String>? normalizedTitles,
+}) {
+  if (words.isEmpty) {
+    return episodes is List<Episode> ? episodes : episodes.toList();
+  }
   final titles = <Episode>[];
   final descriptions = <Episode>[];
   for (final episode in episodes) {
-    final title = _fold(episode.title);
+    var title = normalizedTitles?[episode.title];
+    if (title == null) {
+      title = _fold(episode.title);
+      normalizedTitles?[episode.title] = title;
+    }
     if (words.every(title.contains)) {
       titles.add(episode);
     } else if (descriptionMatches.contains(episode.id)) {
@@ -27,10 +37,53 @@ List<Episode> matchPodcastEpisodes(
   return [...titles, ...descriptions];
 }
 
-String _fold(String value) => value.toLowerCase().replaceAllMapped(
-  _nonAscii,
-  (match) => match[1] != null ? '' : _baseOf[match[0]] ?? match[0]!,
-);
+List<Episode> matchLibraryEpisodes(
+  Iterable<Episode> episodes,
+  List<String> words,
+  Set<int> descriptionMatches, {
+  Map<String, String>? normalizedTitles,
+}) {
+  if (words.isEmpty) return const [];
+  final matches = matchPodcastEpisodes(
+    episodes,
+    words,
+    descriptionMatches,
+    normalizedTitles: normalizedTitles,
+  )..sort(_comparePublication);
+  if (matches.length > 100) matches.length = 100;
+  return matches;
+}
+
+int _comparePublication(Episode a, Episode b) {
+  final first = a.publishedAt;
+  final second = b.publishedAt;
+  if (first == null && second != null) return 1;
+  if (first != null && second == null) return -1;
+  final byDate = first == null ? 0 : second!.compareTo(first);
+  return byDate == 0 ? b.id.compareTo(a.id) : byDate;
+}
+
+String _fold(String value) {
+  final lower = value.toLowerCase();
+  final runes = RuneIterator(lower);
+  StringBuffer? buffer;
+  var start = 0;
+  while (runes.moveNext()) {
+    final rune = runes.current;
+    if (rune <= 0x7f) continue;
+    final replacement =
+        _baseOf[rune] ??
+        (_combiningMark.hasMatch(String.fromCharCode(rune)) ? '' : null);
+    if (replacement == null) continue;
+    (buffer ??= StringBuffer())
+      ..write(lower.substring(start, runes.rawIndex))
+      ..write(replacement);
+    start = runes.rawIndex + runes.currentSize;
+  }
+  return buffer == null
+      ? lower
+      : (buffer..write(lower.substring(start))).toString();
+}
 
 final _baseOf = {
   for (final [base, variants]
@@ -38,7 +91,7 @@ final _baseOf = {
           .trim()
           .split(_whitespace)
           .map((group) => group.split(':')))
-    for (final rune in variants.runes) String.fromCharCode(rune): base,
+    for (final rune in variants.runes) rune: base,
 };
 
 // The server strips combining marks after canonical decomposition.

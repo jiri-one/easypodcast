@@ -26,12 +26,13 @@ func TestEpisodeSearch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	testExec(t, s.db, `INSERT INTO podcasts (feed_url) VALUES ('https://fixture.invalid/other')`)
+	testExec(t, s.db, `INSERT INTO podcasts (feed_url, subscribed)
+		VALUES ('https://fixture.invalid/other', true), ('https://fixture.invalid/unsubscribed', false)`)
 	testExec(t, s.db, `INSERT INTO episodes (podcast_id, guid, title, enclosure_url, published_at, description, search_text)
 		SELECT $1, '', 'Tech Guys', '/archive/' || n, timestamptz '2020-01-01 UTC', '', 'tech guys'
 		FROM generate_series(1, 201) n
 		UNION ALL SELECT id, '', 'Tech Guys', '/other.mp3', timestamptz '2030-01-01 UTC', 'Tomáš Roud', 'tech guys tomas roud'
-		FROM podcasts WHERE feed_url = 'https://fixture.invalid/other'`, podcastID)
+		FROM podcasts WHERE id <> $1`, podcastID)
 	testExec(t, s.db, `INSERT INTO users (username, password_hash) VALUES ('listener', decode('00', 'hex'))`)
 	token, _, err := s.createDevice(ctx, "listener", "Reader")
 	if err != nil {
@@ -52,7 +53,7 @@ func TestEpisodeSearch(t *testing.T) {
 		}
 		return res
 	}
-	search := func(query string, want []int64) {
+	search := func(path, query string, want []int64) {
 		t.Helper()
 		res := get(path+"?q="+url.QueryEscape(query), token, http.StatusOK)
 		got := response[struct {
@@ -76,12 +77,24 @@ func TestEpisodeSearch(t *testing.T) {
 	for i := range ordered {
 		ordered[i] = items[i].ID
 	}
-	search(" TECh\tguYs ", ordered)
-	search("tomas roud", []int64{items[1].ID})
-	search("ROUD interview Tomas\u0301", []int64{items[1].ID})
-	search("tech roud missing", nil)
-	search("hidden", nil)
-	search("tech %_", nil)
+	search(path, " TECh\tguYs ", ordered)
+	search(path, "tomas roud", []int64{items[1].ID})
+	search(path, "ROUD interview Tomas\u0301", []int64{items[1].ID})
+	search(path, "tech roud missing", nil)
+	search(path, "hidden", nil)
+	search(path, "tech %_", nil)
+
+	var otherID int64
+	if err := s.db.QueryRow(ctx, `SELECT e.id FROM episodes e JOIN podcasts p ON p.id = e.podcast_id
+		WHERE p.feed_url = 'https://fixture.invalid/other'`).Scan(&otherID); err != nil {
+		t.Fatal(err)
+	}
+	const global = "/api/search"
+	get(global+"?q=tech", "", http.StatusUnauthorized)
+	get(global+"?q=t", token, http.StatusBadRequest)
+	search(global, " ROUD\tTOMÁŠ ", []int64{otherID, items[1].ID})
+	search(global, "tech guys", append([]int64{otherID, items[1].ID, items[0].ID}, ordered[2:99]...))
+	search(global, "tech roud missing", nil)
 
 	target, err := s.feedTarget(ctx, podcastID)
 	if err != nil {
@@ -91,6 +104,6 @@ func TestEpisodeSearch(t *testing.T) {
 	if err := s.applyRefresh(ctx, target, feedResponse{url: base.String(), document: doc}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	search("tomas roud", nil)
-	search("revised notes", []int64{items[1].ID})
+	search(path, "tomas roud", nil)
+	search(path, "revised notes", []int64{items[1].ID})
 }

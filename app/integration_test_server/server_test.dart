@@ -145,6 +145,24 @@ void main() {
       );
     });
 
+    test('search finds notes across subscribed podcasts', () async {
+      await login();
+      final first = (await subscribe('search-first')).first;
+      final second = (await subscribe('search-second')).first;
+      final testIds = {first.id, second.id};
+      const query = 'UPLNÉ odkaz';
+      expect((await api.searchAll(query)).where(testIds.contains), [
+        second.id,
+        first.id,
+      ]);
+      wire.last.expectStatus(200);
+      expect(wire.last.request.url.path, '/api/search');
+      expect(wire.last.request.url.queryParameters, {'q': query});
+
+      await api.unsubscribe(second.podcastId);
+      expect((await api.searchAll(query)).where(testIds.contains), [first.id]);
+    });
+
     test('state uses UTC milliseconds and strictly newer writes win', () async {
       await login();
       final id = (await subscribe('state')).first.id;

@@ -46,6 +46,13 @@ void main() {
         }
 
         try {
+          await app.section(LibrarySection.search);
+          await tester.enterText(find.byType(TextField), 'poslední');
+          await tester.pump(const Duration(milliseconds: 400));
+          await tester.pumpAndSettle();
+          await check('global search');
+          await app.back();
+
           if (desktop) {
             final heading = find.descendant(
               of: find.widgetWithText(EinkRow, app.strings.inProgress),
