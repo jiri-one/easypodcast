@@ -807,6 +807,12 @@ abstract class AppLocalizations {
   /// **'Last synced {time}'**
   String serverLastSync(String time);
 
+  /// No description provided for @serverClockSkew.
+  ///
+  /// In en, this message translates to:
+  /// **'The device clock differs from the server by {minutes} min.'**
+  String serverClockSkew(int minutes);
+
   /// No description provided for @pendingChanges.
   ///
   /// In en, this message translates to:

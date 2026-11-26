@@ -28,10 +28,15 @@ class Fetched<T> {
 }
 
 class LoginResult {
-  const LoginResult({required this.token, required this.deviceId});
+  const LoginResult({
+    required this.token,
+    required this.deviceId,
+    this.serverId,
+  });
 
   final String token;
   final int deviceId;
+  final String? serverId;
 }
 
 class StateSnapshot {
@@ -39,11 +44,13 @@ class StateSnapshot {
     required this.episodes,
     required this.queue,
     required this.serverTime,
+    this.serverId,
   });
 
   final List<EpisodeState> episodes;
   final QueueState? queue;
   final DateTime serverTime;
+  final String? serverId;
 }
 
 class StatePushResult {
@@ -51,11 +58,13 @@ class StatePushResult {
     required this.episodes,
     required this.queue,
     required this.unknown,
+    this.serverId,
   });
 
   final List<EpisodeState> episodes;
   final QueueState? queue;
   final List<int> unknown;
+  final String? serverId;
 }
 
 class OpmlImportResult {

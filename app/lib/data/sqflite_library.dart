@@ -36,6 +36,7 @@ class SqfliteLibrary extends Library {
   final Map<int, EpisodeListInfo> _episodeLists = {};
   QueueState? _queue;
   bool _queuePending = false;
+  bool _clearing = false;
   Future<void> _queueCommands = Future.value();
 
   Map<int, int>? _playedCounts;
@@ -402,7 +403,9 @@ class SqfliteLibrary extends Library {
 
   @override
   Future<void> dismissOlder(int episodeId) async {
+    final serverId = _store.meta(MetaKey.serverId);
     final snapshot = await refreshStatesAndQueue?.call();
+    if (!_sameServer(serverId)) return;
     if (snapshot == null) throw BulkDismissNeedsConnection();
     final protectedIds = {
       for (final state in snapshot.episodes)
@@ -474,13 +477,20 @@ class SqfliteLibrary extends Library {
   });
 
   Future<void> _editQueue(Future<void> Function(List<int>) edit) {
+    final serverId = _store.meta(MetaKey.serverId);
     final command = _queueCommands.then((_) async {
+      if (!_sameServer(serverId)) return;
       await refreshStatesAndQueue?.call();
+      if (!_sameServer(serverId)) return;
       await edit(_editableQueueIds());
     });
     _queueCommands = command.onError((Object _, StackTrace _) {});
     return command;
   }
+
+  bool _sameServer(String? serverId) =>
+      !_clearing &&
+      (serverId == null || serverId == _store.meta(MetaKey.serverId));
 
   List<int> _editableQueueIds() => [
     for (final id in _queue?.episodeIds ?? const <int>[])
@@ -541,6 +551,7 @@ class SqfliteLibrary extends Library {
     List<int>? queue,
     bool forceSend = true,
   }) async {
+    if (_clearing) return;
     final finished = <int>[];
     for (final state in states) {
       final before = stateOf(state.episodeId).status;
@@ -781,9 +792,15 @@ class SqfliteLibrary extends Library {
     _changed();
   }
 
-  Future<void> clear() async {
-    await _store.clearLibrary();
-    _loadFrom(await _store.load());
+  Future<void> clear(String serverId) async {
+    _clearing = true;
+    try {
+      await _store.clearLibrary(serverId);
+      _loadFrom(await _store.load());
+      playingEpisodeId = null;
+    } finally {
+      _clearing = false;
+    }
     notifyListeners();
   }
 }

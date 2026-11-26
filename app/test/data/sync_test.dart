@@ -13,6 +13,8 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'fake_server.dart';
 
+const restoredServerId = 'f85c6188-ba98-4c4b-9c44-8542d14927be';
+
 void main() {
   late TestClock clock;
   late FakeServer server;
@@ -77,6 +79,7 @@ void main() {
     ]);
     expect(phone.library.episodesOf(1), hasLength(5));
     expect(phone.library.inProgress.map((e) => e.id), [episodes[0]]);
+    expect(phone.store.meta(MetaKey.serverId), server.serverId);
     expect(phone.sync.status.value.phase, SyncPhase.idle);
     expect(phone.sync.status.value.lastSuccess, clock.now);
   });
@@ -112,7 +115,7 @@ void main() {
     phone.api.syncCalls.clear();
     await phone.sync.syncNow();
     expect(phone.api.pushCalls, before + 1);
-    expect(phone.api.syncCalls.take(3), ['push', 'state', 'podcasts']);
+    expect(phone.api.syncCalls, ['state', 'push', 'state', 'podcasts']);
     expect(server.queue!.episodeIds, [episodes[1]]);
     expect(server.states[episodes[0]]!.positionMs, 120000);
   });
@@ -279,7 +282,7 @@ void main() {
       expect(phone.sync.currentBackoff, isNull);
       expect(phone.sync.status.value.phase, SyncPhase.idle);
       // A send after an offline period is followed by a pull.
-      expect(phone.api.stateCalls, stateCalls + 1);
+      expect(phone.api.stateCalls, stateCalls + 2);
     },
   );
 
@@ -323,6 +326,7 @@ void main() {
         'state',
         'podcasts',
         'push',
+        'state',
         'push',
         'state',
         'podcasts',
@@ -344,6 +348,8 @@ void main() {
       expect(restarted.library.pendingCount, 1);
       await restarted.sync.start();
       await restarted.sync.whenIdle();
+      expect(restarted.api.syncCalls.take(2), ['state', 'push']);
+      expect(restarted.api.stateNotModified, 1);
       expect(server.states[episodes[2]]!.status, EpisodeStatus.played);
       expect(restarted.library.pendingCount, 0);
     },
@@ -790,7 +796,7 @@ void main() {
 
     await phone.library.enqueue(episodes[1]);
     await phone.sync.whenIdle();
-    expect(phone.api.syncCalls.take(2), ['push', 'state']);
+    expect(phone.api.syncCalls.take(3), ['state', 'push', 'state']);
     expect(server.states[episodes[0]]!.positionMs, 120000);
     expect(server.queue!.episodeIds, [episodes[1]]);
   });
@@ -810,7 +816,7 @@ void main() {
       phone.api.syncCalls.clear();
 
       await phone.library.enqueue(episodes[2]);
-      expect(phone.api.syncCalls.take(2), ['push', 'state']);
+      expect(phone.api.syncCalls.take(3), ['state', 'push', 'state']);
       expect(phone.library.queueState!.episodeIds, [episodes[1], episodes[2]]);
       expect(phone.library.pendingCount, 2);
     },
@@ -1115,6 +1121,13 @@ void main() {
       const ahead = Duration(minutes: 5, milliseconds: 1);
       deviceClock.now = clock.now.add(ahead);
       await sync.syncNow();
+      expect(phone.api.stateNotModified, 1);
+      expect(sync.clockSkewWarning, isNull);
+      server.queue = QueueState(
+        episodeIds: [episodes.last],
+        updatedAt: clock.now,
+      );
+      await sync.syncNow();
       expect(sync.clockSkewWarning, ahead);
       deviceClock.now = clock.now.subtract(ahead);
       await phone.library.enqueue(episodes[0]);
@@ -1344,6 +1357,7 @@ void main() {
           episodes: missingQueue ? result.episodes : [],
           queue: missingQueue ? null : result.queue,
           unknown: [],
+          serverId: result.serverId,
         );
         await phone.sync.syncNow();
 
@@ -1501,7 +1515,7 @@ void main() {
     phone.api.online = true;
     phone.api.syncCalls.clear();
     await phone.sync.logout();
-    expect(phone.api.syncCalls, ['push', 'logout']);
+    expect(phone.api.syncCalls, ['state', 'push', 'logout']);
     expect(server.states[episodes[0]]!.isPlayed, isTrue);
     expect(phone.library.pendingCount, 0);
     expect(phone.sync.isLoggedIn, isFalse);
@@ -1537,7 +1551,9 @@ void main() {
   test('logging in to another server forgets the old local copy', () async {
     final phone = await device('phone');
     expect(phone.library.podcasts, hasLength(2));
-    final other = FakeServer(clock)..addPodcast(5, 'Quiet Hours');
+    final other = FakeServer(clock)
+      ..serverId = restoredServerId
+      ..addPodcast(5, 'Quiet Hours');
     other.addEpisodes(5, 1);
     final moved = await Device.open(other, db: phone.db);
     devices.add(moved);
@@ -1550,5 +1566,93 @@ void main() {
     await moved.sync.start();
     await moved.sync.whenIdle();
     expect(moved.library.podcasts.map((p) => p.title), ['Quiet Hours']);
+    expect(moved.store.meta(MetaKey.serverId), restoredServerId);
+  });
+
+  test('a new identity discards offline states, queue and cached episode lists before posting', () async {
+    final phone = await device('phone');
+    final id = episodes.first;
+    final etag = phone.store.meta(MetaKey.stateEtag);
+    final listCalls = phone.api.episodesCalls[1]!;
+    expect(etag, isNotEmpty);
+    expect(await phone.library.description(id), 'About episode $id');
+
+    phone.api.online = false;
+    await phone.library.markPlayed(id);
+    await phone.library.enqueue(episodes.last);
+    await phone.sync.whenIdle();
+    expect(phone.library.pendingCount, 2);
+
+    server.serverId = restoredServerId;
+    server.descriptions[id] = 'About the restored episode';
+    phone.api.online = true;
+    await phone.sync.syncNow();
+
+    expect(phone.api.pushCalls, 0);
+    expect(phone.library.episode(id), isNotNull);
+    expect(phone.api.episodesCalls[1], listCalls + 1);
+    expect(await phone.library.description(id), 'About the restored episode');
+    expect(phone.library.stateOf(id).isNew, isTrue);
+    expect(phone.library.queue, isEmpty);
+    expect(phone.library.pendingCount, 0);
+    expect(phone.store.meta(MetaKey.serverId), restoredServerId);
+    expect(phone.store.meta(MetaKey.stateEtag), isNot(etag));
+    final stored = await phone.store.load();
+    expect(stored.states, isEmpty);
+    expect(stored.queue, isNull);
+    expect(stored.meta[MetaKey.serverId], restoredServerId);
+    expect(phone.sync.status.value.phase, SyncPhase.idle);
+  });
+
+  test('logging in at a new URL with the same identity keeps cache and pending changes', () async {
+    final phone = await device('phone');
+    final id = episodes.first;
+    final episode = phone.library.episode(id);
+    final etag = phone.store.meta(MetaKey.stateEtag);
+    phone.api.online = false;
+    await phone.library.markPlayed(id);
+    await phone.sync.whenIdle();
+    await phone.sync.stop();
+
+    phone.api.online = true;
+    const url = 'https://elsewhere.example.test';
+    await phone.sync.login(
+      serverUrl: '$url/api/',
+      username: 'listener',
+      password: 'secret',
+      deviceName: 'phone',
+    );
+    expect(phone.store.meta(MetaKey.serverUrl), url);
+    expect(phone.store.meta(MetaKey.serverId), server.serverId);
+    expect(phone.store.meta(MetaKey.stateEtag), etag);
+    expect(phone.library.episode(id), same(episode));
+    expect(phone.library.pendingCount, 1);
+    await phone.sync.start();
+    await phone.sync.whenIdle();
+    expect(phone.api.stateNotModified, 1);
+    expect(server.states[id]?.isPlayed, isTrue);
+  });
+
+  test('a changed identity in a push reply refreshes instead of applying the reply', () async {
+    final phone = await device('phone');
+    final id = episodes.first;
+    final listCalls = phone.api.episodesCalls[1]!;
+    var sawOldReply = false;
+    phone.api.beforePush = () async => server.serverId = restoredServerId;
+    phone.api.transformPushResult = (result) {
+      sawOldReply = result.episodes.single.isPlayed;
+      server.states.clear();
+      return result;
+    };
+
+    await phone.library.markPlayed(id);
+    await phone.sync.whenIdle();
+
+    expect(sawOldReply, isTrue);
+    expect(phone.store.meta(MetaKey.serverId), restoredServerId);
+    expect(phone.library.episode(id), isNotNull);
+    expect(phone.api.episodesCalls[1], listCalls + 1);
+    expect(phone.library.stateOf(id).isNew, isTrue);
+    expect(phone.library.pendingCount, 0);
   });
 }

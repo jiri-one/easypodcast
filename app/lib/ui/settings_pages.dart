@@ -63,7 +63,21 @@ class SettingsPage extends StatelessWidget {
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-              child: ServerStatusLine(services: services),
+              child: Builder(
+                builder: (context) => Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  spacing: 4,
+                  children: [
+                    ServerStatusLine(services: services),
+                    if (SyncFeedback.of(context).status.clockSkewWarning
+                        case final skew?)
+                      Text(
+                        strings.serverClockSkew(skew.abs().inMinutes),
+                        style: detailStyle,
+                      ),
+                  ],
+                ),
+              ),
             ),
             const Divider(height: 1),
           ],

@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:easypodcast/core/api.dart';
 import 'package:easypodcast/core/models.dart';
 import 'package:easypodcast/data/default_sync_service.dart';
+import 'package:easypodcast/data/http_api_client.dart';
 import 'package:easypodcast/data/local_store.dart';
 import 'package:easypodcast/data/sqflite_library.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -24,6 +25,7 @@ class FakeServer {
   FakeServer(this.clock);
 
   final TestClock clock;
+  String serverId = '342896fe-729d-489a-86db-1e035275f3d1';
   final Map<int, Podcast> _podcasts = {};
   final Map<int, List<Episode>> _episodes = {};
   final Map<int, EpisodeState> states = {};
@@ -163,16 +165,24 @@ class FakeServer {
       ],
       queue: queue,
       unknown: unknown,
+      serverId: serverId,
     );
   }
 }
 
-class FakeApiClient implements ApiClient {
+class FakeApiClient implements HttpApiClient {
   FakeApiClient(this.server);
 
   final FakeServer server;
   bool online = true;
+  @override
   String? token;
+  @override
+  String serverUrl = 'https://podcasts.example.test';
+  @override
+  final timeout = const Duration(seconds: 10);
+  @override
+  void Function()? onUnauthorized;
   int? statusOverride;
   Duration? episodeStateDelay;
   Duration? episodeStateTimeout;
@@ -185,6 +195,7 @@ class FakeApiClient implements ApiClient {
 
   int pushCalls = 0;
   int stateCalls = 0;
+  int stateNotModified = 0;
   int podcastsCalls = 0;
   int episodeStateCalls = 0;
   final Map<int, int> episodesCalls = {};
@@ -215,7 +226,12 @@ class FakeApiClient implements ApiClient {
     _check(auth: false);
     if (password != 'secret') throw ApiException(401, 'wrong credentials');
     token = 'token-$deviceName';
-    return LoginResult(token: token!, deviceId: deviceName.hashCode.abs());
+    this.serverUrl = HttpApiClient.normalizeServerUrl(serverUrl);
+    return LoginResult(
+      token: token!,
+      deviceId: deviceName.hashCode.abs(),
+      serverId: server.serverId,
+    );
   }
 
   @override
@@ -286,7 +302,10 @@ class FakeApiClient implements ApiClient {
   }
 
   @override
-  Future<StateSnapshot> state() async {
+  Future<StateSnapshot> state() async => (await fetchState())!.value;
+
+  @override
+  Future<Fetched<StateSnapshot>?> fetchState({String? ifNoneMatch}) async {
     _check();
     stateCalls++;
     syncCalls.add('state');
@@ -294,9 +313,19 @@ class FakeApiClient implements ApiClient {
       episodes: server.states.values.toList(),
       queue: server.queue,
       serverTime: server.clock(),
+      serverId: server.serverId,
     );
+    final tag = _tag([
+      snapshot.serverId,
+      for (final state in snapshot.episodes) state.toJson(),
+      snapshot.queue?.toJson(),
+    ]);
     if (beforeStateReply case final hook?) await hook();
-    return snapshot;
+    if (tag == ifNoneMatch) {
+      stateNotModified++;
+      return null;
+    }
+    return Fetched(snapshot, tag);
   }
 
   @override

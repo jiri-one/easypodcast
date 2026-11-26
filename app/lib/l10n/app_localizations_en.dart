@@ -383,6 +383,11 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
+  String serverClockSkew(int minutes) {
+    return 'The device clock differs from the server by $minutes min.';
+  }
+
+  @override
   String pendingChanges(int count) {
     String _temp0 = intl.Intl.pluralLogic(
       count,

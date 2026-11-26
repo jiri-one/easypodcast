@@ -13,6 +13,7 @@ void main() {
   late List<http.Request> requests;
   late Future<http.Response> Function(http.Request) handler;
   late HttpApiClient api;
+  const serverId = '342896fe-729d-489a-86db-1e035275f3d1';
 
   setUp(() {
     requests = [];
@@ -79,9 +80,12 @@ void main() {
     handler = (_) async => http.Response('', 304);
     expect(await api.podcasts(ifNoneMatch: '"t1"'), isNull);
     expect(await api.episodes(3, ifNoneMatch: '"e1"'), isNull);
+    expect(await api.fetchState(ifNoneMatch: 'W/"s1"'), isNull);
     expect(requests[0].headers['If-None-Match'], '"t1"');
     expect(requests[1].url.path, '/api/podcasts/3/episodes');
     expect(requests[1].headers['If-None-Match'], '"e1"');
+    expect(requests[2].url.path, '/api/state');
+    expect(requests[2].headers['If-None-Match'], 'W/"s1"');
   });
 
   test('episode detail carries the description', () async {
@@ -108,20 +112,27 @@ void main() {
   test(
     'state parses measured duration, a missing queue and server time',
     () async {
-      handler = (_) async => json({
-        'episodes': [
-          {
-            'episode_id': 7,
-            'position_ms': 61000,
-            'status': '',
-            'duration_ms': 165000,
-            'updated_at': '2026-11-26T14:03:07.120Z',
-          },
-        ],
-        'queue': null,
-        'server_time': '2026-11-26T14:05:00.000Z',
-      });
-      final snapshot = await api.state();
+      handler = (_) async => json(
+        {
+          'episodes': [
+            {
+              'episode_id': 7,
+              'position_ms': 61000,
+              'status': '',
+              'duration_ms': 165000,
+              'updated_at': '2026-11-26T14:03:07.120Z',
+            },
+          ],
+          'queue': null,
+          'server_time': '2026-11-26T14:05:00.000Z',
+          'server_id': serverId,
+        },
+        headers: {'etag': 'W/"s1"'},
+      );
+      final fetched = (await api.fetchState())!;
+      final snapshot = fetched.value;
+      expect(fetched.etag, 'W/"s1"');
+      expect(snapshot.serverId, serverId);
       expect(snapshot.queue, isNull);
       expect(snapshot.episodes.single.isInProgress, isTrue);
       expect(snapshot.episodes.single.durationMs, 165000);
@@ -147,6 +158,7 @@ void main() {
           'updated_at': '2026-11-26T14:03:07.121Z',
         },
         'unknown': [9],
+        'server_id': serverId,
       });
       final at = DateTime.utc(2026, 11, 26, 14, 3, 7, 120);
       final result = await api.pushState(
@@ -180,6 +192,7 @@ void main() {
           'updated_at': '2026-11-26T14:03:07.120Z',
         },
       });
+      expect(result.serverId, serverId);
       expect(result.unknown, [9]);
       expect(result.queue!.episodeIds, [8]);
       expect(result.episodes.single.isPlayed, isTrue);
@@ -209,6 +222,7 @@ void main() {
     handler = (_) async => json({
       'episodes': [played.toJson()],
       'queue': queue.toJson(),
+      'server_id': serverId,
     });
     await expectLater(
       api.pushState(episodes: [played, missing], queue: queue),
@@ -218,6 +232,7 @@ void main() {
     handler = (_) async => json({
       'episodes': [played.toJson()],
       'unknown': [8],
+      'server_id': serverId,
     });
     await expectLater(
       api.pushState(episodes: [played, missing], queue: queue),
@@ -228,6 +243,7 @@ void main() {
       'episodes': [played.toJson()],
       'queue': queue.toJson(),
       'unknown': [8],
+      'server_id': serverId,
     });
     final confirmed = await api.pushState(
       episodes: [played, missing],
@@ -305,7 +321,8 @@ void main() {
   });
 
   test('login switches server and token', () async {
-    handler = (_) async => json({'token': 'new-token', 'device_id': 4});
+    handler = (_) async =>
+        json({'token': 'new-token', 'device_id': 4, 'server_id': serverId});
     final result = await api.login(
       serverUrl: 'https://other.example.test/api/',
       username: 'listener',
@@ -321,6 +338,7 @@ void main() {
       'device_name': 'phone',
     });
     expect(result.deviceId, 4);
+    expect(result.serverId, serverId);
     expect(api.token, 'new-token');
     expect(api.serverUrl, 'https://other.example.test');
   });

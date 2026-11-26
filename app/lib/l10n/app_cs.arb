@@ -118,6 +118,7 @@
   "sendNow": "Odeslat teď",
   "serverChangeHelp": "Jinou adresu serveru můžeš zadat po odhlášení.",
   "serverLastSync": "Poslední synchronizace {time}",
+  "serverClockSkew": "Hodiny zařízení se liší od serveru o {minutes} min.",
   "pendingChanges": "{count, plural, =1{1 změna čeká na odeslání} few{{count} změny čekají na odeslání} other{{count} změn čeká na odeslání}}",
   "deviceName": "Název zařízení",
   "defaultAndroidDevice": "Telefon Android",

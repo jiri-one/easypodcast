@@ -382,6 +382,11 @@ class AppLocalizationsCs extends AppLocalizations {
   }
 
   @override
+  String serverClockSkew(int minutes) {
+    return 'Hodiny zařízení se liší od serveru o $minutes min.';
+  }
+
+  @override
   String pendingChanges(int count) {
     String _temp0 = intl.Intl.pluralLogic(
       count,

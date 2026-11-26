@@ -40,9 +40,11 @@ class LocalSnapshot {
 abstract final class MetaKey {
   static const token = 'token';
   static const serverUrl = 'server_url';
+  static const serverId = 'server_id';
   static const deviceId = 'device_id';
   static const deviceName = 'device_name';
   static const podcastsEtag = 'podcasts_etag';
+  static const stateEtag = 'state_etag';
   static const lastSync = 'last_sync';
 }
 
@@ -407,8 +409,9 @@ class LocalStore {
         : ConflictAlgorithm.ignore,
   );
 
-  Future<void> clearLibrary() => db.transaction((txn) async {
-    final batch = txn.batch();
+  Future<void> clearLibrary(String serverId) async {
+    const keys = [MetaKey.podcastsEtag, MetaKey.stateEtag, MetaKey.lastSync];
+    final batch = db.batch();
     for (final table in const [
       'podcasts',
       'episodes',
@@ -419,10 +422,17 @@ class LocalStore {
     ]) {
       batch.delete(table);
     }
-    batch.delete('meta', where: 'key = ?', whereArgs: [MetaKey.podcastsEtag]);
+    for (final key in keys) {
+      batch.delete('meta', where: 'key = ?', whereArgs: [key]);
+    }
+    batch.insert('meta', {
+      'key': MetaKey.serverId,
+      'value': serverId,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
     await batch.commit(noResult: true);
-    _meta.remove(MetaKey.podcastsEtag);
-  });
+    keys.forEach(_meta.remove);
+    _meta[MetaKey.serverId] = serverId;
+  }
 
   static DateTime _fromMs(int ms) =>
       DateTime.fromMillisecondsSinceEpoch(ms, isUtc: true);

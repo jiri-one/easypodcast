@@ -140,6 +140,7 @@ class HttpApiClient implements ApiClient {
     final result = LoginResult(
       token: body['token'] as String,
       deviceId: body['device_id'] as int,
+      serverId: body['server_id'] as String,
     );
     _serverUrl = normalized;
     token = result.token;
@@ -211,10 +212,17 @@ class HttpApiClient implements ApiClient {
   }
 
   @override
-  Future<StateSnapshot> state() async {
-    final body = _object(await _send('GET', '/api/state'));
+  Future<StateSnapshot> state() async => (await fetchState())!.value;
+
+  Future<Fetched<StateSnapshot>?> fetchState({String? ifNoneMatch}) async {
+    final response = await _send('GET', '/api/state', ifNoneMatch: ifNoneMatch);
+    if (response.statusCode == 304) {
+      if (ifNoneMatch == null) throw const FormatException('Unexpected 304');
+      return null;
+    }
+    final body = _object(response);
     final queue = body['queue'];
-    return StateSnapshot(
+    final snapshot = StateSnapshot(
       episodes: [
         for (final item in _list(body['episodes'])) EpisodeState.fromJson(item),
       ],
@@ -222,7 +230,9 @@ class HttpApiClient implements ApiClient {
           ? null
           : QueueState.fromJson((queue as Map).cast<String, Object?>()),
       serverTime: DateTime.parse(body['server_time'] as String).toUtc(),
+      serverId: body['server_id'] as String,
     );
+    return Fetched(snapshot, response.headers['etag']);
   }
 
   @override
@@ -251,6 +261,7 @@ class HttpApiClient implements ApiClient {
       unknown: [
         for (final id in (body['unknown'] as List?) ?? const []) id as int,
       ],
+      serverId: body['server_id'] as String,
     );
     result.requireConfirmation(episodes, queue);
     return result;

@@ -106,6 +106,7 @@ wait_for_http "$server_pid" 'http://127.0.0.1:18080/health' "$logs/server.log"
 printf 'EasyPodcast ready at http://127.0.0.1:18080\n'
 
 if [[ ${1:-} == --test ]]; then
+  export EASYPODCAST_E2E_BINARY="$binary"
   export EASYPODCAST_E2E_TRACE="$logs/http.log"
   : >"$EASYPODCAST_E2E_TRACE"
   (

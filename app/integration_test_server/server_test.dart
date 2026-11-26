@@ -505,7 +505,11 @@ void main() {
         b.sync.didChangeAppLifecycleState(AppLifecycleState.resumed);
         await b.waitForSync();
 
-        final retry = b.wire.exchanges[start];
+        final check = b.wire.exchanges[start];
+        expect(check.request.method, 'GET');
+        expect(check.request.url.path, '/api/state');
+        expect(check.request.headers['if-none-match'], isNotEmpty);
+        final retry = b.wire.exchanges[start + 1];
         expect(retry.request.method, 'POST');
         expect(retry.request.url.path, '/api/state');
         expect(jsonDecode(retry.requestBody)['episodes'], [offline.toJson()]);
@@ -543,7 +547,9 @@ void main() {
         b.wire.offline = false;
         final start = b.wire.exchanges.length;
         await b.sync.syncNow();
-        final acknowledgement = b.wire.exchanges[start];
+        final acknowledgement = b.wire.exchanges
+            .skip(start)
+            .firstWhere((exchange) => exchange.request.method == 'POST');
         acknowledgement.expectStatus(200);
         expect(acknowledgement.json['episodes'], [winner.toJson()]);
         expect(b.data.library.stateOf(id).toJson(), winner.toJson());
@@ -558,6 +564,52 @@ void main() {
         expect(restartedB.sync.status.value.pending, 0);
       },
     );
+
+    test('new-server-id makes a reconnect drop offline changes and refetch the library', () async {
+      final phone = await device('identity');
+      final podcast = await phone.data.library.subscribe(fixture('identity'));
+      await phone.sync.syncNow();
+      final episode = phone.data.library.episodesOf(podcast.id).first;
+      final oldId = phone.store.meta(MetaKey.serverId);
+      final oldTag = phone.store.meta(MetaKey.stateEtag);
+      expect(oldId, isNotEmpty);
+      expect(oldTag, isNotEmpty);
+
+      phone.wire.offline = true;
+      await phone.pauseAt(episode.id, 71000);
+      expect(phone.sync.status.value.pending, 1);
+      final rotate = await Process.run(
+        Platform.environment['EASYPODCAST_E2E_BINARY']!,
+        ['new-server-id'],
+      );
+      expect(rotate.exitCode, 0, reason: '${rotate.stderr}');
+      phone.wire.offline = false;
+
+      final start = phone.wire.exchanges.length;
+      await phone.sync.syncNow();
+      final requests = phone.wire.exchanges.skip(start).toList();
+      final check = requests.first;
+      expect(check.request.method, 'GET');
+      expect(check.request.url.path, '/api/state');
+      expect(check.request.headers['if-none-match'], oldTag);
+      check.expectStatus(200);
+      final newId = phone.store.meta(MetaKey.serverId);
+      expect(newId, isNot(oldId));
+      expect(newId, check.json['server_id']);
+      expect(
+        requests.map((exchange) => exchange.request.method),
+        everyElement('GET'),
+      );
+      expect(
+        requests.map((exchange) => exchange.request.url.path),
+        contains('/api/podcasts/${podcast.id}/episodes'),
+      );
+      expect(phone.data.library.episode(episode.id)?.title, episode.title);
+      expect(phone.data.library.stateOf(episode.id).isNew, isTrue);
+      expect(await phone.data.api.episodeState(episode.id), isNull);
+      expect(phone.sync.status.value.pending, 0);
+      expect(phone.sync.status.value.phase, SyncPhase.idle);
+    });
 
     test('a Go server 400 repairs a future stamp after the device clock is corrected', () async {
       final (:a, :b, :ids) = await pair('bad-clock');
@@ -574,7 +626,10 @@ void main() {
       final start = b.wire.exchanges.length;
       b.wire.offline = false;
       await b.sync.syncNow();
-      b.wire.exchanges[start].expectStatus(400);
+      b.wire.exchanges
+          .skip(start)
+          .firstWhere((exchange) => exchange.request.method == 'POST')
+          .expectStatus(400);
       final repaired = (await a.data.api.episodeState(future))!;
       expect(repaired.toJson(), {
         ...rejected.toJson(),

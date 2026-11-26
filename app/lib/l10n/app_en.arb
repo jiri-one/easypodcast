@@ -128,6 +128,12 @@
       }
     }
   },
+  "serverClockSkew": "The device clock differs from the server by {minutes} min.",
+  "@serverClockSkew": {
+    "placeholders": {
+      "minutes": {"type": "int"}
+    }
+  },
   "pendingChanges": "{count, plural, =1{1 change waiting to send} other{{count} changes waiting to send}}",
   "@pendingChanges": {
     "placeholders": {
