@@ -1,8 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestTrustedProxyAddress(t *testing.T) {
@@ -31,5 +33,39 @@ func TestTrustedProxyAddress(t *testing.T) {
 				t.Errorf("got %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestLoginLimitsIPv6Prefix(t *testing.T) {
+	limiter := loginLimiter{trustedProxies: parseTrustedProxies("192.0.2.0/24")}
+	req := httptest.NewRequest("POST", "/api/login", nil)
+	req.RemoteAddr = "192.0.2.7:8080"
+	for i := range loginAddressLimit {
+		req.Header.Set("X-Forwarded-For", fmt.Sprintf("2001:db8:1:2::%x", i+1))
+		finish, wait := limiter.start(req)
+		if wait != 0 {
+			t.Fatalf("unexpected limit at %d failures", i)
+		}
+		finish(true)
+	}
+	req.Header.Set("X-Forwarded-For", "2001:db8:1:2::ffff")
+	if _, wait := limiter.start(req); wait <= 0 {
+		t.Fatal("another address from that /64 bypassed the limit")
+	}
+	req.Header.Set("X-Forwarded-For", "2001:db8:1:3::1")
+	if finish, wait := limiter.start(req); wait != 0 {
+		t.Fatal("another /64 was unexpectedly limited")
+	} else {
+		finish(false)
+	}
+}
+
+func TestLoginGlobalDailyLimit(t *testing.T) {
+	var limiter loginLimiter
+	for range loginDayLimit {
+		limiter.day.failures = append(limiter.day.failures, time.Now().Add(-2*time.Hour))
+	}
+	if _, wait := limiter.start(httptest.NewRequest("POST", "/api/login", nil)); wait < 21*time.Hour {
+		t.Fatalf("retry after %s, want about 22 hours", wait)
 	}
 }

@@ -6,7 +6,11 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"sync"
+	"time"
 )
+
+const opmlTimeout = 80 * time.Second
 
 type opmlDocument struct {
 	XMLName xml.Name `xml:"opml"`
@@ -74,22 +78,67 @@ func parseOPML(reader io.Reader) ([]string, error) {
 }
 
 func (r *refresher) importOPML(ctx context.Context, urls []string) (opmlResult, error) {
+	type outcome struct {
+		finished bool
+		added    bool
+		issue    feedError
+	}
+	outcomes := make([]outcome, len(urls))
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	var workers sync.WaitGroup
+	jobs := make(chan int)
+	for range min(cap(r.slots), len(urls)) {
+		workers.Go(func() {
+			for i := range jobs {
+				if ctx.Err() != nil {
+					return
+				}
+				_, added, err := r.subscribe(ctx, urls[i])
+				var issue feedError
+				switch {
+				case err == nil, errors.As(err, &issue):
+					outcomes[i] = outcome{true, added, issue}
+				case errors.Is(err, context.DeadlineExceeded):
+					outcomes[i] = outcome{finished: true, issue: errFeedTimeout}
+				case ctx.Err() == nil:
+					cancel(err)
+				}
+			}
+		})
+	}
+send:
+	for i := range urls {
+		select {
+		case jobs <- i:
+		case <-ctx.Done():
+			break send
+		}
+	}
+	close(jobs)
+	workers.Wait()
+
 	result := opmlResult{Failed: []opmlFailure{}}
-	for _, address := range urls {
-		_, added, err := r.subscribe(ctx, address)
-		var issue feedError
+	interruption := context.Cause(ctx)
+	timedOut := errors.Is(interruption, context.DeadlineExceeded)
+	for i, item := range outcomes {
 		switch {
-		case errors.As(err, &issue):
-			result.Failed = append(result.Failed, opmlFailure{address, issue.Error()})
-		case err != nil:
-			return result, err
-		case added:
+		case !item.finished:
+			if timedOut {
+				result.Failed = append(result.Failed, opmlFailure{urls[i], "not imported in time, import the file again"})
+			}
+		case item.issue != "":
+			result.Failed = append(result.Failed, opmlFailure{urls[i], item.issue.Error()})
+		case item.added:
 			result.Added++
 		default:
 			result.Existing++
 		}
 	}
-	return result, nil
+	if timedOut {
+		interruption = nil
+	}
+	return result, interruption
 }
 
 func exportOPML(podcasts []podcast) ([]byte, error) {

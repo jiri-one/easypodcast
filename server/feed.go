@@ -1,24 +1,35 @@
 package main
 
 import (
-	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
+	"mime"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
+	"os"
+	"path"
 	"strconv"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/mmcdole/gofeed"
-	"golang.org/x/net/html"
-	"golang.org/x/net/html/atom"
 )
 
-const maxFeedBytes = 32 << 20
+const maxFeedBytes = 8 << 20
 
-var errInvalidFeedURL = errors.New("feed_url must be an HTTP or HTTPS URL without credentials")
+const (
+	errInvalidFeedURL  = feedError("feed_url must be an HTTP or HTTPS URL without credentials")
+	errInvalidRedirect = feedError("invalid feed redirect")
+	errPrivateFeed     = feedError("feed address is not public")
+	errFeedTimeout     = feedError("feed request timed out")
+)
 
 type feedError string
 
@@ -46,12 +57,82 @@ func feedURL(raw string) (*url.URL, error) {
 	return u, nil
 }
 
+func feedHTTPClient() http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = nil
+	dialer := net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
+	if os.Getenv("EASYPODCAST_ALLOW_PRIVATE_FEEDS") != "true" {
+		dialer.Control = publicFeedAddress
+	}
+	transport.DialContext = dialer.DialContext
+	return http.Client{Transport: transport, Timeout: fetchTimeout}
+}
+
+var nonPublicFeedNetworks = []netip.Prefix{
+	netip.MustParsePrefix("0.0.0.0/8"),
+	netip.MustParsePrefix("100.64.0.0/10"),
+	netip.MustParsePrefix("192.0.0.0/24"),
+	netip.MustParsePrefix("198.18.0.0/15"),
+	netip.MustParsePrefix("240.0.0.0/4"),
+	netip.MustParsePrefix("::/96"),
+	netip.MustParsePrefix("64:ff9b::/96"),
+	netip.MustParsePrefix("64:ff9b:1::/48"),
+	netip.MustParsePrefix("2002::/16"),
+}
+
+func publicFeedAddress(_, address string, _ syscall.RawConn) error {
+	endpoint, err := netip.ParseAddrPort(address)
+	if err != nil {
+		return errPrivateFeed
+	}
+	ip := endpoint.Addr().Unmap()
+	if !ip.IsGlobalUnicast() || ip.IsPrivate() {
+		return errPrivateFeed
+	}
+	for _, network := range nonPublicFeedNetworks {
+		if network.Contains(ip) {
+			return errPrivateFeed
+		}
+	}
+	return nil
+}
+
+func feedTransportError(err error, fallback feedError) feedError {
+	var network net.Error
+	var dns *net.DNSError
+	var cert *tls.CertificateVerificationError
+	var hostname x509.HostnameError
+	var unknownCA x509.UnknownAuthorityError
+	var invalidCert x509.CertificateInvalidError
+	switch {
+	case errors.Is(err, errInvalidRedirect):
+		return errInvalidRedirect
+	case errors.Is(err, errPrivateFeed):
+		return errPrivateFeed
+	case errors.Is(err, context.DeadlineExceeded), errors.As(err, &network) && network.Timeout():
+		return errFeedTimeout
+	case errors.As(err, &dns):
+		if dns.IsNotFound {
+			return "feed host not found"
+		}
+		return "feed DNS lookup failed"
+	case errors.As(err, &cert), errors.As(err, &hostname), errors.As(err, &unknownCA), errors.As(err, &invalidCert):
+		return "feed TLS certificate not accepted"
+	case errors.Is(err, syscall.ECONNREFUSED):
+		return "feed connection refused"
+	case errors.Is(err, syscall.ECONNRESET):
+		return "feed connection reset"
+	default:
+		return fallback
+	}
+}
+
 func (r *refresher) fetch(ctx context.Context, target feedTarget) (feedResponse, error) {
 	select {
 	case r.slots <- struct{}{}:
 		defer func() { <-r.slots }()
 	case <-ctx.Done():
-		return feedResponse{}, ctx.Err()
+		return feedResponse{}, feedTransportError(ctx.Err(), "feed request canceled")
 	}
 	canonical := target.URL
 	permanent := true
@@ -59,7 +140,7 @@ func (r *refresher) fetch(ctx context.Context, target feedTarget) (feedResponse,
 	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 		u, err := feedURL(req.URL.String())
 		if len(via) >= 10 || err != nil {
-			return errors.New("invalid feed redirect")
+			return errInvalidRedirect
 		}
 		code := req.Response.StatusCode
 		permanent = permanent && (code == http.StatusMovedPermanently || code == http.StatusPermanentRedirect)
@@ -81,7 +162,7 @@ func (r *refresher) fetch(ctx context.Context, target feedTarget) (feedResponse,
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return feedResponse{}, feedError("feed request failed")
+		return feedResponse{}, feedTransportError(err, "feed request failed")
 	}
 	defer resp.Body.Close()
 	result := feedResponse{url: canonical, etag: resp.Header.Get("ETag"), lastModified: resp.Header.Get("Last-Modified")}
@@ -99,19 +180,16 @@ func (r *refresher) fetch(ctx context.Context, target feedTarget) (feedResponse,
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxFeedBytes+1))
 	if err != nil {
-		return feedResponse{}, feedError("could not read feed")
+		return feedResponse{}, feedTransportError(err, "could not read feed")
 	}
-	if len(body) > maxFeedBytes {
-		return feedResponse{}, feedError("feed is too large")
-	}
-	result.document, err = parseFeed(body, resp.Request.URL)
+	result.document, err = parseFeed(ctx, body, resp.Request.URL)
 	return result, err
 }
 
-func parseFeed(body []byte, base *url.URL) (*feedDocument, error) {
-	f, err := gofeed.NewParser().Parse(bytes.NewReader(body))
-	if err != nil || f == nil || strings.TrimSpace(f.Title) == "" {
-		return nil, feedError("response is not a usable feed")
+func parseFeed(ctx context.Context, body []byte, base *url.URL) (*feedDocument, error) {
+	f, err := boundedFeed(ctx, body)
+	if err != nil {
+		return nil, err
 	}
 	result := &feedDocument{}
 	result.Title = strings.TrimSpace(f.Title)
@@ -124,30 +202,61 @@ func parseFeed(body []byte, base *url.URL) (*feedDocument, error) {
 		result.ImageURL = resolveLink(base, f.Image.URL)
 	}
 	for _, item := range f.Items {
-		for _, enclosure := range item.Enclosures {
-			address := resolveLink(base, enclosure.URL)
-			if address == nil {
-				continue
-			}
-			e := episodeDetail{episode: episode{
-				GUID: strings.TrimSpace(item.GUID), Title: item.Title, PublishedAt: nullableTimestamp(item.PublishedParsed),
-				EnclosureURL: *address, EnclosureType: nonempty(enclosure.Type),
-				EnclosureLength: nonnegativeInt(enclosure.Length), Link: resolveLink(base, item.Link),
-			}, Description: plainText(item.Description, base)}
-			if item.Content != "" {
-				e.Description = plainText(item.Content, base)
-			}
-			if item.Image != nil {
-				e.ImageURL = resolveLink(base, item.Image.URL)
-			}
-			if item.ITunesExt != nil {
-				e.DurationSeconds = durationSeconds(item.ITunesExt.Duration)
-			}
-			result.episodes = append(result.episodes, e)
-			break
+		if err := ctx.Err(); err != nil {
+			return nil, feedTransportError(err, "feed request canceled")
 		}
+		enclosure, address := mediaEnclosure(base, item.Enclosures)
+		if enclosure == nil {
+			continue
+		}
+		description := item.Description
+		if item.Content != "" {
+			description = item.Content
+		}
+		e := episodeDetail{episode: episode{
+			GUID: strings.TrimSpace(item.GUID), Title: item.Title, PublishedAt: nullableTimestamp(item.PublishedParsed),
+			EnclosureURL: address, EnclosureType: nonempty(enclosure.Type),
+			EnclosureLength: nonnegativeInt(enclosure.Length), Link: resolveLink(base, item.Link),
+		}, Description: plainText(description, base)}
+		if item.Image != nil {
+			e.ImageURL = resolveLink(base, item.Image.URL)
+		}
+		if item.ITunesExt != nil {
+			e.DurationSeconds = durationSeconds(item.ITunesExt.Duration)
+		}
+		result.episodes = append(result.episodes, e)
 	}
 	return result, nil
+}
+
+func mediaEnclosure(base *url.URL, enclosures []*gofeed.Enclosure) (*gofeed.Enclosure, string) {
+	var fallback *gofeed.Enclosure
+	var fallbackURL string
+	for _, enclosure := range enclosures {
+		address := resolveLink(base, enclosure.URL)
+		if address == nil {
+			continue
+		}
+		mediaType, _, err := mime.ParseMediaType(enclosure.Type)
+		if err != nil && mediaType == "" {
+			mediaType = strings.ToLower(strings.TrimSpace(enclosure.Type))
+		}
+		if strings.HasPrefix(mediaType, "audio/") || strings.HasPrefix(mediaType, "video/") ||
+			mediaType == "application/ogg" {
+			return enclosure, *address
+		}
+		resolved, _ := url.Parse(*address)
+		switch strings.ToLower(path.Ext(resolved.Path)) {
+		case ".mp3", ".m4a", ".m4b", ".m4v", ".aac", ".ogg", ".oga", ".opus", ".flac", ".wav", ".mp4", ".webm", ".mov":
+			return enclosure, *address
+		case ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".avif", ".bmp", ".tif", ".tiff", ".html", ".htm", ".txt":
+			continue
+		}
+		if fallback == nil && !strings.HasPrefix(mediaType, "image/") && !strings.HasPrefix(mediaType, "text/") {
+			fallback, fallbackURL = enclosure, *address
+		}
+	}
+	return fallback, fallbackURL
 }
 
 func resolveLink(base *url.URL, value string) *string {
@@ -181,7 +290,11 @@ func nonnegativeInt(s string) *int64 {
 func durationSeconds(value string) *int64 {
 	parts := strings.Split(value, ":")
 	if len(parts) == 1 {
-		return nonnegativeInt(value)
+		n := nonnegativeInt(value)
+		if n == nil || *n == 0 {
+			return nil
+		}
+		return n
 	}
 	if len(parts) > 3 {
 		return nil
@@ -194,78 +307,8 @@ func durationSeconds(value string) *int64 {
 		}
 		seconds = seconds*60 + *n
 	}
+	if seconds == 0 {
+		return nil
+	}
 	return &seconds
-}
-
-func plainText(source string, base *url.URL) string {
-	context := &html.Node{Type: html.ElementNode, DataAtom: atom.Div, Data: "div"}
-	nodes, err := html.ParseFragment(strings.NewReader(source), context)
-	if err != nil {
-		return ""
-	}
-	var out strings.Builder
-	for _, node := range nodes {
-		writeText(&out, node, base)
-	}
-	lines := strings.Split(out.String(), "\n")
-	normalized := lines[:0]
-	for _, line := range lines {
-		if trimmed := strings.Join(strings.Fields(line), " "); trimmed != "" {
-			normalized = append(normalized, trimmed)
-		}
-	}
-	value := strings.Join(normalized, "\n")
-	count := 0
-	for offset := range value {
-		if count == 20_000 {
-			return value[:offset]
-		}
-		count++
-	}
-	return value
-}
-
-func writeText(out *strings.Builder, n *html.Node, base *url.URL) {
-	if n.Type == html.TextNode {
-		out.WriteString(n.Data)
-		return
-	}
-	switch n.DataAtom {
-	case atom.Script, atom.Style, atom.Template:
-		return
-	case atom.Br:
-		out.WriteByte('\n')
-		return
-	case atom.A:
-		var text strings.Builder
-		for child := n.FirstChild; child != nil; child = child.NextSibling {
-			writeText(&text, child, base)
-		}
-		label := strings.TrimSpace(text.String())
-		for _, attr := range n.Attr {
-			if attr.Key != "href" {
-				continue
-			}
-			if link := resolveLink(base, attr.Val); link != nil {
-				if label == "" {
-					label = *link
-				} else if label != *link && label != attr.Val {
-					label += " (" + *link + ")"
-				} else {
-					label = *link
-				}
-			}
-			break
-		}
-		out.WriteString(label)
-		return
-	}
-	switch n.DataAtom {
-	case atom.P, atom.Div, atom.Li, atom.H1, atom.H2, atom.H3, atom.H4, atom.H5, atom.H6, atom.Blockquote:
-		out.WriteByte('\n')
-		defer out.WriteByte('\n')
-	}
-	for child := n.FirstChild; child != nil; child = child.NextSibling {
-		writeText(out, child, base)
-	}
 }

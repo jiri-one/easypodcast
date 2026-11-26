@@ -13,6 +13,7 @@ import (
 )
 
 func TestHTTPAPI(t *testing.T) {
+	t.Setenv("EASYPODCAST_ALLOW_PRIVATE_FEEDS", "true")
 	s := integrationStore(t)
 	if err := s.setPassword(t.Context(), "listener", "fixture password"); err != nil {
 		t.Fatal(err)
@@ -129,6 +130,17 @@ func TestHTTPAPI(t *testing.T) {
 	if got := call("GET", copperPath+"/state", "", "", "", 200).Body.String(); got != `{"state":null}` {
 		t.Fatal(got)
 	}
+	queued := fmt.Sprintf(`{"queue":{"episode_ids":[%d],"updated_at":"2026-11-26T11:58:00.000Z"}}`, paper.ID)
+	call("POST", "/api/state", queued, "", "", 200)
+	call("DELETE", podcastPath, "", "", "", 204)
+	queueOnly := response[[]podcast](t, call("GET", "/api/podcasts", "", "", "", 200))
+	if len(queueOnly) != 1 || queueOnly[0].ID != p.ID || queueOnly[0].Subscribed {
+		t.Fatalf("podcast with only a queued episode was lost: %+v", queueOnly)
+	}
+	if urls, err := parseOPML(call("GET", "/api/opml", "", "", "", 200).Body); err != nil || len(urls) != 0 {
+		t.Fatalf("unsubscribed podcast was exported: %v, %v", urls, err)
+	}
+	call("POST", "/api/podcasts", input, "", "", 200)
 	call("GET", "/api/episodes/999999/state", "", "", "", 404)
 	call("GET", "/api/podcasts/999999/episodes", "", "", "", 404)
 	call("GET", "/api/episodes/abc", "", "", "", 400)
@@ -285,6 +297,25 @@ func TestLoginTrustedProxy(t *testing.T) {
 	login("192.0.2.2:41001", "203.0.113.90, 198.51.100.2", "fixture password", 429)
 	login("203.0.113.2:42005", "203.0.113.91", "fixture password", 429)
 	login("192.0.2.2:41002", "198.51.100.3", "fixture password", 200)
+}
+
+func TestLoginGlobalLimitAtAPI(t *testing.T) {
+	a := newAPI(store{}, nil)
+	req := httptest.NewRequest("POST", "/api/login", strings.NewReader(`{"username":"listener","password":"guess","device_name":"Test"}`))
+	for i := range loginMinuteLimit {
+		req.RemoteAddr = fmt.Sprintf("198.51.100.%d:8080", i+1)
+		finish, wait := a.logins.start(req)
+		if wait != 0 {
+			t.Fatalf("unexpected global limit at %d failures", i)
+		}
+		finish(true)
+	}
+	req.RemoteAddr = "203.0.113.1:8080"
+	rec := httptest.NewRecorder()
+	a.routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusTooManyRequests || rec.Header().Get("Retry-After") == "" {
+		t.Fatalf("rotated address got HTTP %d without a rate limit, %v", rec.Code, rec.Header())
+	}
 }
 
 func response[T any](t *testing.T, w *httptest.ResponseRecorder) T {

@@ -62,7 +62,7 @@ func isolatedSchema(t *testing.T) *pgxpool.Pool {
 
 func integrationStore(t *testing.T) store {
 	t.Helper()
-	s := store{isolatedSchema(t)}
+	s := newStore(isolatedSchema(t))
 	if err := s.migrate(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -100,20 +100,20 @@ func TestMigrateAsDatabaseOwner(t *testing.T) {
 	if err != nil || super || canCreateDB {
 		t.Fatalf("role privileges: super=%v createdb=%v, %v", super, canCreateDB, err)
 	}
-	s := store{pool}
+	s := newStore(pool)
 	for range 2 {
 		if err := s.migrate(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 	}
 	var migrations int
-	if err := pool.QueryRow(t.Context(), "SELECT count(*) FROM schema_migrations").Scan(&migrations); err != nil || migrations != 3 {
+	if err := pool.QueryRow(t.Context(), "SELECT count(*) FROM schema_migrations").Scan(&migrations); err != nil || migrations != 4 {
 		t.Fatalf("migration count: %d, %v", migrations, err)
 	}
 }
 
 func TestUpgradeInitialSchema(t *testing.T) {
-	s := store{isolatedSchema(t)}
+	s := newStore(isolatedSchema(t))
 	const initial = "migrations/001_initial.sql"
 	sql, err := migrations.ReadFile(initial)
 	if err != nil {
@@ -177,7 +177,7 @@ func TestPasswordlessDatabaseURL(t *testing.T) {
 		t.Fatal(err)
 	}
 	var count int
-	if err := pool.QueryRow(t.Context(), "SELECT count(*) FROM schema_migrations").Scan(&count); err != nil || count != 3 {
+	if err := pool.QueryRow(t.Context(), "SELECT count(*) FROM schema_migrations").Scan(&count); err != nil || count != 4 {
 		t.Fatalf("migration via PGPASSWORD: %d, %v", count, err)
 	}
 }

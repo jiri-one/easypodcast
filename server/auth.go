@@ -93,7 +93,15 @@ type loginLimiter struct {
 	mu             sync.Mutex
 	addresses      map[string]*loginWindow
 	lastCleanup    time.Time
+	minute         loginWindow
+	day            loginWindow
 }
+
+const (
+	loginAddressLimit = 5
+	loginMinuteLimit  = 20
+	loginDayLimit     = 200
+)
 
 func parseTrustedProxies(value string) []*net.IPNet {
 	var networks []*net.IPNet
@@ -131,11 +139,19 @@ func (l *loginLimiter) clientAddress(r *http.Request) string {
 	return peer.Unmap().String()
 }
 
-func (l *loginLimiter) start(r *http.Request) (func(bool), bool) {
+func (l *loginLimiter) start(r *http.Request) (func(bool), time.Duration) {
 	address := l.clientAddress(r)
+	if ip, err := netip.ParseAddr(address); err == nil && ip.Is6() {
+		prefix, _ := ip.Prefix(64)
+		address = prefix.String()
+	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := time.Now()
+	wait := max(l.minute.retryAfter(now, time.Minute, loginMinuteLimit), l.day.retryAfter(now, 24*time.Hour, loginDayLimit))
+	if wait > 0 {
+		return nil, wait
+	}
 	cutoff := now.Add(-time.Minute)
 	if l.addresses == nil {
 		l.addresses = make(map[string]*loginWindow)
@@ -154,19 +170,35 @@ func (l *loginLimiter) start(r *http.Request) (func(bool), bool) {
 		window = &loginWindow{}
 		l.addresses[address] = window
 	}
-	window.expire(cutoff)
-	if len(window.failures)+window.active >= 5 {
-		return nil, false
+	if wait := window.retryAfter(now, time.Minute, loginAddressLimit); wait > 0 {
+		return nil, wait
 	}
-	window.active++
+	windows := [3]*loginWindow{window, &l.minute, &l.day}
+	for _, w := range windows {
+		w.active++
+	}
 	return func(failed bool) {
 		l.mu.Lock()
 		defer l.mu.Unlock()
-		window.active--
-		if failed {
-			window.failures = append(window.failures, time.Now())
+		now := time.Now()
+		for _, w := range windows {
+			w.active--
+			if failed {
+				w.failures = append(w.failures, now)
+			}
 		}
-	}, true
+	}, 0
+}
+
+func (w *loginWindow) retryAfter(now time.Time, interval time.Duration, limit int) time.Duration {
+	w.expire(now.Add(-interval))
+	if len(w.failures)+w.active < limit {
+		return 0
+	}
+	if len(w.failures) < limit {
+		return time.Second
+	}
+	return w.failures[len(w.failures)-limit].Add(interval).Sub(now)
 }
 
 func (w *loginWindow) expire(cutoff time.Time) {

@@ -23,7 +23,12 @@ const (
 )
 
 type store struct {
-	db *pgxpool.Pool
+	db         *pgxpool.Pool
+	feedWrites chan struct{}
+}
+
+func newStore(db *pgxpool.Pool) store {
+	return store{db: db, feedWrites: make(chan struct{}, 1)}
 }
 
 func (s store) migrate(ctx context.Context) error {
@@ -94,7 +99,8 @@ func nullableTimestamp(t *time.Time) *timestamp {
 }
 
 func (s store) podcasts(ctx context.Context, subscribedOnly bool) ([]podcast, error) {
-	where := ` WHERE p.subscribed OR counts.states > 0`
+	where := ` WHERE p.subscribed OR counts.states > 0 OR p.id IN (
+		SELECT e.podcast_id FROM queue q JOIN episodes e ON e.id = ANY(q.episode_ids))`
 	if subscribedOnly {
 		where = ` WHERE p.subscribed`
 	}
@@ -141,7 +147,7 @@ func (s store) episodes(ctx context.Context, podcastID int64) ([]episode, error)
 		return nil, pgx.ErrNoRows
 	}
 	rows, err := s.db.Query(ctx, "SELECT "+episodeColumns+` FROM episodes WHERE podcast_id = $1
-		ORDER BY published_at DESC NULLS LAST, id DESC`, podcastID)
+		ORDER BY COALESCE(published_at, estimated_publication) DESC NULLS LAST, feed_order NULLS LAST, id DESC`, podcastID)
 	if err != nil {
 		return nil, err
 	}

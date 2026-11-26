@@ -2,17 +2,47 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
+
+const maxStoredFeedEpisodes = 50_000
+const errStoredEpisodeLimit = feedError("podcast has reached the stored episode limit")
+
+func (s store) withFeedWriter(ctx context.Context, fn func() error) error {
+	select {
+	case s.feedWrites <- struct{}{}:
+		defer func() { <-s.feedWrites }()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	return fn()
+}
+
+func (s store) withFeedLock(ctx context.Context, fn func(pgx.Tx) error) error {
+	return s.withFeedWriter(ctx, func() error {
+		return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+			if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", feedLock); err != nil {
+				return err
+			}
+			return fn(tx)
+		})
+	})
+}
+
+const resubscribeSQL = `UPDATE podcasts p SET subscribed = true,
+		next_refresh_at = CASE WHEN p.subscribed THEN p.next_refresh_at ELSE now() END
+		FROM feed_aliases a WHERE a.url = $1 AND a.podcast_id = p.id RETURNING p.id`
 
 func (s store) resubscribe(ctx context.Context, address string) (int64, error) {
 	var id int64
-	err := s.db.QueryRow(ctx, `UPDATE podcasts p SET subscribed = true,
-		next_refresh_at = CASE WHEN p.subscribed THEN p.next_refresh_at ELSE now() END
-		FROM feed_aliases a WHERE a.url = $1 AND a.podcast_id = p.id RETURNING p.id`, address).Scan(&id)
+	err := s.withFeedWriter(ctx, func() error {
+		return s.db.QueryRow(ctx, resubscribeSQL, address).Scan(&id)
+	})
 	return id, err
 }
 
@@ -26,10 +56,7 @@ func (s store) feedTarget(ctx context.Context, id int64) (feedTarget, error) {
 func (s store) addFeed(ctx context.Context, original string, result feedResponse, next time.Time) (int64, bool, error) {
 	var id int64
 	var added bool
-	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", feedLock); err != nil {
-			return err
-		}
+	err := s.withFeedLock(ctx, func(tx pgx.Tx) error {
 		err := tx.QueryRow(ctx, `SELECT podcast_id FROM feed_aliases WHERE url IN ($1,$2)
 			ORDER BY (url = $1) DESC LIMIT 1`, original, result.url).Scan(&id)
 		switch {
@@ -56,10 +83,7 @@ func (s store) addFeed(ctx context.Context, original string, result feedResponse
 }
 
 func (s store) applyRefresh(ctx context.Context, target feedTarget, result feedResponse, next time.Time) error {
-	return pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", feedLock); err != nil {
-			return err
-		}
+	return s.withFeedLock(ctx, func(tx pgx.Tx) error {
 		var generation int64
 		if err := tx.QueryRow(ctx, "SELECT fetch_generation FROM podcasts WHERE id = $1 FOR UPDATE", target.ID).Scan(&generation); err != nil {
 			return err
@@ -118,10 +142,19 @@ func saveEpisodes(ctx context.Context, tx pgx.Tx, podcastID int64, incoming []ep
 	if err != nil {
 		return err
 	}
-	byGUID := make(map[string]episodeIdentity)
-	byURL := make(map[string]episodeIdentity)
-	guidlessByURL := make(map[string]episodeIdentity)
-	for _, e := range existing {
+	counts := make(map[string]int)
+	for _, e := range incoming {
+		counts[e.GUID]++
+	}
+	ambiguous, err := rememberAmbiguousGUIDs(ctx, tx, podcastID, counts)
+	if err != nil {
+		return err
+	}
+	byGUID := make(map[string]*episodeIdentity)
+	byURL := make(map[string]*episodeIdentity)
+	guidlessByURL := make(map[string]*episodeIdentity)
+	for i := range existing {
+		e := &existing[i]
 		if _, exists := byURL[e.EnclosureURL]; !exists {
 			byURL[e.EnclosureURL] = e
 		}
@@ -133,22 +166,28 @@ func saveEpisodes(ctx context.Context, tx pgx.Tx, podcastID int64, incoming []ep
 			byGUID[e.GUID] = e
 		}
 	}
-	changed := false
-	seen := make(map[int64]bool)
+	estimates := estimatedPublications(incoming)
+	var batch pgx.Batch
+	seen := make(map[*episodeIdentity]bool)
 	live := make([]int64, 0, len(incoming))
-	for _, e := range incoming {
+	added := 0
+	changed := false
+	for i, e := range incoming {
+		if ambiguous[e.GUID] {
+			e.GUID = ""
+		}
 		match := byGUID[e.GUID]
-		if match.ID == 0 {
+		if match == nil {
 			if e.GUID == "" {
 				match = byURL[e.EnclosureURL]
 			} else {
 				match = guidlessByURL[e.EnclosureURL]
 			}
 		}
-		if seen[match.ID] {
+		if seen[match] {
 			continue
 		}
-		if e.GUID == "" {
+		if e.GUID == "" && match != nil {
 			e.GUID = match.GUID
 		}
 		var published *time.Time
@@ -156,40 +195,52 @@ func saveEpisodes(ctx context.Context, tx pgx.Tx, podcastID int64, incoming []ep
 			published = &e.PublishedAt.Time
 		}
 		args := []any{e.GUID, e.Title, published, e.DurationSeconds, e.EnclosureURL, e.EnclosureType,
-			e.EnclosureLength, e.Link, e.ImageURL, e.Description}
-		id := match.ID
-		if id == 0 {
-			err := tx.QueryRow(ctx, `INSERT INTO episodes (guid, title, published_at, duration_s, enclosure_url,
-				enclosure_type, enclosure_length, link, image_url, description, podcast_id)
-				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`, append(args, podcastID)...).Scan(&id)
-			if err != nil {
-				return err
+			e.EnclosureLength, e.Link, e.ImageURL, e.Description, estimates[i], i}
+		if match == nil {
+			added++
+			if len(existing)+added > maxStoredFeedEpisodes {
+				return errStoredEpisodeLimit
 			}
+			match = &episodeIdentity{}
+			batch.Queue(`INSERT INTO episodes (guid, title, published_at, duration_s, enclosure_url, enclosure_type,
+				enclosure_length, link, image_url, description, estimated_publication, feed_order, podcast_id)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`, append(args, podcastID)...).
+				QueryRow(func(row pgx.Row) error {
+					var id int64
+					if err := row.Scan(&id); err != nil {
+						return err
+					}
+					live = append(live, id)
+					return nil
+				})
 			changed = true
 		} else {
-			tag, err := tx.Exec(ctx, `UPDATE episodes SET guid = $1, title = $2, published_at = $3, duration_s = $4,
+			batch.Queue(`UPDATE episodes SET guid = $1, title = $2, published_at = $3, duration_s = $4,
 				enclosure_url = $5, enclosure_type = $6, enclosure_length = $7, link = $8, image_url = $9,
-				description = $10, removed_from_feed = false WHERE id = $11 AND
+				description = $10, estimated_publication = $11, feed_order = $12, removed_from_feed = false WHERE id = $13 AND
 				(removed_from_feed OR ROW(guid, title, published_at, duration_s, enclosure_url, enclosure_type,
-				enclosure_length, link, image_url, description) IS DISTINCT FROM
-				ROW($1,$2,$3,$4,$5,$6,$7,$8,$9,$10))`, append(args, id)...)
-			if err != nil {
-				return err
-			}
-			changed = changed || tag.RowsAffected() != 0
+				enclosure_length, link, image_url, description, estimated_publication, feed_order) IS DISTINCT FROM
+				ROW($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12))`, append(args, match.ID)...).
+				Exec(func(tag pgconn.CommandTag) error {
+					changed = changed || tag.RowsAffected() != 0
+					return nil
+				})
+			live = append(live, match.ID)
 		}
-		seen[id] = true
-		live = append(live, id)
-		identity := episodeIdentity{id, e.GUID, e.EnclosureURL}
-		byURL[e.EnclosureURL] = identity
+		seen[match] = true
+		match.GUID = e.GUID
+		byURL[e.EnclosureURL] = match
 		if e.GUID == "" {
-			guidlessByURL[e.EnclosureURL] = identity
+			guidlessByURL[e.EnclosureURL] = match
 		} else {
-			byGUID[e.GUID] = identity
-			if guidlessByURL[e.EnclosureURL].ID == id {
+			byGUID[e.GUID] = match
+			if guidlessByURL[e.EnclosureURL] == match {
 				delete(guidlessByURL, e.EnclosureURL)
 			}
 		}
+	}
+	if err := tx.SendBatch(ctx, &batch).Close(); err != nil {
+		return err
 	}
 	tag, err := tx.Exec(ctx, `UPDATE episodes SET removed_from_feed = true
 		WHERE podcast_id = $1 AND NOT removed_from_feed AND NOT (id = ANY($2))`, podcastID, live)
@@ -200,4 +251,62 @@ func saveEpisodes(ctx context.Context, tx pgx.Tx, podcastID int64, incoming []ep
 		_, err = tx.Exec(ctx, "UPDATE podcasts SET episodes_version = episodes_version + 1 WHERE id = $1", podcastID)
 	}
 	return err
+}
+
+func rememberAmbiguousGUIDs(ctx context.Context, tx pgx.Tx, podcastID int64, counts map[string]int) (map[string]bool, error) {
+	rows, err := tx.Query(ctx, "SELECT guid_hash FROM ambiguous_feed_guids WHERE podcast_id = $1", podcastID)
+	if err != nil {
+		return nil, err
+	}
+	hashes, err := pgx.CollectRows(rows, pgx.RowTo[[]byte])
+	if err != nil {
+		return nil, err
+	}
+	known := make(map[string]bool, len(hashes))
+	for _, hash := range hashes {
+		known[string(hash)] = true
+	}
+	ambiguous := make(map[string]bool)
+	var newHashes [][]byte
+	for guid, count := range counts {
+		if guid == "" {
+			continue
+		}
+		hash := sha256.Sum256([]byte(guid))
+		if known[string(hash[:])] {
+			ambiguous[guid] = true
+		} else if count > 1 {
+			ambiguous[guid] = true
+			newHashes = append(newHashes, hash[:])
+		}
+	}
+	if len(newHashes) > 0 {
+		if len(known)+len(newHashes) > maxStoredFeedEpisodes {
+			return nil, feedError("podcast has reached the ambiguous GUID limit")
+		}
+		_, err = tx.Exec(ctx, `INSERT INTO ambiguous_feed_guids (podcast_id, guid_hash)
+			SELECT $1, unnest($2::bytea[]) ON CONFLICT DO NOTHING`, podcastID, newHashes)
+	}
+	return ambiguous, err
+}
+
+func estimatedPublications(incoming []episodeDetail) []*time.Time {
+	estimates := make([]*time.Time, len(incoming))
+	var nearest *time.Time
+	for i := len(incoming) - 1; i >= 0; i-- {
+		if published := incoming[i].PublishedAt; published != nil {
+			nearest = &published.Time
+		} else {
+			estimates[i] = nearest
+		}
+	}
+	nearest = nil
+	for i, e := range incoming {
+		if e.PublishedAt != nil {
+			nearest = &e.PublishedAt.Time
+		} else if estimates[i] == nil {
+			estimates[i] = nearest
+		}
+	}
+	return estimates
 }

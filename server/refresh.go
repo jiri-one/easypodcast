@@ -34,7 +34,7 @@ type refresher struct {
 }
 
 func newRefresher(s store, userAgent string, interval time.Duration) *refresher {
-	return &refresher{s, http.Client{Timeout: fetchTimeout}, userAgent, interval, make(chan struct{}, 4), make(chan struct{}, 1)}
+	return &refresher{s, feedHTTPClient(), userAgent, interval, make(chan struct{}, 4), make(chan struct{}, 1)}
 }
 
 func (r *refresher) run(ctx context.Context) {
@@ -73,7 +73,7 @@ func (r *refresher) refreshDue(ctx context.Context, force bool) {
 		workers.Go(func() {
 			for target := range jobs {
 				if err := r.refresh(ctx, target); err != nil && ctx.Err() == nil {
-					slog.Warn("Feed refresh failed", "podcast_id", target.ID)
+					slog.Warn("Feed refresh failed", "podcast_id", target.ID, "reason", refreshProblem(err))
 				}
 			}
 		})
@@ -91,6 +91,19 @@ send:
 }
 
 func (r *refresher) refresh(ctx context.Context, target feedTarget) error {
+	failures := min(target.Failures+1, 63)
+	backoff := r.delay(failures)
+	// A process crash during parsing must leave the feed on backoff.
+	var scheduled bool
+	err := r.store.withFeedWriter(ctx, func() error {
+		tag, err := r.store.db.Exec(ctx, `UPDATE podcasts SET failures = $2, next_refresh_at = $3
+			WHERE id = $1 AND fetch_generation = $4`, target.ID, failures, time.Now().Add(backoff), target.Generation)
+		scheduled = tag.RowsAffected() != 0
+		return err
+	})
+	if err != nil || !scheduled {
+		return err
+	}
 	fetchCtx, cancel := context.WithTimeout(ctx, fetchTimeout)
 	defer cancel()
 	result, err := r.fetch(fetchCtx, target)
@@ -100,15 +113,21 @@ func (r *refresher) refresh(ctx context.Context, target feedTarget) error {
 	if err == nil || ctx.Err() != nil {
 		return err
 	}
-	var problem feedError
-	if !errors.As(err, &problem) {
-		problem = "could not refresh feed"
-	}
-	failures := min(target.Failures+1, 63)
-	_, writeErr := r.store.db.Exec(ctx, `UPDATE podcasts SET last_error = $2, failures = $3,
-		next_refresh_at = $4, fetch_generation = fetch_generation + 1 WHERE id = $1 AND fetch_generation = $5`,
-		target.ID, string(problem), failures, time.Now().Add(r.delay(failures)), target.Generation)
+	writeErr := r.store.withFeedWriter(ctx, func() error {
+		_, writeErr := r.store.db.Exec(ctx, `UPDATE podcasts SET last_error = $2, failures = $3,
+			next_refresh_at = $4, fetch_generation = fetch_generation + 1 WHERE id = $1 AND fetch_generation = $5`,
+			target.ID, string(refreshProblem(err)), failures, time.Now().Add(backoff), target.Generation)
+		return writeErr
+	})
 	return errors.Join(err, writeErr)
+}
+
+func refreshProblem(err error) feedError {
+	var problem feedError
+	if errors.As(err, &problem) {
+		return problem
+	}
+	return "could not refresh feed"
 }
 
 func (r *refresher) delay(failures int) time.Duration {
@@ -128,7 +147,7 @@ func (r *refresher) delay(failures int) time.Duration {
 func (r *refresher) subscribe(ctx context.Context, raw string) (podcast, bool, error) {
 	u, err := feedURL(raw)
 	if err != nil {
-		return podcast{}, false, feedError(err.Error())
+		return podcast{}, false, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, fetchTimeout)
 	defer cancel()
@@ -143,9 +162,6 @@ func (r *refresher) subscribe(ctx context.Context, raw string) (podcast, bool, e
 	}
 	result, err := r.fetch(ctx, feedTarget{URL: address})
 	if err != nil {
-		if ctx.Err() != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			err = feedError("feed request timed out")
-		}
 		return podcast{}, false, err
 	}
 	id, added, err := r.store.addFeed(ctx, address, result, time.Now().Add(r.delay(0)))

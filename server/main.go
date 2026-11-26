@@ -55,7 +55,7 @@ func run(ctx context.Context, args []string) error {
 		return errors.New("invalid EASYPODCAST_DATABASE_URL")
 	}
 	defer pool.Close()
-	s := store{pool}
+	s := newStore(pool)
 	switch args[0] {
 	case "migrate", "serve":
 		if len(args) != 1 {

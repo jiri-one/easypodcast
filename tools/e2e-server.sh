@@ -74,6 +74,7 @@ export EASYPODCAST_DATABASE_URL='postgres://easypodcast:test@127.0.0.1:55432/eas
 export EASYPODCAST_LISTEN='127.0.0.1:18080'
 export EASYPODCAST_REFRESH_INTERVAL=1h
 export EASYPODCAST_TRUSTED_PROXIES=''
+export EASYPODCAST_ALLOW_PRIVATE_FEEDS=true
 export no_proxy="127.0.0.1${no_proxy:+,$no_proxy}"
 
 setup_log="$logs/setup.log"

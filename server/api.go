@@ -182,21 +182,25 @@ func (a *api) login(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadRequest, "invalid username or device name")
 		return
 	}
-	finish, ok := a.logins.start(r)
-	if !ok {
-		w.Header().Set("Retry-After", "60")
+	select {
+	case a.loginSlots <- struct{}{}:
+		defer func() { <-a.loginSlots }()
+	case <-r.Context().Done():
+		return
+	default:
+		w.Header().Set("Retry-After", "1")
+		apiError(w, http.StatusTooManyRequests, "login is busy")
+		return
+	}
+	finish, wait := a.logins.start(r)
+	if wait > 0 {
+		w.Header().Set("Retry-After", strconv.FormatInt(int64((wait+time.Second-1)/time.Second), 10))
 		apiError(w, http.StatusTooManyRequests, "too many login attempts")
 		return
 	}
 	failed := false
 	defer func() { finish(failed) }()
-	select {
-	case a.loginSlots <- struct{}{}:
-	case <-r.Context().Done():
-		return
-	}
 	valid, err := a.store.verifyPassword(r.Context(), input.Username, input.Password)
-	<-a.loginSlots
 	if err != nil {
 		storeError(w, err)
 		return
@@ -368,7 +372,9 @@ func (a *api) importOPML(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	result, err := a.refresh.importOPML(r.Context(), addresses)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), opmlTimeout)
+	defer cancel()
+	result, err := a.refresh.importOPML(ctx, addresses)
 	if err != nil {
 		storeError(w, err)
 		return
