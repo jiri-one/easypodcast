@@ -93,8 +93,10 @@ Aplikace se do telefonů instalují mimo Google Play, takže Android Auto vyžad
 - Sluchátka a Bluetooth: pauza, pokračování, „další“ a „předchozí“ (O9).
 - Android Auto: Rozposlouchané, Fronta, Stažené a Podcasty s díly, skoky zpět a vpřed. Funguje
   i se zavřenou aplikací.
-- Na konci se díl označí jako přehraný (O13) a začne hrát další díl z fronty. Automatické
-  pokračování je zapnuté a v nastavení ho lze vypnout.
+- Díl se označí jako přehraný, až když přehrávač ohlásí jeho skutečný konec (O13), a začne hrát
+  další díl z fronty. Pauza těsně před koncem díl nechá rozposlouchaný, takže závěr se nikdy
+  neusekne. Automatické pokračování je zapnuté a v nastavení ho lze vypnout. Spánek „do konce
+  dílu“ zastaví přehrávání dřív, než začne další díl.
 - Délka dílu se bere z přehrávače, ne z feedu. Feedy ji často neuvádějí nebo uvádějí špatně,
   třeba kvůli dynamicky vkládaným reklamám. Zařízení posílá změřenou délku se stavem dílu, takže
   zbývající čas ukážou i ostatní zařízení.
@@ -333,9 +335,9 @@ jiném zařízení.
 - **O11 Obrázky podcastů:** malé a šedé, nebo vůbec žádné?
 - **O12 Stahování do telefonu:** jen ručně, nebo automaticky (třeba díly ve frontě, jen na
   Wi-Fi)? Mazat stažené po dohrání?
-- **O13 Přehráno:** kdy díl označit jako přehraný? Návrh: když přehrávač ohlásí konec, nebo když
-  podle délky z přehrávače zbývá méně než 30 s. Nové spuštění přehraného dílu zruší označení
-  a díl hraje od začátku, po minutě poslechu je tedy znovu mezi rozposlouchanými.
+- **O13 Přehráno (rozhodnuto):** až když přehrávač ohlásí skutečný konec. Původní návrh s 30 s
+  před koncem usekával závěr dílu. Nové spuštění přehraného dílu zruší označení a díl hraje od
+  začátku, po minutě poslechu je tedy znovu mezi rozposlouchanými.
 - **O14 Hledání podcastů:** v adresáři Apple (bez klíče), nebo stačí vložit adresu feedu?
 - **O15 Čas na e-inku:** jak často ho během přehrávání obnovovat?
 - **O16 Web:** stačí aplikace pro Linux, nebo i verze do prohlížeče (ze stejného kódu)?

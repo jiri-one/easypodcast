@@ -119,8 +119,10 @@ Derived values, the same everywhere:
    After an end, a dismiss or a mark the player sends no further position for that episode until
    it is started again; `Library.recordPosition` ignores episodes that are played or dismissed.
    None of these transitions writes the queue; the queue simply stops showing the episode.
-10. "The end" means the player reports completion, or the position is within 30 s of the actual
-    duration reported by the player (never the feed duration).
+10. "The end" means the player reports the completion of the stream. A pause, seek or periodic
+    report near the end only records the position, so the outro is never cut; the listener can
+    mark the episode played by hand. A sleep timer set to the end of the episode stops there,
+    before the next queue item starts.
 11. The queue is written only by manual edits (add, remove, move). Before such an edit the client
     refreshes the queue from the server when it can (2 s limit), so it edits the current list.
     Played and dismissed episodes drop out of the stored list at the next manual edit. Enqueueing
