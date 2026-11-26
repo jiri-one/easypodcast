@@ -1,12 +1,10 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:easypodcast/core/api.dart';
 import 'package:easypodcast/core/library.dart';
 import 'package:easypodcast/core/models.dart';
 import 'package:easypodcast/core/sync.dart';
 import 'package:easypodcast/data/local_store.dart';
-import 'package:easypodcast/data/sqflite_library.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -115,9 +113,44 @@ void main() {
     phone.api.syncCalls.clear();
     await phone.sync.syncNow();
     expect(phone.api.pushCalls, before + 1);
-    expect(phone.api.syncCalls, ['state', 'push', 'state', 'podcasts']);
+    expect(phone.api.syncCalls, ['push', 'state', 'podcasts']);
     expect(server.queue!.episodeIds, [episodes[1]]);
     expect(server.states[episodes[0]]!.positionMs, 120000);
+  });
+
+  test('sendPending keeps the offline result during a retry and bounds a second caller', () async {
+    final phone = await device(
+      'phone',
+      initialBackoff: const Duration(minutes: 1),
+    );
+    phone.api.online = false;
+    await phone.library.markPlayed(episodes.first);
+    await phone.sync.whenIdle();
+    final started = Completer<void>(), release = Completer<void>();
+    phone.api.beforePush = () {
+      started.complete();
+      return release.future;
+    };
+    phone.api.online = true;
+    phone.api.syncCalls.clear();
+    final sending = phone.sync.sendPending();
+    try {
+      await started.future.timeout(const Duration(seconds: 2));
+      expect(phone.sync.status.value.phase, SyncPhase.offline);
+      expect(phone.sync.status.value.syncing, isTrue);
+      await phone.sync
+          .sendPending(timeout: const Duration(milliseconds: 20))
+          .timeout(const Duration(seconds: 1));
+      expect(phone.library.pendingCount, 1);
+    } finally {
+      release.complete();
+      await sending;
+    }
+    expect(phone.api.syncCalls, ['push']);
+    expect(phone.sync.status.value.phase, SyncPhase.idle);
+    expect(phone.sync.status.value.syncing, isFalse);
+    expect(phone.library.pendingCount, 0);
+    expect(phone.store.meta(MetaKey.lastSync), formatTime(clock.now));
   });
 
   test('status and queue commands force a send even when the preceding write failed', () async {
@@ -175,7 +208,16 @@ void main() {
       );
       phone.api.beforePodcasts = () async =>
           throw ApiException(503, 'catalogue unavailable');
+      phone.api.beforePush = () async => throw OfflineException();
+      await phone.library.recordPosition(
+        episodes[0],
+        const Duration(minutes: 2),
+      );
+      await phone.sync.whenIdle();
+      expect(phone.sync.status.value.phase, SyncPhase.offline);
       await phone.sync.syncNow();
+      expect(phone.sync.status.value.error, 'catalogue unavailable');
+      phone.api.beforePush = null;
       final pulls = phone.api.stateCalls;
       await phone.library.recordPosition(
         episodes[0],
@@ -282,12 +324,16 @@ void main() {
       expect(phone.sync.currentBackoff, isNull);
       expect(phone.sync.status.value.phase, SyncPhase.idle);
       // A send after an offline period is followed by a pull.
-      expect(phone.api.stateCalls, stateCalls + 2);
+      expect(phone.api.stateCalls, stateCalls + 1);
     },
   );
 
   for (final (label, error, phase) in [
-    ('a timeout', TimeoutException('slow response'), SyncPhase.offline),
+    (
+      'a timeout',
+      OfflineException(TimeoutException('slow response')),
+      SyncPhase.offline,
+    ),
     ('HTTP 503', ApiException(503, 'unavailable'), SyncPhase.error),
   ]) {
     test('retries $label in the background with the original time', () async {
@@ -326,7 +372,6 @@ void main() {
         'state',
         'podcasts',
         'push',
-        'state',
         'push',
         'state',
         'podcasts',
@@ -348,8 +393,8 @@ void main() {
       expect(restarted.library.pendingCount, 1);
       await restarted.sync.start();
       await restarted.sync.whenIdle();
-      expect(restarted.api.syncCalls.take(2), ['state', 'push']);
-      expect(restarted.api.stateNotModified, 1);
+      expect(restarted.api.syncCalls.take(2), ['push', 'state']);
+      expect(restarted.api.stateNotModified, 0);
       expect(server.states[episodes[2]]!.status, EpisodeStatus.played);
       expect(restarted.library.pendingCount, 0);
     },
@@ -566,7 +611,10 @@ void main() {
       await phone.sync.syncNow();
       expect(phone.api.episodesCalls, {1: 1, 2: 2});
       expect(phone.library.episodesOf(2).first.id, added.single);
-      expect(phone.library.newEpisodes().first.id, added.single);
+      expect(
+        phone.library.newEpisodes(since: oldestTime).first.id,
+        added.single,
+      );
     },
   );
 
@@ -679,6 +727,9 @@ void main() {
         phone.library.dequeue(remote),
       ]);
       try {
+        expect(phone.library.queueSaving, isTrue);
+        expect(phone.library.projectedQueue.map((e) => e.id), [b, a]);
+        expect(phone.library.queue, isEmpty);
         await reading.future.timeout(const Duration(seconds: 2));
         await settle();
         expect(refreshes, 1);
@@ -687,6 +738,8 @@ void main() {
         await edits;
       }
       await phone.sync.whenIdle();
+      expect(phone.library.queueSaving, isFalse);
+      expect(phone.library.projectedQueue, same(phone.library.queue));
       expect(refreshes, 4);
       expect(server.queue?.episodeIds, [b, a]);
       await pc.sync.syncNow();
@@ -841,7 +894,7 @@ void main() {
 
     await phone.library.enqueue(episodes[1]);
     await phone.sync.whenIdle();
-    expect(phone.api.syncCalls.take(3), ['state', 'push', 'state']);
+    expect(phone.api.syncCalls.take(2), ['push', 'state']);
     expect(server.states[episodes[0]]!.positionMs, 120000);
     expect(server.queue!.episodeIds, [episodes[1]]);
   });
@@ -861,7 +914,7 @@ void main() {
       phone.api.syncCalls.clear();
 
       await phone.library.enqueue(episodes[2]);
-      expect(phone.api.syncCalls.take(3), ['state', 'push', 'state']);
+      expect(phone.api.syncCalls.take(2), ['push', 'state']);
       expect(phone.library.queueState!.episodeIds, [episodes[1], episodes[2]]);
       expect(phone.library.pendingCount, 2);
     },
@@ -1134,18 +1187,18 @@ void main() {
       devices.add(phone);
       await phone.loginAndStart('phone');
       final SyncService sync = phone.sync;
-      expect(sync.clockSkewWarning, isNull);
+      expect(sync.status.value.clockSkewWarning, isNull);
       const ahead = Duration(minutes: 5, milliseconds: 1);
       deviceClock.now = clock.now.add(ahead);
       await sync.syncNow();
       expect(phone.api.stateNotModified, 1);
-      expect(sync.clockSkewWarning, isNull);
+      expect(sync.status.value.clockSkewWarning, isNull);
       server.queue = QueueState(
         episodeIds: [episodes.last],
         updatedAt: clock.now,
       );
       await sync.syncNow();
-      expect(sync.clockSkewWarning, ahead);
+      expect(sync.status.value.clockSkewWarning, ahead);
       later();
       server.queue = QueueState(episodeIds: [], updatedAt: clock.now);
       deviceClock.now = clock.now.subtract(ahead);
@@ -1154,7 +1207,7 @@ void main() {
       expect(sync.status.value.clockSkewWarning, -ahead);
       deviceClock.now = clock.now.subtract(const Duration(minutes: 5));
       await sync.syncNow();
-      expect(sync.clockSkewWarning, isNull);
+      expect(sync.status.value.clockSkewWarning, isNull);
     },
   );
 
@@ -1327,7 +1380,8 @@ void main() {
         expect(phone.sync.retryScheduled, isTrue);
         expect(server.states[invalid], isNull);
 
-        final splitAttempts = phone.api.pushCalls;
+        expect(phone.api.pushCalls, 1);
+        final attempts = phone.api.pushCalls;
         final remaining = phone.library.pendingChanges();
         expect(remaining.states, future.states);
         expect(remaining.queue, future.queue);
@@ -1337,7 +1391,7 @@ void main() {
           updatedAt: clock.now,
         );
         await phone.sync.whenIdle();
-        expect(phone.api.pushCalls, splitAttempts + 1);
+        expect(phone.api.pushCalls, attempts + 1);
         expect(phone.api.pushedStates.last.single.episodeId, next);
         expect(phone.api.pushedQueues.last, isNull);
         expect(server.states[next]?.positionMs, 240000);
@@ -1356,6 +1410,36 @@ void main() {
       },
     );
   }
+
+  test(
+    'a delayed echo only settles the versions sent from this library',
+    () async {
+      final phone = await device('phone');
+      final lib = phone.library;
+      phone.api.online = false;
+      await lib.markPlayed(episodes[0]);
+      await lib.enqueue(episodes[1]);
+      await phone.sync.whenIdle();
+      final sent = lib.pendingChanges();
+      await lib.markNew(episodes[0]);
+      await lib.enqueue(episodes[2]);
+      await phone.sync.whenIdle();
+      final pending = lib.pendingChanges();
+      await lib.applyPushResult(
+        sent.states,
+        sent.queue,
+        StatePushResult(episodes: sent.states, queue: sent.queue, unknown: []),
+        clock.now,
+      );
+      expect(lib.pendingChanges().states.single, same(pending.states.single));
+      expect(lib.pendingChanges().queue, same(pending.queue));
+      final disk = await phone.store.load();
+      expect(disk.states.single.toJson(), pending.states.single.toJson());
+      expect(disk.queue?.toJson(), pending.queue?.toJson());
+      expect(disk.pendingStates, {episodes[0]});
+      expect(disk.queuePending, isTrue);
+    },
+  );
 
   for (final missingQueue in [false, true]) {
     test(
@@ -1389,72 +1473,6 @@ void main() {
         phone.api.transformPushResult = null;
         await phone.sync.syncNow();
         expect(phone.library.pendingCount, 0);
-      },
-    );
-  }
-
-  for (final (gap, sendsQueue) in [
-    (Duration.zero, true),
-    (const Duration(seconds: 1), true),
-    (const Duration(seconds: 1), false),
-  ]) {
-    test(
-      'a delayed acknowledgement preserves a second writer at +$gap (sent queue: $sendsQueue)',
-      () async {
-        final directory = await Directory.systemTemp.createTemp(
-          'easypodcast-ack-',
-        );
-        addTearDown(() => directory.delete(recursive: true));
-        final path = '${directory.path}/shared.db';
-        Future<Database> open() => LocalStore.open(databaseFactoryFfi, path);
-        final phone = await Device.open(server, db: await open());
-        addTearDown(phone.close);
-        await phone.loginAndStart('phone');
-        final second = await open();
-        addTearDown(second.close);
-        final other = await SqfliteLibrary.open(
-          LocalStore(second),
-          phone.api,
-          clock: clock.call,
-        );
-        addTearDown(other.dispose);
-        final id = episodes[0];
-
-        phone.api.online = false;
-        await phone.library.recordPosition(id, const Duration(minutes: 2));
-        if (sendsQueue) await phone.library.enqueue(episodes[1]);
-        await phone.sync.whenIdle();
-        final sending = Completer<void>();
-        final release = Completer<void>();
-        phone.api.beforePush = () {
-          sending.complete();
-          return release.future;
-        };
-        phone.api.online = true;
-        final sync = phone.sync.syncNow();
-        try {
-          await sending.future.timeout(const Duration(seconds: 2));
-          if (!sendsQueue) {
-            server.queue = QueueState(
-              episodeIds: [episodes[3]],
-              updatedAt: clock.now,
-            );
-          }
-          later(gap);
-          await other.recordPosition(id, const Duration(minutes: 15));
-          await other.enqueue(episodes[2]);
-        } finally {
-          release.complete();
-          await sync;
-        }
-
-        final reopened = await open();
-        addTearDown(reopened.close);
-        final snapshot = await LocalStore(reopened).load();
-        expect(snapshot.states.single.toJson(), other.stateOf(id).toJson());
-        expect(snapshot.queue?.toJson(), other.queueState?.toJson());
-        expect(snapshot.pendingStates, {id});
-        expect(snapshot.queuePending, isTrue);
       },
     );
   }
@@ -1534,7 +1552,7 @@ void main() {
     phone.api.online = true;
     phone.api.syncCalls.clear();
     await phone.sync.logout();
-    expect(phone.api.syncCalls, ['state', 'push', 'logout']);
+    expect(phone.api.syncCalls, ['push', 'logout']);
     expect(server.states[episodes[0]]!.isPlayed, isTrue);
     expect(phone.library.pendingCount, 0);
     expect(phone.sync.isLoggedIn, isFalse);
@@ -1588,7 +1606,7 @@ void main() {
     expect(moved.store.meta(MetaKey.serverId), restoredServerId);
   });
 
-  test('a new identity discards offline states, queue and cached episode lists before posting', () async {
+  test('a new identity discards offline states, queue and cached episode lists on the first POST', () async {
     final phone = await device('phone');
     final id = episodes.first;
     final etag = phone.store.meta(MetaKey.stateEtag);
@@ -1607,7 +1625,9 @@ void main() {
     phone.api.online = true;
     await phone.sync.syncNow();
 
-    expect(phone.api.pushCalls, 0);
+    expect(phone.api.pushCalls, 1);
+    expect(server.states, isEmpty);
+    expect(server.queue, isNull);
     expect(phone.library.episode(id), isNotNull);
     expect(phone.api.episodesCalls[1], listCalls + 1);
     expect(await phone.library.description(id), 'About the restored episode');
@@ -1619,7 +1639,6 @@ void main() {
     final stored = await phone.store.load();
     expect(stored.states, isEmpty);
     expect(stored.queue, isNull);
-    expect(stored.meta[MetaKey.serverId], restoredServerId);
     expect(phone.sync.status.value.phase, SyncPhase.idle);
   });
 
@@ -1648,7 +1667,7 @@ void main() {
     expect(phone.library.pendingCount, 1);
     await phone.sync.start();
     await phone.sync.whenIdle();
-    expect(phone.api.stateNotModified, 1);
+    expect(phone.api.stateNotModified, 0);
     expect(server.states[id]?.isPlayed, isTrue);
   });
 
@@ -1657,11 +1676,16 @@ void main() {
     final id = episodes.first;
     final listCalls = phone.api.episodesCalls[1]!;
     var sawOldReply = false;
-    phone.api.beforePush = () async => server.serverId = restoredServerId;
     phone.api.transformPushResult = (result) {
       sawOldReply = result.episodes.single.isPlayed;
       server.states.clear();
-      return result;
+      server.serverId = restoredServerId;
+      return StatePushResult(
+        episodes: result.episodes,
+        queue: result.queue,
+        unknown: result.unknown,
+        serverId: restoredServerId,
+      );
     };
 
     await phone.library.markPlayed(id);

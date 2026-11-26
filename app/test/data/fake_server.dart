@@ -62,7 +62,6 @@ class FakeServer {
         Episode(
           id: id,
           podcastId: podcastId,
-          guid: 'guid-$id',
           title: 'Episode $id',
           enclosureUrl: 'https://media.example.test/$id.mp3',
           publishedAt: start.add(Duration(days: list.length)),
@@ -76,22 +75,14 @@ class FakeServer {
 
   void _bump(int podcastId) {
     final p = _podcasts[podcastId]!;
-    _podcasts[podcastId] = _copy(p, episodesVersion: 'v${++_versionCounter}');
+    _podcasts[podcastId] = p.copyWith(
+      episodeCount: _episodes[podcastId]!.length,
+      episodesVersion: 'v${++_versionCounter}',
+    );
   }
 
   void setSubscribed(int podcastId, bool subscribed) => _podcasts[podcastId] =
-      _copy(_podcasts[podcastId]!, subscribed: subscribed);
-
-  Podcast _copy(Podcast p, {String? episodesVersion, bool? subscribed}) =>
-      Podcast(
-        id: p.id,
-        feedUrl: p.feedUrl,
-        title: p.title,
-        subscribed: subscribed ?? p.subscribed,
-        episodeCount: _episodes[p.id]?.length ?? 0,
-        playedCount: p.playedCount,
-        episodesVersion: episodesVersion ?? p.episodesVersion,
-      );
+      _podcasts[podcastId]!.copyWith(subscribed: subscribed);
 
   List<Podcast> listPodcasts() {
     final result = <Podcast>[];
@@ -100,14 +91,9 @@ class FakeServer {
       final withState = states.keys.where(ids.contains);
       if (!p.subscribed && withState.isEmpty) continue;
       result.add(
-        Podcast(
-          id: p.id,
-          feedUrl: p.feedUrl,
-          title: p.title,
-          subscribed: p.subscribed,
+        p.copyWith(
           episodeCount: ids.length,
           playedCount: withState.where((id) => states[id]!.isPlayed).length,
-          episodesVersion: p.episodesVersion,
         ),
       );
     }
@@ -118,24 +104,19 @@ class FakeServer {
 
   StatePushResult push(List<EpisodeState> incoming, QueueState? q) {
     final limit = clock().add(const Duration(hours: 24));
-    for (final s in incoming) {
-      if (s.updatedAt.isAfter(limit)) {
-        throw ApiException(
-          400,
-          'updated_at is more than 24 hours ahead of server time',
-        );
-      }
-    }
+    final future = <int?>{};
     if (q != null && q.updatedAt.isAfter(limit)) {
-      throw ApiException(
-        400,
-        'updated_at is more than 24 hours ahead of server time',
-      );
+      future.add(null);
+      q = null;
     }
     final known = episodeIds.toSet();
     final unknown = <int>[];
     final order = <int>[];
     for (final s in incoming) {
+      if (s.updatedAt.isAfter(limit)) {
+        future.add(s.episodeId);
+        continue;
+      }
       if (!order.contains(s.episodeId)) order.add(s.episodeId);
       if (!known.contains(s.episodeId)) {
         if (!unknown.contains(s.episodeId)) unknown.add(s.episodeId);
@@ -164,11 +145,24 @@ class FakeServer {
           if (states[id] != null) states[id]!,
       ],
       queue: queue,
+      future: future,
       unknown: unknown,
       serverId: serverId,
     );
   }
 }
+
+Map<String, Object?> episodeJson(Episode e) => {
+  'id': e.id,
+  'podcast_id': e.podcastId,
+  'title': e.title,
+  'published_at': e.publishedAt?.toIso8601String(),
+  'enclosure_url': e.enclosureUrl,
+  'enclosure_length': e.enclosureLength,
+  'duration_s': e.durationS,
+  'image_url': e.imageUrl,
+  'removed_from_feed': e.removedFromFeed,
+};
 
 class FakeApiClient implements HttpApiClient {
   FakeApiClient(this.server);
@@ -213,6 +207,13 @@ class FakeApiClient implements HttpApiClient {
     }
   }
 
+  Future<void> _wait(Future<void>? hook, Duration? timeout) async {
+    if (hook == null) return;
+    await (timeout == null
+        ? hook
+        : hook.timeout(timeout, onTimeout: () => throw OfflineException()));
+  }
+
   String _tag(Object value) => '"${jsonEncode(value).hashCode}"';
 
   @override
@@ -221,6 +222,7 @@ class FakeApiClient implements HttpApiClient {
     required String username,
     required String password,
     required String deviceName,
+    Duration? timeout,
   }) async {
     _check(auth: false);
     if (password != 'secret') throw ApiException(401, 'wrong credentials');
@@ -234,7 +236,7 @@ class FakeApiClient implements HttpApiClient {
   }
 
   @override
-  Future<void> logout() async {
+  Future<void> logout({Duration? timeout}) async {
     syncCalls.add('logout');
     try {
       _check();
@@ -244,19 +246,25 @@ class FakeApiClient implements HttpApiClient {
   }
 
   @override
-  Future<Fetched<List<Podcast>>?> podcasts({String? ifNoneMatch}) async {
+  Future<Fetched<List<Podcast>>?> podcasts({
+    String? ifNoneMatch,
+    Duration? timeout,
+  }) async {
     _check();
     podcastsCalls++;
     syncCalls.add('podcasts');
-    if (beforePodcasts case final hook?) await hook();
+    await _wait(beforePodcasts?.call(), timeout);
     final list = server.listPodcasts();
-    final tag = _tag([for (final p in list) p.toJson()]);
+    final tag = _tag([
+      for (final p in list)
+        [p.id, p.episodesVersion, p.subscribed, p.playedCount],
+    ]);
     if (tag == ifNoneMatch) return null;
     return Fetched(list, tag);
   }
 
   @override
-  Future<Podcast> subscribe(String feedUrl) async {
+  Future<Podcast> subscribe(String feedUrl, {Duration? timeout}) async {
     _check();
     final id = int.parse(Uri.parse(feedUrl).pathSegments.last.split('.').first);
     server.setSubscribed(id, true);
@@ -264,7 +272,7 @@ class FakeApiClient implements HttpApiClient {
   }
 
   @override
-  Future<void> unsubscribe(int podcastId) async {
+  Future<void> unsubscribe(int podcastId, {Duration? timeout}) async {
     _check();
     server.setSubscribed(podcastId, false);
   }
@@ -273,13 +281,14 @@ class FakeApiClient implements HttpApiClient {
   Future<Fetched<List<Episode>>?> episodes(
     int podcastId, {
     String? ifNoneMatch,
+    Duration? timeout,
   }) async {
     _check();
     episodesCalls[podcastId] = (episodesCalls[podcastId] ?? 0) + 1;
-    await beforeEpisodes?.call(podcastId);
+    await _wait(beforeEpisodes?.call(podcastId), timeout);
     final list = server.listEpisodes(podcastId);
     if (list == null) throw ApiException(404, 'not found');
-    final tag = _tag([for (final e in list) e.toJson()]);
+    final tag = _tag([for (final e in list) episodeJson(e)]);
     if (tag == ifNoneMatch) {
       episodesNotModified[podcastId] =
           (episodesNotModified[podcastId] ?? 0) + 1;
@@ -289,9 +298,12 @@ class FakeApiClient implements HttpApiClient {
   }
 
   @override
-  Future<({Episode episode, String description})> episode(int episodeId) async {
+  Future<({Episode episode, String description})> episode(
+    int episodeId, {
+    Duration? timeout,
+  }) async {
     _check();
-    await beforeEpisode?.call(episodeId);
+    await _wait(beforeEpisode?.call(episodeId), timeout);
     final episode = server._episodes.values
         .expand((l) => l)
         .where((e) => e.id == episodeId)
@@ -301,10 +313,10 @@ class FakeApiClient implements HttpApiClient {
   }
 
   @override
-  Future<StateSnapshot> state() async => (await fetchState())!.value;
-
-  @override
-  Future<Fetched<StateSnapshot>?> fetchState({String? ifNoneMatch}) async {
+  Future<Fetched<StateSnapshot>?> fetchState({
+    String? ifNoneMatch,
+    Duration? timeout,
+  }) async {
     _check();
     stateCalls++;
     syncCalls.add('state');
@@ -319,7 +331,7 @@ class FakeApiClient implements HttpApiClient {
       for (final state in snapshot.episodes) state.toJson(),
       snapshot.queue?.toJson(),
     ]);
-    if (beforeStateReply case final hook?) await hook();
+    await _wait(beforeStateReply?.call(), timeout);
     if (tag == ifNoneMatch) {
       stateNotModified++;
       return null;
@@ -329,15 +341,24 @@ class FakeApiClient implements HttpApiClient {
 
   @override
   Future<StatePushResult> pushState({
+    String? serverId,
     List<EpisodeState> episodes = const [],
     QueueState? queue,
+    Duration? timeout,
   }) async {
     _check();
     pushCalls++;
     syncCalls.add('push');
     pushedStates.add(List.of(episodes));
     pushedQueues.add(queue);
-    if (beforePush case final hook?) await hook();
+    await _wait(beforePush?.call(), timeout);
+    if (serverId != null && serverId != server.serverId) {
+      throw ApiException(
+        409,
+        'server identity changed',
+        serverId: server.serverId,
+      );
+    }
     final result = server.push(episodes, queue);
     return transformPushResult?.call(result) ?? result;
   }
@@ -347,21 +368,23 @@ class FakeApiClient implements HttpApiClient {
     _check();
     syncCalls.add('episode:$episodeId');
     episodeStateTimeout = timeout;
-    if (episodeStateDelay case final delay?) await Future<void>.delayed(delay);
+    if (episodeStateDelay case final delay?) {
+      await _wait(Future<void>.delayed(delay), timeout);
+    }
     return server.states[episodeId];
   }
 
   @override
-  Future<void> refresh() async => _check();
+  Future<void> refresh({Duration? timeout}) async => _check();
 
   @override
-  Future<String> exportOpml() async {
+  Future<String> exportOpml({Duration? timeout}) async {
     _check();
     return '<opml version="2.0"><body/></opml>';
   }
 
   @override
-  Future<OpmlImportResult> importOpml(String opml) async {
+  Future<OpmlImportResult> importOpml(String opml, {Duration? timeout}) async {
     _check();
     return const OpmlImportResult(added: 0, existing: 0, failed: []);
   }
@@ -377,6 +400,8 @@ class Device {
   final SqfliteLibrary library;
   final DefaultSyncService sync;
 
+  static int _nextDatabase = 0;
+
   static Future<Device> open(
     FakeServer server, {
     Database? db,
@@ -390,7 +415,11 @@ class Device {
     Duration logoutSendTimeout = const Duration(seconds: 2),
   }) async {
     final database =
-        db ?? await LocalStore.open(databaseFactoryFfi, inMemoryDatabasePath);
+        db ??
+        await LocalStore.open(
+          databaseFactoryFfi,
+          'file:device-${++_nextDatabase}?mode=memory',
+        );
     final store = LocalStore(database);
     final api = FakeApiClient(server);
     final library = await SqfliteLibrary.open(

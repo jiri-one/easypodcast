@@ -22,12 +22,26 @@ abstract interface class PlaybackEngine {
 }
 
 class _JustAudioEngine implements PlaybackEngine {
-  _JustAudioEngine(this._session)
-    : _audio = AudioPlayer(
-        handleInterruptions: false,
-        handleAudioSessionActivation: false,
-        androidApplyAudioAttributes: _session != null,
-      ) {
+  _JustAudioEngine(this._session, {AudioPlayer? audio})
+    : _audio =
+          audio ??
+          AudioPlayer(
+            handleInterruptions: false,
+            handleAudioSessionActivation: false,
+            androidApplyAudioAttributes: _session != null,
+          ) {
+    _audioEvents = _audio.playerEventStream.listen((event) {
+      final sample = event.playbackEvent;
+      if (sample.updatePosition > _lastPosition) {
+        _lastPosition = sample.updatePosition;
+      }
+      // A truncated stream can report a shorter duration.
+      if (sample.duration case final duration?
+          when duration > (_knownDuration ?? Duration.zero)) {
+        _knownDuration = duration;
+      }
+      _changes.add(null);
+    });
     if (_session case final session?) {
       _sessionEvents.add(
         session.becomingNoisyEventStream.listen((_) {
@@ -59,11 +73,15 @@ class _JustAudioEngine implements PlaybackEngine {
 
   final AudioPlayer _audio;
   final AudioSession? _session;
+  final _changes = StreamController<void>.broadcast(sync: true);
   final _interruptions = StreamController<PlaybackInterruption>.broadcast();
   final _sessionEvents = <StreamSubscription<void>>[];
+  late final StreamSubscription<PlayerEvent> _audioEvents;
+  Duration _lastPosition = Duration.zero;
+  Duration? _knownDuration;
 
   @override
-  Stream<void> get changes => _audio.playerEventStream.map((_) {});
+  Stream<void> get changes => _changes.stream;
 
   @override
   Stream<PlaybackInterruption> get interruptions => _interruptions.stream;
@@ -74,14 +92,23 @@ class _JustAudioEngine implements PlaybackEngine {
   @override
   ProcessingState get processingState => _audio.processingState;
 
+  bool get _terminal =>
+      processingState == ProcessingState.completed ||
+      processingState == ProcessingState.idle;
+
   @override
-  Duration get position => _audio.position;
+  Duration get position {
+    final position = _audio.position;
+    if (position > _lastPosition) _lastPosition = position;
+    return _terminal ? _lastPosition : position;
+  }
 
   @override
   Duration get bufferedPosition => _audio.bufferedPosition;
 
   @override
-  Duration? get duration => _audio.duration;
+  Duration? get duration =>
+      _terminal ? _knownDuration ?? _audio.duration : _audio.duration;
 
   @override
   Future<void> prepareToPlay() async {
@@ -98,6 +125,11 @@ class _JustAudioEngine implements PlaybackEngine {
       AudioSource.uri(uri),
       initialPosition: _session == null ? null : position,
     );
+    _lastPosition = _audio.position;
+    _knownDuration = _audio.duration;
+    if (_session == null && position > Duration.zero) {
+      await seek(position).timeout(const Duration(seconds: 5));
+    }
   }
 
   @override
@@ -134,7 +166,8 @@ class _JustAudioEngine implements PlaybackEngine {
           .timeout(const Duration(seconds: 4))
           .first;
     }
-    await _audio.seek(position);
+    await _audio.seek(_positionBeforeEnd(position, _audio.duration));
+    _lastPosition = _audio.position;
   }
 
   @override
@@ -145,6 +178,8 @@ class _JustAudioEngine implements PlaybackEngine {
 
   @override
   Future<void> dispose() async {
+    await _audioEvents.cancel();
+    await _changes.close();
     for (final subscription in _sessionEvents) {
       await subscription.cancel();
     }
@@ -153,6 +188,19 @@ class _JustAudioEngine implements PlaybackEngine {
     await _audio.dispose();
   }
 }
+
+Duration _positionBeforeEnd(Duration target, Duration? end) {
+  if (target.isNegative) return Duration.zero;
+  if (end == null || end <= Duration.zero || target < end) return target;
+  // Seeking exactly to EOF can complete without decoding another sample.
+  return end > const Duration(milliseconds: 1)
+      ? end - const Duration(milliseconds: 1)
+      : Duration.zero;
+}
+
+@visibleForTesting
+PlaybackEngine justAudioEngineForTest(AudioPlayer audio) =>
+    _JustAudioEngine(null, audio: audio);
 
 class _AudioFocusUnavailable implements Exception {
   const _AudioFocusUnavailable();

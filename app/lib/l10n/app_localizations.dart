@@ -195,6 +195,12 @@ abstract class AppLocalizations {
   /// **'Pause'**
   String get pause;
 
+  /// No description provided for @stop.
+  ///
+  /// In en, this message translates to:
+  /// **'Stop'**
+  String get stop;
+
   /// No description provided for @checkingPosition.
   ///
   /// In en, this message translates to:

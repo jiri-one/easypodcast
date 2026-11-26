@@ -391,20 +391,20 @@ class _ServerPageState extends State<ServerPage> {
   @override
   Widget build(BuildContext context) {
     final strings = context.strings;
-    final settings = widget.services.settings;
+    final sync = widget.services.sync;
     return PageList(
       children: [
         EinkRow(
           title: strings.serverAddress,
           details: [
-            Text(settings.serverUrl, style: detailStyle),
+            Text(sync.serverUrl, style: detailStyle),
             ServerStatusLine(services: widget.services),
           ],
         ),
-        if (settings.deviceName.isNotEmpty)
+        if (sync.deviceName.isNotEmpty)
           EinkRow(
             title: strings.deviceName,
-            details: [Text(settings.deviceName, style: detailStyle)],
+            details: [Text(sync.deviceName, style: detailStyle)],
           ),
         PageMessage(strings.serverChangeHelp),
         if (_failed) ProblemBox(strings.actionFailed),

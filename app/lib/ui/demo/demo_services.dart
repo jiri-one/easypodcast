@@ -14,14 +14,11 @@ Future<AppServices> createDemoServices({
 }) async {
   // The demo shares the Settings API while keeping preferences in memory.
   // ignore: invalid_use_of_visible_for_testing_member
-  SharedPreferences.setMockInitialValues({
-    if (loggedIn) 'serverUrl': 'https://podcast.example',
-    if (loggedIn) 'deviceName': 'Demo',
-  });
+  SharedPreferences.setMockInitialValues({});
   final settings = await Settings.load();
   final catalog = library ?? DemoLibrary();
   final api = DemoApiClient(catalog);
-  final sync = DemoSyncService(api, catalog, settings, loggedIn: loggedIn);
+  final sync = DemoSyncService(api, catalog, loggedIn: loggedIn);
   return AppServices(
     settings: settings,
     api: api,

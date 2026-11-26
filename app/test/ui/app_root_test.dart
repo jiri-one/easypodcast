@@ -125,7 +125,7 @@ void main() {
     expect(library.queue, hasLength(3));
     expect(library.inProgress, hasLength(3));
     expect(
-      (await services.api.state()).episodes.where((e) => e.isDismissed),
+      (await services.api.fetchState())!.value.episodes.where((e) => e.isDismissed),
       hasLength(1),
     );
 

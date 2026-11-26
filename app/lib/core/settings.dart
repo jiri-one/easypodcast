@@ -9,12 +9,12 @@ class Settings extends ChangeNotifier {
 
   final SharedPreferences _prefs;
 
-  String get serverUrl =>
-      _prefs.getString('serverUrl') ?? 'https://easypodcast.jiri.one';
-  set serverUrl(String value) => _set('serverUrl', value);
+  bool get alphabeticalPodcasts =>
+      _prefs.getBool('alphabeticalPodcasts') ?? false;
+  set alphabeticalPodcasts(bool value) => _set('alphabeticalPodcasts', value);
 
-  String get deviceName => _prefs.getString('deviceName') ?? '';
-  set deviceName(String value) => _set('deviceName', value);
+  String? get lastServerAddress => _prefs.getString('lastServerAddress');
+  set lastServerAddress(String value) => _set('lastServerAddress', value);
 
   int get skipBackSeconds => _prefs.getInt('skipBackSeconds') ?? 15;
   set skipBackSeconds(int value) => _set('skipBackSeconds', value);

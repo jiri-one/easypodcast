@@ -113,7 +113,8 @@ void main() {
 
       final episodes = (await api.episodes(podcast.id))!;
       wire.last.expectStatus(200);
-      expect(episodes.value.map((episode) => episode.guid), [
+      final wireEpisodes = wire.last.json as List;
+      expect(wireEpisodes.map((episode) => episode['guid']), [
         'e2e-silence-3',
         'e2e-silence-2',
         'e2e-silence-1',
@@ -133,7 +134,11 @@ void main() {
       final first = episodes.value.last;
       final detail = await api.episode(first.id);
       wire.last.expectStatus(200);
-      expect(detail.episode.toJson(), first.toJson());
+      expect(detail.episode.id, first.id);
+      expect(
+        Map.of(wire.last.json as Map)..remove('description'),
+        wireEpisodes.last,
+      );
       expect(
         detail.description,
         'Testovací díl bez zvuku. Odkaz (https://example.org/1)',
@@ -180,7 +185,7 @@ void main() {
       expect((await api.episodeState(id))?.toJson(), newer.toJson());
       wire.last.expectStatus(200);
       expect(wire.last.json['state']['updated_at'], formatTime(newerTime));
-      final snapshot = await api.state();
+      final snapshot = (await api.fetchState())!.value;
       wire.last.expectStatus(200);
       expect(wire.last.json['server_time'], utcMillis);
       expect(snapshot.serverTime.isUtc, isTrue);
@@ -205,54 +210,47 @@ void main() {
       expect(result.unknown, [missing]);
       expect(result.episodes.map((state) => state.episodeId), [id]);
       expect(
-        (await api.state()).episodes.map((state) => state.episodeId),
+        (await api.fetchState())!.value.episodes.map(
+          (state) => state.episodeId,
+        ),
         isNot(contains(missing)),
       );
     });
 
-    test(
-      'the 24-hour limit rejects an entire update with a future state or queue',
-      () async {
-        await login();
-        final episodes = await subscribe('future');
-        final id = episodes[0].id;
-        final other = episodes[1].id;
-        final snapshot = await api.state();
-        final tooFar = snapshot.serverTime.add(
-          const Duration(hours: 24, minutes: 1),
-        );
-        final within = snapshot.serverTime.add(
-          const Duration(hours: 23, minutes: 59),
-        );
-        final valid = listening(id, 74000, within);
-        final futureError = apiError(400)
-            .having((error) => error.message, 'message', contains('24 hours'));
+    test('the server acknowledges valid records alongside a future episode or queue', () async {
+      await login();
+      final episodes = await subscribe('future');
+      final id = episodes[0].id;
+      final other = episodes[1].id;
+      final snapshot = (await api.fetchState())!.value;
+      final tooFar = snapshot.serverTime.add(
+        const Duration(hours: 24, minutes: 1),
+      );
+      final within = snapshot.serverTime.add(
+        const Duration(hours: 23, minutes: 59),
+      );
+      final valid = listening(id, 74000, within);
 
-        await expectLater(
-          api.pushState(episodes: [valid, listening(other, 80000, tooFar)]),
-          throwsA(futureError),
-        );
-        wire.last.expectStatus(400);
-        expect(wire.last.json, {'error': contains('24 hours')});
-        expect(await api.episodeState(id), isNull);
-        expect(await api.episodeState(other), isNull);
+      final skippedEpisode = await api.pushState(
+        episodes: [valid, listening(other, 80000, tooFar)],
+      );
+      wire.last.expectStatus(200);
+      expect(wire.last.json['future'], [other]);
+      expect(skippedEpisode.future, {other});
+      expect(skippedEpisode.episodes.single.toJson(), valid.toJson());
+      expect((await api.episodeState(id))?.toJson(), valid.toJson());
+      expect(await api.episodeState(other), isNull);
 
-        await expectLater(
-          api.pushState(
-            episodes: [valid],
-            queue: QueueState(episodeIds: [id], updatedAt: tooFar),
-          ),
-          throwsA(futureError),
-        );
-        wire.last.expectStatus(400);
-        expect(await api.episodeState(id), isNull);
-        expect((await api.state()).queue?.toJson(), snapshot.queue?.toJson());
-
-        final accepted = await api.pushState(episodes: [valid]);
-        wire.last.expectStatus(200);
-        expect(accepted.episodes.single.toJson(), valid.toJson());
-      },
-    );
+      final skippedQueue = await api.pushState(
+        episodes: [valid],
+        queue: QueueState(episodeIds: [id], updatedAt: tooFar),
+      );
+      wire.last.expectStatus(200);
+      expect(wire.last.json['future'], ['queue']);
+      expect(skippedQueue.future, {null});
+      expect(skippedQueue.episodes.single.toJson(), valid.toJson());
+      expect(skippedQueue.queue?.toJson(), snapshot.queue?.toJson());
+    });
 
     test(
       'the client sends and decodes measured duration_ms in a state push',
@@ -306,7 +304,7 @@ void main() {
 
       final single = await api.episodeState(id);
       final singleExchange = wire.last;
-      final snapshot = await api.state();
+      final snapshot = (await api.fetchState())!.value;
       final downloaded = snapshot.episodes.singleWhere(
         (state) => state.episodeId == id,
       );
@@ -324,7 +322,7 @@ void main() {
         final ids = (await subscribe('queue'))
             .map((episode) => episode.id)
             .toList();
-        final firstTime = nextQueueTime((await api.state()).queue);
+        final firstTime = nextQueueTime((await api.fetchState())!.value.queue);
         final newerTime = firstTime.add(const Duration(milliseconds: 1));
         final first = QueueState(
           episodeIds: [ids[2], ids[0]],
@@ -355,7 +353,7 @@ void main() {
           );
           expect(result.queue?.toJson(), expected.toJson());
         }
-        expect((await api.state()).queue?.toJson(), empty.toJson());
+        expect((await api.fetchState())!.value.queue?.toJson(), empty.toJson());
       },
     );
 
@@ -403,7 +401,7 @@ void main() {
           token: result.token,
           client: wire,
         );
-        await expectLater(replay.state(), throwsA(apiError(401)));
+        await expectLater(replay.fetchState(), throwsA(apiError(401)));
         wire.last.expectStatus(401);
         expect(replay.token, isNull);
       },
@@ -426,7 +424,9 @@ void main() {
       final a = await device('$name A');
       final podcast = await a.data.library.subscribe(fixture(name));
       if (resetQueue) {
-        deviceTime = nextQueueTime((await a.data.api.state()).queue);
+        deviceTime = nextQueueTime(
+          (await a.data.api.fetchState())!.value.queue,
+        );
         await a.data.api.pushState(
           queue: QueueState(episodeIds: [], updatedAt: deviceTime),
         );
@@ -443,8 +443,14 @@ void main() {
         ids,
       );
       expect(
-        a.store.meta(MetaKey.deviceId),
-        isNot(b.store.meta(MetaKey.deviceId)),
+        a.wire.exchanges
+            .firstWhere((e) => e.request.url.path == '/api/login')
+            .json['device_id'],
+        isNot(
+          b.wire.exchanges
+              .firstWhere((e) => e.request.url.path == '/api/login')
+              .json['device_id'],
+        ),
       );
       return (a: a, b: b, ids: ids);
     }
@@ -505,20 +511,21 @@ void main() {
         b.sync.didChangeAppLifecycleState(AppLifecycleState.resumed);
         await b.waitForSync();
 
-        final check = b.wire.exchanges[start];
+        final sent = b.wire.exchanges[start];
+        expect(sent.request.method, 'POST');
+        expect(sent.request.url.path, '/api/state');
+        expect(
+          jsonDecode(sent.requestBody)['server_id'],
+          b.store.meta(MetaKey.serverId),
+        );
+        sent.expectStatus(200);
+        expect(sent.json['episodes'], [aState.toJson()]);
+        final check = b.wire.exchanges[start + 1];
         expect(check.request.method, 'GET');
         expect(check.request.url.path, '/api/state');
         expect(check.request.headers['if-none-match'], isNotEmpty);
         check.expectStatus(200);
-        final tag = check.response.headers['etag'];
-        expect(b.store.meta(MetaKey.stateEtag), tag);
-        for (final exchange in b.wire.exchanges.skip(start + 1)) {
-          expect(exchange.request.method, 'GET');
-          if (exchange.request.url.path == '/api/state') {
-            expect(exchange.request.headers['if-none-match'], tag);
-            exchange.expectStatus(304);
-          }
-        }
+        expect(b.store.meta(MetaKey.stateEtag), check.response.headers['etag']);
         expect((await a.data.api.episodeState(id))?.toJson(), aState.toJson());
         expect(b.data.library.stateOf(id).toJson(), aState.toJson());
         expect(b.sync.status.value.pending, 0);
@@ -595,17 +602,17 @@ void main() {
       await phone.sync.syncNow();
       final requests = phone.wire.exchanges.skip(start).toList();
       final check = requests.first;
-      expect(check.request.method, 'GET');
+      expect(check.request.method, 'POST');
       expect(check.request.url.path, '/api/state');
-      expect(check.request.headers['if-none-match'], oldTag);
-      check.expectStatus(200);
+      expect(jsonDecode(check.requestBody)['server_id'], oldId);
+      check.expectStatus(409);
       final newId = phone.store.meta(MetaKey.serverId);
       expect(newId, isNot(oldId));
       expect(newId, check.json['server_id']);
-      expect(
-        requests.map((exchange) => exchange.request.method),
-        everyElement('GET'),
-      );
+      final reads = requests.skip(1);
+      expect(reads.map((e) => e.request.method), everyElement('GET'));
+      expect(reads.first.request.url.path, '/api/state');
+      expect(reads.first.request.headers['if-none-match'], isNull);
       expect(
         requests.map((exchange) => exchange.request.url.path),
         contains('/api/podcasts/${podcast.id}/episodes'),
@@ -617,7 +624,7 @@ void main() {
       expect(phone.sync.status.value.phase, SyncPhase.idle);
     });
 
-    test('a Go server 400 repairs a future stamp after the device clock is corrected', () async {
+    test('a partial acknowledgement repairs a future stamp after the device clock is corrected', () async {
       final (:a, :b, :ids) = await pair('bad-clock');
       final [future, valid, inbound] = ids;
       b.wire.offline = true;
@@ -632,10 +639,10 @@ void main() {
       final start = b.wire.exchanges.length;
       b.wire.offline = false;
       await b.sync.syncNow();
-      b.wire.exchanges
-          .skip(start)
-          .firstWhere((exchange) => exchange.request.method == 'POST')
-          .expectStatus(400);
+      final first = b.wire.exchanges.skip(start).first;
+      first.expectStatus(200);
+      expect(first.json['future'], [future]);
+      expect((first.json['episodes'] as List).single['episode_id'], valid);
       final repaired = (await a.data.api.episodeState(future))!;
       expect(repaired.toJson(), {
         ...rejected.toJson(),
@@ -735,7 +742,7 @@ void main() {
       advance();
       await b.data.library.enqueue(ids[1]);
       await b.waitForSync();
-      expect((await a.data.api.state()).queue?.episodeIds, [
+      expect((await a.data.api.fetchState())!.value.queue?.episodeIds, [
         ids[0],
         ids[1],
       ], reason: b.wire.last.trace);
@@ -755,7 +762,7 @@ void main() {
         await a.waitForSync();
         await b.sync.syncNow();
         expect(b.data.library.queue.map((episode) => episode.id), [id]);
-        final before = (await a.data.api.state()).queue!;
+        final before = (await a.data.api.fetchState())!.value.queue!;
 
         advance();
         await a.data.library.dismiss(id);
@@ -765,7 +772,7 @@ void main() {
         expect(
           [
             jsonDecode(dismissal.requestBody).containsKey('queue'),
-            (await a.data.api.state()).queue?.toJson(),
+            (await a.data.api.fetchState())!.value.queue?.toJson(),
             b.data.library.queue.map((episode) => episode.id).toList(),
           ],
           [false, before.toJson(), isEmpty],
@@ -806,7 +813,7 @@ void main() {
         advance();
         await b.data.library.enqueue(added);
         await b.waitForSync();
-        final snapshot = await a.data.api.state();
+        final snapshot = (await a.data.api.fetchState())!.value;
         expect(
           [
             shown,

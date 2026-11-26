@@ -1,10 +1,11 @@
 import 'package:flutter/foundation.dart';
 
-enum SyncPhase { loggedOut, idle, syncing, offline, error }
+enum SyncPhase { loggedOut, idle, offline, error }
 
 class SyncStatus {
   const SyncStatus({
     required this.phase,
+    this.syncing = false,
     this.lastSuccess,
     this.pending = 0,
     this.error,
@@ -12,6 +13,7 @@ class SyncStatus {
   });
 
   final SyncPhase phase;
+  final bool syncing;
   final DateTime? lastSuccess;
 
   /// Changes waiting to be sent.
@@ -20,11 +22,11 @@ class SyncStatus {
   final Duration? clockSkewWarning;
 }
 
-extension SyncClockWarning on SyncService {
-  Duration? get clockSkewWarning => status.value.clockSkewWarning;
-}
+abstract class SyncService {
+  String get serverUrl;
 
-abstract interface class SyncService {
+  String get deviceName;
+
   ValueListenable<SyncStatus> get status;
 
   bool get isLoggedIn;
@@ -43,6 +45,8 @@ abstract interface class SyncService {
   Future<void> stop();
 
   Future<void> syncNow();
+
+  Future<void> sendPending({Duration? timeout}) async {}
 
   /// Applies a newer server state of the episode before playback; gives up after about 2 s.
   Future<void> freshStateBeforePlay(int episodeId);

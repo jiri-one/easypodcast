@@ -16,6 +16,7 @@
   "nextInQueue": "Další ve frontě: {title}",
   "play": "Přehrát",
   "pause": "Pauza",
+  "stop": "Zastavit",
   "checkingPosition": "Zjišťuji pozici…",
   "loadingPlayback": "Načítám…",
   "playbackFailed": "Díl se nepodařilo přehrát. Zkus to znovu.",

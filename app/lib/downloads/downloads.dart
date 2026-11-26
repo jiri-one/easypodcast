@@ -14,6 +14,7 @@ import '../core/library.dart';
 import '../core/models.dart';
 import '../core/settings.dart';
 import '../platform/android_platform.dart';
+import '../platform/command_queue.dart';
 
 const _downloadGroup = 'easypodcast.episodes';
 const _downloadDirectory = 'easypodcast/episodes';
@@ -26,6 +27,7 @@ Future<DownloadService> openDownloads({
   required Library library,
   required Settings settings,
 }) async {
+  if (Platform.isLinux) return _NoDownloads();
   final documents = await getApplicationDocumentsDirectory();
   final connectivity = Connectivity();
   bool hasWifi(List<ConnectivityResult> results) =>
@@ -36,11 +38,26 @@ Future<DownloadService> openDownloads({
     settings: settings,
     downloader: FileDownloader(),
     documents: documents,
-    desktop: Platform.isLinux,
     wifiCheck: () async => hasWifi(await connectivity.checkConnectivity()),
     wifiChanges: connectivity.onConnectivityChanged.map(hasWifi).distinct(),
-    availableBytes: () => _freeDiskBytes(documents),
   );
+}
+
+class _NoDownloads extends DownloadService {
+  @override
+  DownloadInfo statusOf(int episodeId) => DownloadInfo.none;
+
+  @override
+  String? localFileOf(int episodeId) => null;
+
+  @override
+  List<int> get downloadedEpisodeIds => const [];
+
+  @override
+  Future<void> download(int episodeId) async {}
+
+  @override
+  Future<void> delete(int episodeId) async {}
 }
 
 class EpisodeDownloads extends DownloadService {
@@ -49,7 +66,6 @@ class EpisodeDownloads extends DownloadService {
     required this._settings,
     required this._downloader,
     required this._documents,
-    required this._desktop,
     required this._availableBytes,
     required this._prefs,
   }) {
@@ -61,11 +77,11 @@ class EpisodeDownloads extends DownloadService {
                       update.status == TaskStatus.running)))) {
         return;
       }
-      _background(_run(() => _onUpdate(update)));
+      background(_commands.run(() => _onUpdate(update)));
     });
     _finished = _library.finishedEpisodes.listen((id) {
-      _background(
-        _run(() async {
+      background(
+        _commands.run(() async {
           if (_shouldDelete(id)) await _delete(id);
         }),
       );
@@ -77,7 +93,6 @@ class EpisodeDownloads extends DownloadService {
     required Settings settings,
     required FileDownloader downloader,
     required Directory documents,
-    bool desktop = false,
     Future<bool> Function()? wifiCheck,
     Stream<bool>? wifiChanges,
     Future<int?> Function()? availableBytes,
@@ -87,12 +102,11 @@ class EpisodeDownloads extends DownloadService {
       settings: settings,
       downloader: downloader,
       documents: documents,
-      desktop: desktop,
-      availableBytes: availableBytes ?? (() => _freeDiskBytes(documents)),
+      availableBytes: availableBytes ?? _freeDiskBytes,
       prefs: await SharedPreferences.getInstance(),
     );
     try {
-      await service._run(() async {
+      await service._commands.run(() async {
         if (wifiCheck != null) {
           try {
             service._wifi = await wifiCheck().timeout(
@@ -123,7 +137,6 @@ class EpisodeDownloads extends DownloadService {
   final Settings _settings;
   final FileDownloader _downloader;
   final Directory _documents;
-  final bool _desktop;
   final Future<int?> Function() _availableBytes;
   final SharedPreferences _prefs;
   final _entries = <int, _Download>{};
@@ -135,7 +148,7 @@ class EpisodeDownloads extends DownloadService {
   late final StreamSubscription<TaskUpdate> _updates;
   late final StreamSubscription<int> _finished;
   StreamSubscription<bool>? _wifiChanges;
-  Future<void> _commands = Future.value();
+  final _commands = CommandQueue();
   Timer? _storageRetry;
   List<int> _window = const [];
   int? _currentEpisodeId;
@@ -143,7 +156,8 @@ class EpisodeDownloads extends DownloadService {
   late bool _wifiOnly;
   bool _restoring = true;
   bool _wifi = true;
-  bool _disposed = false;
+
+  bool get _disposed => _commands.isClosed;
 
   List<int> get _queueWindow => [
     for (final episode in _library.queue.take(2)) episode.id,
@@ -153,23 +167,32 @@ class EpisodeDownloads extends DownloadService {
     final previous = _currentEpisodeId;
     if (id == previous) return;
     _currentEpisodeId = id;
-    if (previous != null) _background(_run(_reconcile));
+    if (previous != null) background(_commands.run(_reconcile));
   }
 
   @override
   DownloadInfo statusOf(int episodeId) {
     final entry = _entries[episodeId];
     if (entry == null) return DownloadInfo.none;
-    if (!_wifi &&
-        entry.task.requiresWiFi &&
-        entry.info.status == DownloadStatus.queued) {
+    if (entry.completedAt != null) {
       return DownloadInfo(
-        DownloadStatus.queued,
-        progress: entry.info.progress,
-        waitingForWifi: true,
+        DownloadStatus.done,
+        progress: 1,
+        filePath: _file(entry.task).path,
       );
     }
-    return entry.info;
+    final wifiBlocked = !_wifi && entry.task.requiresWiFi;
+    final status = switch (entry.status) {
+      TaskStatus.running when !wifiBlocked => DownloadStatus.running,
+      final taskStatus when taskStatus.isNotFinalState => DownloadStatus.queued,
+      TaskStatus.canceled => DownloadStatus.none,
+      _ => DownloadStatus.failed,
+    };
+    return DownloadInfo(
+      status,
+      progress: entry.progress.clamp(0.0, 1.0),
+      waitingForWifi: wifiBlocked && status == DownloadStatus.queued,
+    );
   }
 
   @override
@@ -187,8 +210,15 @@ class EpisodeDownloads extends DownloadService {
     return [for (final entry in finished) entry.key];
   }
 
+  @override
+  List<int> get episodeIds => [
+    for (final entry in _entries.entries)
+      if (entry.value.completedAt == null) entry.key,
+    ...downloadedEpisodeIds,
+  ];
+
   Future<void> _restore() async {
-    await _downloader.start(doRescheduleKilledTasks: !_desktop);
+    await _downloader.start();
     final records = await _downloader.database.allRecords(group: _downloadGroup)
       ..sort((a, b) => b.task.creationTime.compareTo(a.task.creationTime));
     for (final record in records) {
@@ -201,16 +231,12 @@ class EpisodeDownloads extends DownloadService {
           await _discard(task, cancel: record.status.isNotFinalState);
           continue;
         }
-        final status = switch (record.status) {
-          final status when _desktop && status.isNotFinalState =>
-            TaskStatus.failed,
-          // A persisted running task may be in WorkManager backoff.
-          TaskStatus.running => TaskStatus.enqueued,
-          final status => status,
-        };
+        // A persisted running task may be in WorkManager backoff.
+        final status = record.status == TaskStatus.running
+            ? TaskStatus.enqueued
+            : record.status;
         final entry = await _entry(task, status, record.progress);
-        if (record.status == TaskStatus.complete &&
-            entry.info.status != DownloadStatus.done) {
+        if (record.status == TaskStatus.complete && entry.completedAt == null) {
           await _discard(task, cancel: false);
         } else {
           _entries[id] = entry;
@@ -225,12 +251,13 @@ class EpisodeDownloads extends DownloadService {
   }
 
   @override
-  Future<void> download(int episodeId) => _run(() async {
+  Future<void> download(int episodeId) => _commands.run(() async {
     final episode = _library.episode(episodeId);
     if (episode == null || _library.stateOf(episodeId).isDismissed) return;
     if (_suppressed.remove(episodeId)) await _saveSuppressed();
     final existing = _entries[episodeId];
-    if (existing != null && existing.info.status != DownloadStatus.failed) {
+    if (existing != null &&
+        statusOf(episodeId).status != DownloadStatus.failed) {
       if (_isAutomatic(existing.task) &&
           _manualCopies.add(existing.task.taskId)) {
         await _prefs.setStringList(_manualCopiesKey, _manualCopies.toList());
@@ -273,18 +300,11 @@ class EpisodeDownloads extends DownloadService {
       updates: Updates.statusAndProgress,
       requiresWiFi: wifiOnly,
       allowPause: true,
-      retries: _desktop && wifiOnly ? 0 : 2,
+      retries: 2,
       metaData: automatic ? '$_autoPrefix$episodeId' : '$episodeId',
       displayName: episode.title,
     );
-    if (wifiOnly && _desktop && !_wifi) {
-      _setFailed(episodeId, task);
-      return;
-    }
-    _entries[episodeId] = _Download(
-      task,
-      const DownloadInfo(DownloadStatus.queued),
-    );
+    _entries[episodeId] = _Download(task, TaskStatus.enqueued);
     _notify();
     try {
       if (await _downloader.enqueue(task)) return;
@@ -297,7 +317,7 @@ class EpisodeDownloads extends DownloadService {
   }
 
   void _setFailed(int id, DownloadTask task) {
-    _entries[id] = _Download(task, const DownloadInfo(DownloadStatus.failed));
+    _entries[id] = _Download(task, TaskStatus.failed);
     _notify();
   }
 
@@ -315,8 +335,8 @@ class EpisodeDownloads extends DownloadService {
     final window = _queueWindow;
     if (listEquals(window, _window)) return;
     _window = window;
-    _background(
-      _run(() async {
+    background(
+      _commands.run(() async {
         await _pruneSuppressed(window);
         await _reconcile();
       }),
@@ -327,10 +347,10 @@ class EpisodeDownloads extends DownloadService {
     final enabled = _settings.keepQueueDownloaded;
     if (enabled != _autoEnabled) {
       _autoEnabled = enabled;
-      _background(_run(_reconcile));
+      background(_commands.run(_reconcile));
     }
     final wifiOnly = _settings.downloadOnWifiOnly;
-    if (_wifiOnly && !wifiOnly) _background(_run(_requeueWithoutWifi));
+    if (_wifiOnly && !wifiOnly) background(_commands.run(_requeueWithoutWifi));
     _wifiOnly = wifiOnly;
   }
 
@@ -338,7 +358,7 @@ class EpisodeDownloads extends DownloadService {
     for (final entry in _entries.entries.toList()) {
       if (_settings.downloadOnWifiOnly) return;
       final download = entry.value;
-      if (download.info.status != DownloadStatus.queued ||
+      if (statusOf(entry.key).status != DownloadStatus.queued ||
           !download.task.requiresWiFi ||
           _isAutomatic(download.task)) {
         continue;
@@ -351,25 +371,10 @@ class EpisodeDownloads extends DownloadService {
   }
 
   void _onWifiChanged(bool wifi) {
-    _background(
-      _run(() async {
+    background(
+      _commands.run(() async {
         if (_wifi == wifi) return;
         _wifi = wifi;
-        if (!wifi) {
-          for (final entry in _entries.entries.toList()) {
-            final download = entry.value;
-            if (download.task.requiresWiFi &&
-                download.info.status == DownloadStatus.running) {
-              _entries[entry.key] = _Download(
-                download.task,
-                DownloadInfo(
-                  DownloadStatus.queued,
-                  progress: download.info.progress,
-                ),
-              );
-            }
-          }
-        }
         _notify();
         await _reconcile();
       }),
@@ -400,7 +405,7 @@ class EpisodeDownloads extends DownloadService {
     var budget = (free ?? 0) - _storageReserve;
     for (final entry in _entries.entries) {
       if (_isAutomatic(entry.value.task) &&
-          _isPending(entry.value.info.status)) {
+          entry.value.status.isNotFinalState) {
         budget -= _sizeOf(entry.key);
       }
     }
@@ -415,7 +420,7 @@ class EpisodeDownloads extends DownloadService {
       if (budget <= 0 || size > budget) {
         _storageRetry ??= Timer(
           const Duration(minutes: 1),
-          () => _background(_run(_reconcile)),
+          () => background(_commands.run(_reconcile)),
         );
         break;
       }
@@ -439,7 +444,7 @@ class EpisodeDownloads extends DownloadService {
   }
 
   @override
-  Future<void> delete(int episodeId) => _run(() async {
+  Future<void> delete(int episodeId) => _commands.run(() async {
     if (_window.contains(episodeId) && _suppressed.add(episodeId)) {
       await _saveSuppressed();
     }
@@ -456,13 +461,10 @@ class EpisodeDownloads extends DownloadService {
                 !state.updatedAt.isBefore(downloadCreatedAt)));
   }
 
-  bool _isPending(DownloadStatus status) =>
-      status == DownloadStatus.queued || status == DownloadStatus.running;
-
   Future<void> _delete(int id) async {
     final entry = _entries[id];
     if (entry == null) return;
-    await _discard(entry.task, cancel: _isPending(entry.info.status));
+    await _discard(entry.task, cancel: entry.status.isNotFinalState);
     _entries.remove(id);
     if (_manualCopies.remove(entry.task.taskId)) {
       await _prefs.setStringList(_manualCopiesKey, _manualCopies.toList());
@@ -489,32 +491,17 @@ class EpisodeDownloads extends DownloadService {
     TaskStatus status,
     double progress,
   ) async {
-    final bounded = progress.clamp(0.0, 1.0);
+    DateTime? completedAt;
     if (status == TaskStatus.complete) {
-      final file = _file(task);
-      final stat = await file.stat();
-      if (stat.type == FileSystemEntityType.file) {
-        return _Download(
-          task,
-          DownloadInfo(DownloadStatus.done, progress: 1, filePath: file.path),
-          completedAt: stat.modified,
-        );
-      }
+      final stat = await _file(task).stat();
+      if (stat.type == FileSystemEntityType.file) completedAt = stat.modified;
     }
-    final downloadStatus = switch (status) {
-      TaskStatus.enqueued ||
-      TaskStatus.waitingToRetry ||
-      TaskStatus.paused => DownloadStatus.queued,
-      TaskStatus.running =>
-        !_wifi && task.requiresWiFi
-            ? DownloadStatus.queued
-            : DownloadStatus.running,
-      TaskStatus.canceled => DownloadStatus.none,
-      TaskStatus.complete ||
-      TaskStatus.failed ||
-      TaskStatus.notFound => DownloadStatus.failed,
-    };
-    return _Download(task, DownloadInfo(downloadStatus, progress: bounded));
+    return _Download(
+      task,
+      status,
+      progress: progress,
+      completedAt: completedAt,
+    );
   }
 
   Future<void> _onUpdate(TaskUpdate update) async {
@@ -529,29 +516,21 @@ class EpisodeDownloads extends DownloadService {
       }
       return;
     }
-    if (previous!.info.status == DownloadStatus.done) return;
+    if (previous!.completedAt != null) return;
 
     switch (update) {
       case TaskStatusUpdate(status: TaskStatus.canceled):
         await _discard(task, cancel: false);
         _entries.remove(id);
       case TaskStatusUpdate(:final status):
-        _entries[id] = await _entry(task, status, previous.info.progress);
+        _entries[id] = await _entry(task, status, previous.progress);
       case TaskProgressUpdate(:final progress)
           when progress >= 0 && progress < 1:
-        _entries[id] = await _entry(task, TaskStatus.running, progress);
+        _entries[id] = _Download(task, TaskStatus.running, progress: progress);
       default:
         return;
     }
     _notify();
-  }
-
-  Future<void> _run(Future<void> Function() command) {
-    final result = _commands.then((_) async {
-      if (!_disposed) await command();
-    });
-    _commands = result.then<void>((_) {}, onError: (Object _, StackTrace _) {});
-    return result;
   }
 
   void _notify() {
@@ -560,7 +539,7 @@ class EpisodeDownloads extends DownloadService {
 
   @override
   void dispose() {
-    _disposed = true;
+    unawaited(_commands.close());
     _storageRetry?.cancel();
     _library.removeListener(_onQueueChanged);
     _settings.removeListener(_onSettingsChanged);
@@ -572,42 +551,22 @@ class EpisodeDownloads extends DownloadService {
 }
 
 class _Download {
-  const _Download(this.task, this.info, {this.completedAt});
+  const _Download(
+    this.task,
+    this.status, {
+    this.progress = 0,
+    this.completedAt,
+  });
 
   final DownloadTask task;
-  final DownloadInfo info;
+  final TaskStatus status;
+  final double progress;
   final DateTime? completedAt;
 }
 
-void _background(Future<void> work) {
-  unawaited(
-    work.catchError((Object error, StackTrace stack) {
-      FlutterError.reportError(
-        FlutterErrorDetails(exception: error, stack: stack),
-      );
-    }),
-  );
-}
-
-Future<int?> _freeDiskBytes(Directory directory) async {
+Future<int?> _freeDiskBytes() async {
   try {
-    if (Platform.isAndroid) {
-      return await androidPlatform.invokeMethod<int>('availableBytes');
-    }
-    while (!await directory.exists() &&
-        directory.parent.path != directory.path) {
-      directory = directory.parent;
-    }
-    final result = await Process.run('df', [
-      '-P',
-      '-k',
-      directory.path,
-    ]).timeout(const Duration(seconds: 2));
-    if (result.exitCode != 0) return null;
-    final available = RegExp(r'\s+\d+\s+\d+\s+(\d+)\s+\d+%\s')
-        .firstMatch(result.stdout as String)
-        ?.group(1);
-    return available == null ? null : int.parse(available) * 1024;
+    return await androidPlatform.invokeMethod<int>('availableBytes');
   } on Object {
     return null;
   }

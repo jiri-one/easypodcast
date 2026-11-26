@@ -17,6 +17,7 @@
   "@nextInQueue": {"placeholders": {"title": {"type": "String"}}},
   "play": "Play",
   "pause": "Pause",
+  "stop": "Stop",
   "checkingPosition": "Checking position…",
   "loadingPlayback": "Loading…",
   "playbackFailed": "Couldn't play the episode. Try again.",

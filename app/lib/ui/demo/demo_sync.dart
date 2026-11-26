@@ -2,26 +2,26 @@ import 'package:flutter/foundation.dart';
 
 import '../../core/api.dart';
 import '../../core/models.dart';
-import '../../core/settings.dart';
 import '../../core/sync.dart';
 import 'demo_library.dart';
 
-class DemoSyncService implements SyncService {
-  DemoSyncService(
-    this._api,
-    this._library,
-    this._settings, {
-    required bool loggedIn,
-  }) : _status = ValueNotifier(
-         SyncStatus(
-           phase: loggedIn ? SyncPhase.idle : SyncPhase.loggedOut,
-           lastSuccess: loggedIn ? nowUtc() : null,
-         ),
-       );
+class DemoSyncService extends SyncService {
+  DemoSyncService(this._api, this._library, {required bool loggedIn})
+    : serverUrl = loggedIn ? 'https://podcast.example' : '',
+      deviceName = loggedIn ? 'Demo' : '',
+      _status = ValueNotifier(
+        SyncStatus(
+          phase: loggedIn ? SyncPhase.idle : SyncPhase.loggedOut,
+          lastSuccess: loggedIn ? nowUtc() : null,
+        ),
+      );
 
   final ApiClient _api;
   final DemoLibrary _library;
-  final Settings _settings;
+  @override
+  String serverUrl;
+  @override
+  String deviceName;
   final ValueNotifier<SyncStatus> _status;
   Future<void> Function(int id)? beforePlay;
 
@@ -52,8 +52,8 @@ class DemoSyncService implements SyncService {
       password: password,
       deviceName: deviceName,
     );
-    _settings.serverUrl = serverUrl;
-    _settings.deviceName = deviceName;
+    this.serverUrl = serverUrl;
+    this.deviceName = deviceName;
     _setIdle();
   }
 

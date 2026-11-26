@@ -34,12 +34,28 @@ void main() {
               'CREATE TABLE queue (id INTEGER PRIMARY KEY CHECK (id = 1), '
               'episode_ids TEXT NOT NULL, updated_at INTEGER NOT NULL, pending INTEGER NOT NULL)',
             );
+            await db.execute('''CREATE TABLE episodes (
+              id INTEGER PRIMARY KEY, podcast_id INTEGER NOT NULL, sort INTEGER NOT NULL,
+              guid TEXT NOT NULL, title TEXT NOT NULL, enclosure_url TEXT NOT NULL,
+              published_at INTEGER, duration_s INTEGER, enclosure_type TEXT,
+              enclosure_length INTEGER, link TEXT, image_url TEXT,
+              removed_from_feed INTEGER NOT NULL)''');
             await LocalStore.createSchema(db);
           },
         ),
       );
       final at = DateTime.utc(2026, 11, 26);
       try {
+        await legacy.insert('episodes', {
+          'id': 7,
+          'podcast_id': 3,
+          'sort': 0,
+          'guid': 'legacy',
+          'title': 'Saved episode',
+          'enclosure_url': 'https://example.test/7',
+          'enclosure_length': 700,
+          'removed_from_feed': 1,
+        });
         await legacy.insert('episode_states', {
           'episode_id': 7,
           'position_ms': 61000,
@@ -61,6 +77,21 @@ void main() {
       final store = LocalStore(db);
       expect(await store.description(7), (text: 'Saved notes', version: null));
       final snapshot = await store.load();
+      final episode = snapshot.episodes.single;
+      expect(
+        (
+          episode.id,
+          episode.title,
+          episode.enclosureLength,
+          episode.removedFromFeed,
+        ),
+        (7, 'Saved episode', 700, true),
+      );
+      final columns = await db.rawQuery('PRAGMA table_info(episodes)');
+      expect(
+        columns.map((row) => row['name']),
+        isNot(anyElement(isIn(['guid', 'link', 'enclosure_type']))),
+      );
       expect(snapshot.pendingStates, {7});
       final state = snapshot.states.single;
       expect(state.episodeId, 7);
@@ -96,15 +127,14 @@ void main() {
           feedUrl: 'https://feeds.example.test/$p.xml',
           title: 'Show $p',
         ),
-    ]);
-    final states = <(EpisodeState, bool)>[];
+    ], {});
+    final states = <EpisodeState>[];
     for (var p = 1; p <= 50; p++) {
       final episodes = [
         for (var i = 0; i < 400; i++)
           Episode(
             id: p * 1000 + i,
             podcastId: p,
-            guid: 'guid-$p-$i',
             title: 'Episode $i of show $p',
             enclosureUrl: 'https://media.example.test/$p/$i.mp3',
             publishedAt: published.add(Duration(hours: i)),
@@ -113,15 +143,14 @@ void main() {
       ];
       await store.replaceEpisodes(p, episodes, EpisodeListInfo('v$p', null));
       for (var i = 0; i < 200; i++) {
-        states.add((
+        states.add(
           EpisodeState(
             episodeId: p * 1000 + i,
             positionMs: i.isEven ? 0 : 90000,
             status: i.isEven ? EpisodeStatus.played : EpisodeStatus.none,
             updatedAt: published.add(Duration(minutes: i)),
           ),
-          false,
-        ));
+        );
       }
     }
     await store.writeStates(states);
@@ -133,7 +162,10 @@ void main() {
     );
     final opened = watch.elapsed;
     expect(library.podcasts, hasLength(50));
-    expect(library.newEpisodes(), hasLength(100));
+    expect(
+      library.newEpisodes(since: published.add(const Duration(hours: 398))),
+      hasLength(100),
+    );
     expect(library.inProgress, hasLength(5000));
     expect(opened, lessThan(const Duration(seconds: 3)));
     library.dispose();

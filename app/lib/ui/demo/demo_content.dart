@@ -37,7 +37,6 @@ DemoContent createDemoContent({String? firstPodcastCover}) {
       episodes[episodeId] = Episode(
         id: episodeId,
         podcastId: id,
-        guid: 'demo-$episodeId',
         title: number <= show.topics.length ? topic : '$topic · $number. díl',
         publishedAt: today
             .subtract(Duration(days: (number - 1) * 3 + (id - 1) ~/ 2))
@@ -53,7 +52,6 @@ DemoContent createDemoContent({String? firstPodcastCover}) {
           _ => null,
         },
         enclosureUrl: '$url/$number.mp3',
-        enclosureType: 'audio/mpeg',
       );
     }
   }

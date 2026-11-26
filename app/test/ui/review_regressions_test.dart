@@ -32,9 +32,10 @@ void main() {
       final status = app.services.sync.status as ValueNotifier<SyncStatus>;
       final lastSync = DateTime.now();
       try {
-        void setPhase(SyncPhase phase) {
+        void setPhase(SyncPhase phase, {bool syncing = false}) {
           status.value = SyncStatus(
             phase: phase,
+            syncing: syncing,
             lastSuccess: lastSync,
             pending: 2,
           );
@@ -45,7 +46,7 @@ void main() {
         await tester.pumpAndSettle();
         final position = tester.getTopLeft(row);
         expect(find.text(l.offline), findsOneWidget);
-        setPhase(SyncPhase.syncing);
+        setPhase(status.value.phase, syncing: true);
         await tester.pumpAndSettle();
         expect(tester.getTopLeft(row), position);
         expect(find.text(l.offline), findsOneWidget);
@@ -60,7 +61,7 @@ void main() {
         await tester.pumpAndSettle();
         final problem = find.widgetWithText(EinkError, l.syncError);
         final bounds = tester.getRect(problem);
-        setPhase(SyncPhase.syncing);
+        setPhase(status.value.phase, syncing: true);
         await tester.pumpAndSettle();
         expect(tester.getRect(problem), bounds);
 
@@ -89,7 +90,7 @@ void main() {
     final status = app.services.sync.status as ValueNotifier<SyncStatus>;
     final l = app.strings;
     try {
-      status.value = const SyncStatus(phase: SyncPhase.syncing);
+      status.value = const SyncStatus(phase: SyncPhase.idle, syncing: true);
       await tester.pumpAndSettle();
       expect(find.text(l.syncLoading), findsOneWidget);
       expect(find.text(l.inProgressEmpty), findsNothing);
@@ -474,7 +475,7 @@ class _EmptyLibrary extends DemoLibrary {
   List<Episode> get queue => const [];
 
   @override
-  List<Episode> newEpisodes({int limit = 100}) => const [];
+  List<Episode> newEpisodes({required DateTime since}) => const [];
 }
 
 class _StaleFeedLibrary extends DemoLibrary {
@@ -493,7 +494,6 @@ class _LongPodcastLibrary extends DemoLibrary {
       Episode(
         id: 10000 + i,
         podcastId: 1,
-        guid: 'past-$i',
         title: 'Starší díl číslo $i',
         enclosureUrl: 'https://podcast.example/past/$i',
         publishedAt: nowUtc().subtract(Duration(days: 365 + i)),
@@ -512,8 +512,7 @@ class _LongPodcastLibrary extends DemoLibrary {
     return id == 1 && show != null ? _withTitle(show) : show;
   }
 
-  Podcast _withTitle(Podcast show) =>
-      Podcast.fromJson({...show.toJson(), 'title': title});
+  Podcast _withTitle(Podcast show) => show.copyWith(title: title);
 
   @override
   Episode? episode(int id) =>
@@ -529,7 +528,7 @@ class _FailedOpmlApi extends DemoApiClient {
   _FailedOpmlApi(super.library);
 
   @override
-  Future<OpmlImportResult> importOpml(String opml) async =>
+  Future<OpmlImportResult> importOpml(String opml, {Duration? timeout}) async =>
       const OpmlImportResult(
         added: 0,
         existing: 0,

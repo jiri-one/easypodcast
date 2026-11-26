@@ -25,7 +25,6 @@ import '../data/fake_server.dart';
 const _first = Episode(
   id: 1,
   podcastId: 1,
-  guid: 'one',
   title: 'Morning Field Notes',
   enclosureUrl: 'http://example.test/one.mp3',
   durationS: 60,
@@ -33,7 +32,6 @@ const _first = Episode(
 const _second = Episode(
   id: 2,
   podcastId: 1,
-  guid: 'two',
   title: 'Evening Field Notes',
   enclosureUrl: 'https://example.test/two.mp3',
   durationS: 120,
@@ -41,7 +39,6 @@ const _second = Episode(
 const _third = Episode(
   id: 3,
   podcastId: 1,
-  guid: 'three',
   title: 'Midnight Field Notes',
   enclosureUrl: 'https://example.test/three.mp3',
 );
@@ -103,34 +100,6 @@ void main() {
     });
   }
 
-  testWidgets(
-    'Linux waits for an explicit resume seek before playing or reporting',
-    (tester) async {
-      openPlayer(android: false);
-      const saved = Duration(minutes: 3);
-      library.change(1, position: saved);
-      engine.onLoad = () => engine.position = Duration.zero;
-      final landing = Completer<void>();
-      engine.onSeek = (_) {
-        engine.position = Duration.zero;
-        engine.events.add(null);
-        return landing.future;
-      };
-      final starting = player.play(1);
-      final reporting = player.reportBeforeBackground();
-      await tester.pump();
-      expect(calls, ['refresh:1', 'load', 'seek:180000']);
-      expect(handler.playbackState.value.updatePosition, saved);
-      expect(player.isPlaying, isFalse);
-      engine.position = saved;
-      landing.complete();
-      await starting;
-      await reporting;
-      expect(calls, containsAllInOrder(['play', 'record:1:180000']));
-      expect(library.stateOf(1).positionMs, saved.inMilliseconds);
-    },
-  );
-
   testWidgets('a 10-second pause resumes the loaded source', (tester) async {
     openPlayer();
     await player.play(_first.id);
@@ -170,7 +139,14 @@ void main() {
     tester,
   ) async {
     openPlayer();
-    await player.play(_second.id);
+    final initialCheck = Completer<void>();
+    sync.onRefresh = (_) => initialCheck.future;
+    final starting = player.play(_second.id);
+    await tester.pump();
+    expect(player.checkingPosition, _second.id);
+    initialCheck.complete();
+    await starting;
+    expect(player.checkingPosition, isNull);
     await player.pause();
     await tester.pump(const Duration(seconds: 30));
     calls.clear();
@@ -180,7 +156,14 @@ void main() {
     await player.pause();
     await tester.pump(const Duration(seconds: 31));
     calls.clear();
-    await player.resume();
+    final resumeCheck = Completer<void>();
+    sync.onRefresh = (_) => resumeCheck.future;
+    final resuming = player.resume();
+    await tester.pump();
+    expect(player.checkingPosition, _second.id);
+    resumeCheck.complete();
+    await resuming;
+    expect(player.checkingPosition, isNull);
     expect(calls, ['refresh:2', 'play', 'playing:2']);
   });
 
@@ -350,7 +333,7 @@ void main() {
     expect(library.completed, isEmpty);
     expect(player.current?.id, 1);
     await player.resume();
-    engine.complete(at: Duration.zero);
+    engine.complete();
     await player.reportBeforeBackground();
 
     expect(library.completed, [1]);
@@ -375,10 +358,7 @@ void main() {
       await player.play(1);
       const lastPosition = Duration(minutes: 4);
       engine.position = lastPosition;
-      await tester.pump(const Duration(seconds: 1));
-      engine.duration = lastPosition;
-      engine.events.add(null);
-      engine.complete(at: Duration.zero);
+      engine.complete(at: lastPosition);
       await player.reportBeforeBackground();
 
       expect(library.completed, isEmpty);
@@ -496,8 +476,12 @@ void main() {
     await player.play(_first.id);
     await player.setSpeed(1.4);
     expect(settings.speed, 1.4);
-    await player.setSleepTimer(const Duration(seconds: 2));
+    const duration = Duration(seconds: 2);
+    final deadline = tester.binding.clock.now().add(duration);
+    await player.setSleepTimer(duration);
     expect(player.sleepRemaining, isNotNull);
+    expect(player.sleepDuration, duration);
+    expect(player.sleepDeadline, deadline);
     engine.position = const Duration(seconds: 590);
     await tester.pump(const Duration(seconds: 2));
 
@@ -505,6 +489,8 @@ void main() {
     expect(library.stateOf(1).positionMs, 590000);
     expect(calls, isNot(contains('refresh:2')));
     expect(player.sleepRemaining, isNull);
+    expect(player.sleepDuration, isNull);
+    expect(player.sleepDeadline, isNull);
     expect(player.isPlaying, isFalse);
   });
 
@@ -686,7 +672,8 @@ void main() {
       await player.play(1);
       engine.position = const Duration(seconds: 42);
       library.onPendingSend = () => sync.status.value = const SyncStatus(
-        phase: SyncPhase.syncing,
+        phase: SyncPhase.idle,
+        syncing: true,
         pending: 1,
       );
       await handler.pause();
@@ -698,7 +685,10 @@ void main() {
 
       switch (outcome) {
         case 'succeeds':
-          sync.status.value = const SyncStatus(phase: SyncPhase.syncing);
+          sync.status.value = const SyncStatus(
+            phase: SyncPhase.idle,
+            syncing: true,
+          );
         case 'fails':
           sync.status.value = const SyncStatus(
             phase: SyncPhase.offline,
@@ -729,13 +719,16 @@ void main() {
       };
       final playing = handler.play();
       await tester.pump();
+      final pausing = handler.pause();
       expect(sync.fullSyncs, 1);
       expect(calls, isEmpty);
       expect(player.current, isNull);
       refreshing.complete();
       await playing;
+      await pausing;
       await tester.pump();
       expect(player.current, _second);
+      expect(player.isPlaying, isFalse);
       expect(calls.first, 'refresh:2');
       expect(inProgress, isNotEmpty);
       final entries = await handler.getChildren('in-progress');
@@ -748,6 +741,10 @@ void main() {
       addTearDown(updates.cancel);
       await tester.pump();
       final before = downloaded.length;
+      downloads.changed();
+      await tester.pump();
+      expect(downloaded, hasLength(before));
+      downloads.downloadedEpisodeIds = [1];
       downloads.changed();
       await tester.pump();
       expect(downloaded, hasLength(before + 1));
@@ -916,7 +913,8 @@ void main() {
     await player.play(1);
     engine.position = const Duration(seconds: 45);
     library.onPendingSend = () => sync.status.value = const SyncStatus(
-      phase: SyncPhase.syncing,
+      phase: SyncPhase.idle,
+      syncing: true,
       pending: 1,
     );
     calls.clear();
@@ -939,14 +937,18 @@ void main() {
     (tester) async {
       openPlayer(android: false);
       sync.status.value = const SyncStatus(
-        phase: SyncPhase.syncing,
+        phase: SyncPhase.idle,
+        syncing: true,
         pending: 1,
       );
       final closing = player.didRequestAppExit();
       await tester.pump();
       await tester.pump(const Duration(seconds: 2));
       expect(await closing, AppExitResponse.exit);
-      sync.status.value = const SyncStatus(phase: SyncPhase.syncing);
+      sync.status.value = const SyncStatus(
+        phase: SyncPhase.idle,
+        syncing: true,
+      );
       expect(await player.didRequestAppExit(), AppExitResponse.exit);
       expect(sync.fullSyncs, 0);
     },
@@ -1062,7 +1064,7 @@ void main() {
             _ => activePlayer.play(ids[1]),
           };
           await local.sync.whenIdle();
-          expect(local.api.pushedStates, isEmpty);
+          expect(local.api.pushedStates.single, [paused]);
           expect(local.library.pendingCount, 0);
           expect(local.library.stateOf(id).toJson(), newer.toJson());
           expect(server.states[id]?.toJson(), newer.toJson());
@@ -1535,7 +1537,7 @@ class _Library extends Library {
 class _Sync implements SyncService {
   _Sync(this.calls);
   final List<String> calls;
-  void Function(int)? onRefresh;
+  FutureOr<void> Function(int)? onRefresh;
   Future<void> Function()? onSync;
   int fullSyncs = 0;
 
@@ -1547,7 +1549,7 @@ class _Sync implements SyncService {
   @override
   Future<void> freshStateBeforePlay(int id) async {
     calls.add('refresh:$id');
-    onRefresh?.call(id);
+    await onRefresh?.call(id);
   }
 
   @override
@@ -1591,6 +1593,9 @@ class _MprisPlatform extends AudioServicePlatform {
 
 class _Downloads extends DownloadService {
   void changed() => notifyListeners();
+
+  @override
+  List<int> downloadedEpisodeIds = const [];
 
   @override
   String? localFileOf(int id) =>

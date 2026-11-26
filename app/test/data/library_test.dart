@@ -77,7 +77,10 @@ void main() {
         expect(lib().queue, isEmpty);
         expect(lib().queueState, same(queuedBefore));
         expect(lib().inProgress, isEmpty);
-        expect(lib().newEpisodes().map((e) => e.id), isNot(contains(id)));
+        expect(
+          lib().newEpisodes(since: oldestTime).map((e) => e.id),
+          isNot(contains(id)),
+        );
         expect(finished, [id]);
       },
     );
@@ -107,7 +110,10 @@ void main() {
       expect(state.status, EpisodeStatus.none);
       expect(state.positionMs, 0);
       expect(state.updatedAt, clock.now);
-      expect(lib().newEpisodes().map((e) => e.id), contains(id));
+      expect(
+        lib().newEpisodes(since: oldestTime).map((e) => e.id),
+        contains(id),
+      );
       expect(lib().queue.map((e) => e.id), [id]);
       expect(lib().queueState, same(queuedBefore));
     });
@@ -243,12 +249,18 @@ void main() {
       const Duration(milliseconds: 59999),
     );
     expect(lib().inProgress, isEmpty);
-    expect(lib().newEpisodes().map((e) => e.id), contains(episodes[0]));
+    expect(
+      lib().newEpisodes(since: oldestTime).map((e) => e.id),
+      contains(episodes[0]),
+    );
 
     await tick();
     await lib().recordPosition(id, const Duration(milliseconds: 60000));
     expect(lib().inProgress.map((e) => e.id), [id]);
-    expect(lib().newEpisodes().map((e) => e.id), isNot(contains(id)));
+    expect(
+      lib().newEpisodes(since: oldestTime).map((e) => e.id),
+      isNot(contains(id)),
+    );
   });
 
   test('a stalled position keeps its timestamp through pauses and small decoder corrections', () async {
@@ -290,6 +302,39 @@ void main() {
     expect(lib().stateOf(id).updatedAt, clock.now);
   });
 
+  test('playing position samples notify only when the visible lists or duration change', () async {
+    final library = lib();
+    final id = episodes.first;
+    device.sync.setPlayingEpisode(id);
+    var changes = 0;
+    library.addListener(() => changes++);
+    await library.recordPosition(id, const Duration(seconds: 30));
+    expect(changes, 1);
+    await library.recordPosition(id, const Duration(seconds: 40));
+    expect(changes, 1);
+    await library.recordPosition(id, const Duration(minutes: 1));
+    final order = library.inProgress;
+    expect(changes, 2);
+    await library.recordPosition(id, const Duration(minutes: 2));
+    expect(library.inProgress, same(order));
+    expect(changes, 2);
+    await library.recordPosition(
+      id,
+      const Duration(minutes: 3),
+      duration: const Duration(hours: 1),
+    );
+    expect(changes, 3);
+    await tick();
+    await library.recordPosition(episodes.last, const Duration(minutes: 4));
+    expect(library.inProgress.first.id, episodes.last);
+    await tick();
+    await library.recordPosition(id, const Duration(minutes: 5));
+    expect(changes, 5);
+    expect(library.inProgress.first.id, id);
+    await device.sync.whenIdle();
+    expect(device.api.server.states[id]?.positionMs, 300000);
+  });
+
   test('in progress is sorted by the last change, newest first', () async {
     await lib().recordPosition(episodes[0], const Duration(minutes: 2));
     await tick();
@@ -322,14 +367,18 @@ void main() {
     },
   );
 
-  test('new episodes are newest first and respect the limit', () async {
-    expect(lib().newEpisodes().map((e) => e.id), episodes.reversed);
-    expect(lib().newEpisodes(limit: 2).map((e) => e.id), [
+  test('new episodes are newest first and include the cutoff day', () async {
+    expect(
+      lib().newEpisodes(since: oldestTime).map((e) => e.id),
+      episodes.reversed,
+    );
+    final cutoff = lib().episode(episodes[3])!.publishedAt!;
+    expect(lib().newEpisodes(since: cutoff).map((e) => e.id), [
       episodes[4],
       episodes[3],
     ]);
     await lib().markPlayed(episodes[4]);
-    expect(lib().newEpisodes(limit: 1).map((e) => e.id), [episodes[3]]);
+    expect(lib().newEpisodes(since: cutoff).map((e) => e.id), [episodes[3]]);
   });
 
   test('episodesOf keeps the server order, newest first', () {
@@ -344,7 +393,7 @@ void main() {
       final date = clock.now;
       for (var i = 0; i < list.length; i++) {
         list[i] = Episode.fromJson({
-          ...list[i].toJson(),
+          ...episodeJson(list[i]),
           'published_at': i < 3 ? formatTime(date) : null,
         });
       }

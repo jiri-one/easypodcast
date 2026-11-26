@@ -52,22 +52,12 @@ class DemoLibrary extends Library {
     Podcast podcast, {
     bool? subscribed,
     DateTime? refreshedAt,
-  }) => Podcast(
-    id: podcast.id,
-    feedUrl: podcast.feedUrl,
-    title: podcast.title,
-    author: podcast.author,
-    description: podcast.description,
-    imageUrl: podcast.imageUrl,
-    link: podcast.link,
-    subscribed: subscribed ?? podcast.subscribed,
-    episodeCount: podcast.episodeCount,
+  }) => podcast.copyWith(
+    subscribed: subscribed,
     playedCount: episodesOf(podcast.id)
         .where((e) => stateOf(e.id).isPlayed)
         .length,
-    episodesVersion: podcast.episodesVersion,
-    lastSuccessAt: refreshedAt ?? podcast.lastSuccessAt,
-    lastError: refreshedAt == null ? podcast.lastError : null,
+    lastSuccessAt: refreshedAt,
   );
 
   @override
@@ -98,12 +88,13 @@ class DemoLibrary extends Library {
   ]);
 
   @override
-  List<Episode> newEpisodes({int limit = 100}) {
+  List<Episode> newEpisodes({required DateTime since}) {
     final fresh =
         [
           for (final episode in _episodes.values)
             if (_podcasts[episode.podcastId]!.subscribed &&
                 !episode.removedFromFeed &&
+                episode.publishedAt?.isBefore(since) == false &&
                 stateOf(episode.id).isNew)
               episode,
         ]..sort((a, b) {
@@ -112,7 +103,7 @@ class DemoLibrary extends Library {
           );
           return byDate != 0 ? byDate : b.id.compareTo(a.id);
         });
-    return List.unmodifiable(fresh.take(limit));
+    return List.unmodifiable(fresh);
   }
 
   @override
@@ -275,7 +266,7 @@ class DemoLibrary extends Library {
         states,
         queue: QueueState(
           episodeIds: ids,
-          updatedAt: _nextTime(_queue.updatedAt),
+          updatedAt: stampAfter(_queue.updatedAt, nowUtc()),
         ),
       );
 
@@ -291,15 +282,8 @@ class DemoLibrary extends Library {
       positionMs: positionMs,
       status: status,
       durationMs: durationMs ?? previous.durationMs,
-      updatedAt: _nextTime(previous.updatedAt),
+      updatedAt: stampAfter(previous.updatedAt, nowUtc()),
     );
-  }
-
-  DateTime _nextTime(DateTime previous) {
-    final now = nowUtc();
-    return now.isAfter(previous)
-        ? now
-        : previous.add(const Duration(milliseconds: 1));
   }
 
   void applyChanges(Iterable<EpisodeState> states, {QueueState? queue}) {

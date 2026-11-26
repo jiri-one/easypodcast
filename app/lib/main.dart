@@ -10,7 +10,7 @@ import 'ui/app_root.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final settings = await Settings.load();
-  final data = await openDataLayer(settings);
+  final data = await openDataLayer();
   final downloads = await openDownloads(
     library: data.library,
     settings: settings,

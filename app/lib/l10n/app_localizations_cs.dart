@@ -62,6 +62,9 @@ class AppLocalizationsCs extends AppLocalizations {
   String get pause => 'Pauza';
 
   @override
+  String get stop => 'Zastavit';
+
+  @override
   String get checkingPosition => 'Zjišťuji pozici…';
 
   @override

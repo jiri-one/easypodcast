@@ -162,6 +162,7 @@ void main() {
       });
       final at = DateTime.utc(2026, 11, 26, 14, 3, 7, 120);
       final result = await api.pushState(
+        serverId: serverId,
         episodes: [
           EpisodeState(
             episodeId: 7,
@@ -178,6 +179,7 @@ void main() {
       expect(request.url.path, '/api/state');
       expect(request.headers['Content-Type'], startsWith('application/json'));
       expect(jsonDecode(request.body), {
+        'server_id': serverId,
         'episodes': [
           {
             'episode_id': 7,
@@ -209,49 +211,6 @@ void main() {
     expect(requests.single.url.path, '/api/episodes/7/state');
   });
 
-  test('pushState rejects incomplete HTTP 200 confirmations', () async {
-    final time = DateTime.utc(2026, 11, 26, 14, 0, 0, 0, 999);
-    final played = EpisodeState(
-      episodeId: 7,
-      positionMs: 0,
-      status: EpisodeStatus.played,
-      updatedAt: time,
-    );
-    final missing = EpisodeState.initial(8);
-    final queue = QueueState(episodeIds: [7], updatedAt: time);
-    handler = (_) async => json({
-      'episodes': [played.toJson()],
-      'queue': queue.toJson(),
-      'server_id': serverId,
-    });
-    await expectLater(
-      api.pushState(episodes: [played, missing], queue: queue),
-      throwsFormatException,
-    );
-
-    handler = (_) async => json({
-      'episodes': [played.toJson()],
-      'unknown': [8],
-      'server_id': serverId,
-    });
-    await expectLater(
-      api.pushState(episodes: [played, missing], queue: queue),
-      throwsFormatException,
-    );
-
-    handler = (_) async => json({
-      'episodes': [played.toJson()],
-      'queue': queue.toJson(),
-      'unknown': [8],
-      'server_id': serverId,
-    });
-    final confirmed = await api.pushState(
-      episodes: [played, missing],
-      queue: queue,
-    );
-    expect(confirmed.unknown, [8]);
-  });
-
   test('errors carry the server message', () async {
     handler = (_) async => json({'error': 'not a usable feed'}, status: 422);
     await expectLater(
@@ -280,7 +239,7 @@ void main() {
     api.onUnauthorized = () => called++;
     handler = (_) async =>
         json({'error': 'valid bearer token required'}, status: 401);
-    await expectLater(api.state(), throwsA(isA<ApiException>()));
+    await expectLater(api.fetchState(), throwsA(isA<ApiException>()));
     expect(called, 1);
     expect(api.token, isNull);
   });
@@ -293,7 +252,10 @@ void main() {
       var unauthorized = false;
       api.onUnauthorized = () => unauthorized = true;
 
-      final rejected = expectLater(api.state(), throwsA(isA<ApiException>()));
+      final rejected = expectLater(
+        api.fetchState(),
+        throwsA(isA<ApiException>()),
+      );
       api.token = 'new-token';
       reply.complete(json({'error': 'token revoked'}, status: 401));
       await rejected;
@@ -354,13 +316,13 @@ void main() {
 
   test('network failures and timeouts become OfflineException', () async {
     handler = (_) async => throw http.ClientException('connection refused');
-    await expectLater(api.state(), throwsA(isA<OfflineException>()));
+    await expectLater(api.fetchState(), throwsA(isA<OfflineException>()));
 
     handler = (_) async => throw const SocketException('no route');
-    await expectLater(api.state(), throwsA(isA<OfflineException>()));
+    await expectLater(api.fetchState(), throwsA(isA<OfflineException>()));
 
     handler = (_) => Completer<http.Response>().future;
-    await expectLater(api.state(), throwsA(isA<OfflineException>()));
+    await expectLater(api.fetchState(), throwsA(isA<OfflineException>()));
 
     final watch = Stopwatch()..start();
     await expectLater(

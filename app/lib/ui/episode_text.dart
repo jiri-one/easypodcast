@@ -2,18 +2,10 @@ import 'package:intl/intl.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../core/downloads.dart';
-import '../core/models.dart';
 import '../l10n/app_localizations.dart';
 import 'eink_widgets.dart';
 
 const metadataSeparator = ' · ';
-
-Duration? episodeDuration(Episode episode, EpisodeState state) {
-  final measured = state.durationMs;
-  if (measured != null && measured > 0) return Duration(milliseconds: measured);
-  final feed = episode.durationS;
-  return feed == null || feed <= 0 ? null : Duration(seconds: feed);
-}
 
 String positionText(Duration position, {bool padMinutes = false}) {
   final minutes = position.inMinutes.remainder(60);

@@ -62,6 +62,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get pause => 'Pause';
 
   @override
+  String get stop => 'Stop';
+
+  @override
   String get checkingPosition => 'Checking position…';
 
   @override

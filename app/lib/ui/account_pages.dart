@@ -51,7 +51,7 @@ class _LoginPageState extends State<LoginPage> {
       final prefs = await _preferences;
       if (mounted && !_serverEdited) {
         _server.text =
-            prefs.getString(_lastAddress) ?? prefs.getString('serverUrl') ?? '';
+            prefs.getString(_lastAddress) ?? widget.services.sync.serverUrl;
       }
     } on Exception {
       return;
@@ -73,7 +73,7 @@ class _LoginPageState extends State<LoginPage> {
     super.didChangeDependencies();
     if (_prefilled) return;
     _prefilled = true;
-    final saved = widget.services.settings.deviceName;
+    final saved = widget.services.sync.deviceName;
     final strings = context.strings;
     _device.text = saved.isNotEmpty
         ? saved

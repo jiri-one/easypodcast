@@ -111,14 +111,19 @@ class Device {
 
   DefaultSyncService get sync => data.sync as DefaultSyncService;
 
+  static int _nextDatabase = 0;
+
   static Future<Device> open(
     String name,
     DateTime Function() clock, {
-    String databasePath = inMemoryDatabasePath,
+    String? databasePath,
   }) async {
     final wire = WireClient(name);
     final api = HttpApiClient(serverUrl: serverUrl, client: wire);
-    final db = await LocalStore.open(databaseFactoryFfi, databasePath);
+    final db = await LocalStore.open(
+      databaseFactoryFfi,
+      databasePath ?? 'file:device-${++_nextDatabase}?mode=memory',
+    );
     final store = LocalStore(db);
     final library = await SqfliteLibrary.open(store, api, clock: clock);
     api.token = store.meta(MetaKey.token);
@@ -131,7 +136,7 @@ class Device {
     );
     api.onUnauthorized = sync.handleUnauthorized;
     final device = Device(
-      DataLayer(api: api, library: library, sync: sync),
+      (api: api, library: library, sync: sync),
       store,
       wire,
     );

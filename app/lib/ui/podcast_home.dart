@@ -275,10 +275,7 @@ class _LibraryHomeState extends State<_LibraryHome> {
 
   List<Episode> _recentNewEpisodes() {
     final cutoff = DateTime.now().subtract(const Duration(days: 30));
-    return widget.services.library
-        .newEpisodes(limit: 0x7fffffff)
-        .takeWhile((episode) => episode.publishedAt?.isBefore(cutoff) == false)
-        .toList(growable: false);
+    return widget.services.library.newEpisodes(since: cutoff);
   }
 
   KeyEventResult _desktopKey(FocusNode node, KeyEvent event) {

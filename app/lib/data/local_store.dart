@@ -21,7 +21,6 @@ class LocalSnapshot {
     required this.queue,
     required this.queuePending,
     required this.episodeLists,
-    required this.meta,
   });
 
   final List<Podcast> podcasts;
@@ -34,14 +33,12 @@ class LocalSnapshot {
   final QueueState? queue;
   final bool queuePending;
   final Map<int, EpisodeListInfo> episodeLists;
-  final Map<String, String> meta;
 }
 
 abstract final class MetaKey {
   static const token = 'token';
   static const serverUrl = 'server_url';
   static const serverId = 'server_id';
-  static const deviceId = 'device_id';
   static const deviceName = 'device_name';
   static const podcastsEtag = 'podcasts_etag';
   static const stateEtag = 'state_etag';
@@ -54,7 +51,14 @@ class LocalStore {
   final Database db;
   final Map<String, String> _meta = {};
 
-  static const schemaVersion = 3;
+  static const schemaVersion = 4;
+  static const _episodesTable = '''CREATE TABLE IF NOT EXISTS episodes (
+    id INTEGER PRIMARY KEY, podcast_id INTEGER NOT NULL, sort INTEGER NOT NULL,
+    title TEXT NOT NULL, enclosure_url TEXT NOT NULL, published_at INTEGER,
+    duration_s INTEGER, enclosure_length INTEGER, image_url TEXT,
+    removed_from_feed INTEGER NOT NULL)''';
+  static const _episodesIndex =
+      'CREATE INDEX IF NOT EXISTS episodes_podcast ON episodes (podcast_id, sort)';
 
   static Future<Database> open(
     DatabaseFactory factory,
@@ -80,8 +84,18 @@ class LocalStore {
             );
           }
         }
+        if (oldVersion < 4) {
+          await db.execute('ALTER TABLE episodes RENAME TO episodes_v3');
+          await db.execute(_episodesTable);
+          await db.execute(
+            'INSERT INTO episodes SELECT id, podcast_id, sort, title, enclosure_url, '
+            'published_at, duration_s, enclosure_length, image_url, removed_from_feed FROM episodes_v3',
+          );
+          await db.execute('DROP TABLE episodes_v3');
+          await db.execute(_episodesIndex);
+          await db.delete('meta', where: "key = 'device_id'");
+        }
       },
-      singleInstance: false,
     ),
   );
 
@@ -93,15 +107,8 @@ class LocalStore {
         subscribed INTEGER NOT NULL, episode_count INTEGER NOT NULL,
         played_count INTEGER NOT NULL, episodes_version TEXT NOT NULL,
         last_success_at INTEGER, last_error TEXT)''')
-      ..execute('''CREATE TABLE IF NOT EXISTS episodes (
-        id INTEGER PRIMARY KEY, podcast_id INTEGER NOT NULL, sort INTEGER NOT NULL,
-        guid TEXT NOT NULL, title TEXT NOT NULL, enclosure_url TEXT NOT NULL,
-        published_at INTEGER, duration_s INTEGER, enclosure_type TEXT,
-        enclosure_length INTEGER, link TEXT, image_url TEXT,
-        removed_from_feed INTEGER NOT NULL)''')
-      ..execute(
-        'CREATE INDEX IF NOT EXISTS episodes_podcast ON episodes (podcast_id, sort)',
-      )
+      ..execute(_episodesTable)
+      ..execute(_episodesIndex)
       ..execute('''CREATE TABLE IF NOT EXISTS episode_states (
         episode_id INTEGER PRIMARY KEY, position_ms INTEGER NOT NULL,
         status TEXT NOT NULL, duration_ms INTEGER, updated_at INTEGER NOT NULL,
@@ -188,7 +195,6 @@ class LocalStore {
             row['etag'] as String?,
           ),
       },
-      meta: Map.of(_meta),
     );
   }
 
@@ -207,18 +213,24 @@ class LocalStore {
     }
   }
 
-  Future<void> replacePodcasts(List<Podcast> podcasts) =>
-      db.transaction((txn) async {
-        final batch = txn.batch()..delete('podcasts');
-        for (final p in podcasts) {
-          batch.insert('podcasts', _podcastRow(p));
-        }
-        final ids = podcasts.map((p) => p.id).join(',');
-        batch
-          ..delete('episodes', where: 'podcast_id NOT IN ($ids)')
-          ..delete('episode_lists', where: 'podcast_id NOT IN ($ids)');
-        await batch.commit(noResult: true);
-      });
+  Future<void> replacePodcasts(List<Podcast> podcasts, Set<int> removed) async {
+    final batch = db.batch();
+    if (removed.isNotEmpty) {
+      final ids = removed.join(',');
+      batch
+        ..delete('podcasts', where: 'id IN ($ids)')
+        ..delete('episodes', where: 'podcast_id IN ($ids)')
+        ..delete('episode_lists', where: 'podcast_id IN ($ids)');
+    }
+    for (final p in podcasts) {
+      batch.insert(
+        'podcasts',
+        _podcastRow(p),
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
+    await batch.commit(noResult: true);
+  }
 
   Future<void> upsertPodcast(Podcast podcast) => db.insert(
     'podcasts',
@@ -256,130 +268,51 @@ class LocalStore {
       }, conflictAlgorithm: ConflictAlgorithm.replace);
 
   Future<void> writeStates(
-    Iterable<(EpisodeState, bool)> states, {
-    (QueueState, bool)? queue,
+    Iterable<EpisodeState> states, {
+    QueueState? queue,
+    Set<int?> pending = const {},
     Map<int?, DateTime> clockRejections = const {},
-    Map<int, EpisodeState> acknowledgedStates = const {},
-    QueueState? acknowledgedQueue,
-  }) => db.transaction((txn) async {
-    final batch = txn.batch();
-    for (final (state, pending) in states) {
-      final row = {
-        'episode_id': state.episodeId,
-        'position_ms': state.positionMs,
-        'status': state.status.json,
-        'duration_ms': state.durationMs,
-        'updated_at': state.updatedAt.millisecondsSinceEpoch,
-        'pending': pending ? 1 : 0,
-        'clock_rejected':
-            pending && clockRejections[state.episodeId] == state.updatedAt
-            ? 1
-            : 0,
-      };
-      final sent = acknowledgedStates[state.episodeId];
-      if (pending) {
-        batch.insert(
-          'episode_states',
-          row,
-          conflictAlgorithm: ConflictAlgorithm.replace,
-        );
-      } else if (sent == null) {
-        batch.update(
-          'episode_states',
-          row,
-          where: 'episode_id = ? AND updated_at < ?',
-          whereArgs: [state.episodeId, state.updatedAt.millisecondsSinceEpoch],
-        );
-        batch.insert(
-          'episode_states',
-          row,
-          conflictAlgorithm: ConflictAlgorithm.ignore,
-        );
-      } else {
-        final match = _pendingState(sent);
-        batch.update(
-          'episode_states',
-          row,
-          where: match.where,
-          whereArgs: match.args,
-        );
-      }
+    DateTime? lastSync,
+  }) async {
+    final batch = db.batch();
+    void write(String table, Map<String, Object?> row, int? id, DateTime at) {
+      batch.insert(table, {
+        ...row,
+        'updated_at': at.millisecondsSinceEpoch,
+        'pending': pending.contains(id) ? 1 : 0,
+        'clock_rejected': clockRejections[id] == at ? 1 : 0,
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+
+    for (final state in states) {
+      write(
+        'episode_states',
+        {
+          'episode_id': state.episodeId,
+          'position_ms': state.positionMs,
+          'status': state.status.json,
+          'duration_ms': state.durationMs,
+        },
+        state.episodeId,
+        state.updatedAt,
+      );
     }
     if (queue != null) {
-      final (q, pending) = queue;
-      final row = {
-        'id': 1,
-        'episode_ids': jsonEncode(q.episodeIds),
-        'updated_at': q.updatedAt.millisecondsSinceEpoch,
-        'pending': pending ? 1 : 0,
-        'clock_rejected': pending && clockRejections[null] == q.updatedAt
-            ? 1
-            : 0,
-      };
-      if (pending) {
-        batch.insert(
-          'queue',
-          row,
-          conflictAlgorithm: ConflictAlgorithm.replace,
-        );
-      } else if (acknowledgedQueue == null) {
-        batch.update(
-          'queue',
-          row,
-          where: 'id = 1 AND updated_at < ?',
-          whereArgs: [q.updatedAt.millisecondsSinceEpoch],
-        );
-        batch.insert('queue', row, conflictAlgorithm: ConflictAlgorithm.ignore);
-      } else {
-        final match = _pendingQueue(acknowledgedQueue);
-        batch.update('queue', row, where: match.where, whereArgs: match.args);
-      }
+      write(
+        'queue',
+        {'id': 1, 'episode_ids': jsonEncode(queue.episodeIds)},
+        null,
+        queue.updatedAt,
+      );
+    }
+    if (lastSync != null) {
+      batch.insert('meta', {
+        'key': MetaKey.lastSync,
+        'value': formatTime(lastSync),
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
     }
     await batch.commit(noResult: true);
-  });
-
-  static ({String where, List<Object?> args}) _pendingState(
-    EpisodeState sent,
-  ) => (
-    where:
-        'pending = 1 AND episode_id = ? AND updated_at = ? '
-        'AND position_ms = ? AND status = ? AND duration_ms '
-        '${sent.durationMs == null ? 'IS NULL' : '= ?'}',
-    args: [
-      sent.episodeId,
-      sent.updatedAt.millisecondsSinceEpoch,
-      sent.positionMs,
-      sent.status.json,
-      ?sent.durationMs,
-    ],
-  );
-
-  static ({String where, List<Object?> args}) _pendingQueue(QueueState sent) =>
-      (
-        where: 'id = 1 AND pending = 1 AND updated_at = ? AND episode_ids = ?',
-        args: [
-          sent.updatedAt.millisecondsSinceEpoch,
-          jsonEncode(sent.episodeIds),
-        ],
-      );
-
-  Future<bool> updateRejectedTime(
-    EpisodeState? state,
-    QueueState? queue,
-    DateTime? correctedTime,
-  ) async {
-    final match = state == null ? _pendingQueue(queue!) : _pendingState(state);
-    final updated = await db.update(
-      state == null ? 'queue' : 'episode_states',
-      {
-        'clock_rejected': correctedTime == null ? 1 : 0,
-        if (correctedTime != null)
-          'updated_at': correctedTime.millisecondsSinceEpoch,
-      },
-      where: match.where,
-      whereArgs: match.args,
-    );
-    return updated == 1;
+    if (lastSync != null) _meta[MetaKey.lastSync] = formatTime(lastSync);
   }
 
   Future<({String text, String? version})?> description(int episodeId) async {
@@ -475,14 +408,11 @@ class LocalStore {
   static Episode _episode(Map<String, Object?> row) => Episode(
     id: row['id'] as int,
     podcastId: row['podcast_id'] as int,
-    guid: row['guid'] as String,
     title: row['title'] as String,
     enclosureUrl: row['enclosure_url'] as String,
     publishedAt: _fromMsOrNull(row['published_at']),
     durationS: row['duration_s'] as int?,
-    enclosureType: row['enclosure_type'] as String?,
     enclosureLength: row['enclosure_length'] as int?,
-    link: row['link'] as String?,
     imageUrl: row['image_url'] as String?,
     removedFromFeed: row['removed_from_feed'] == 1,
   );
@@ -491,14 +421,11 @@ class LocalStore {
     'id': e.id,
     'podcast_id': e.podcastId,
     'sort': sort,
-    'guid': e.guid,
     'title': e.title,
     'enclosure_url': e.enclosureUrl,
     'published_at': e.publishedAt?.millisecondsSinceEpoch,
     'duration_s': e.durationS,
-    'enclosure_type': e.enclosureType,
     'enclosure_length': e.enclosureLength,
-    'link': e.link,
     'image_url': e.imageUrl,
     'removed_from_feed': e.removedFromFeed ? 1 : 0,
   };

@@ -28,6 +28,9 @@ abstract class DownloadService extends ChangeNotifier {
   /// Finished downloads, newest first.
   List<int> get downloadedEpisodeIds;
 
+  /// Pending and failed downloads followed by finished downloads.
+  List<int> get episodeIds => downloadedEpisodeIds;
+
   Future<void> download(int episodeId);
 
   Future<void> delete(int episodeId);

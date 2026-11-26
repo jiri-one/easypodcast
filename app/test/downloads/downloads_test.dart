@@ -23,17 +23,15 @@ void main() {
   late bool wifi;
   late int availableBytes;
 
-  Future<EpisodeDownloads> open({bool desktop = false}) =>
-      EpisodeDownloads.open(
-        library: library,
-        settings: settings,
-        downloader: downloader,
-        documents: documents,
-        desktop: desktop,
-        wifiCheck: () async => wifi,
-        wifiChanges: wifiChanges.stream,
-        availableBytes: () async => availableBytes,
-      );
+  Future<EpisodeDownloads> open() => EpisodeDownloads.open(
+    library: library,
+    settings: settings,
+    downloader: downloader,
+    documents: documents,
+    wifiCheck: () async => wifi,
+    wifiChanges: wifiChanges.stream,
+    availableBytes: () async => availableBytes,
+  );
 
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
@@ -94,6 +92,7 @@ void main() {
       expect(task.allowPause, isTrue);
       expect(task.baseDirectory, BaseDirectory.applicationDocuments);
       expect(downloads.statusOf(1).status, DownloadStatus.queued);
+      expect(downloads.episodeIds, [1]);
 
       downloader.events.add(TaskProgressUpdate(task, 0.4));
       await waitFor(() => downloads.statusOf(1).progress == 0.4);
@@ -103,6 +102,7 @@ void main() {
       final file = await saveDownload(2);
       expect(downloader.enqueued.last.requiresWiFi, isFalse);
       expect(downloads.downloadedEpisodeIds, [2]);
+      expect(downloads.episodeIds, [1, 2]);
 
       downloads.dispose();
       downloads = await open();
@@ -130,19 +130,15 @@ void main() {
     },
   );
 
-  test('Linux blocks new Wi-Fi-only downloads on other connections', () async {
-    downloads.dispose();
-    wifi = false;
-    downloads = await open(desktop: true);
-
-    await downloads.download(1);
-    expect(downloader.enqueued, isEmpty);
-    expect(downloads.statusOf(1).status, DownloadStatus.failed);
-
-    settings.downloadOnWifiOnly = false;
-    await downloads.download(1);
-    expect(downloader.enqueued.single.requiresWiFi, isFalse);
-  });
+  test('Linux opens a no-op download service', () async {
+    final service = await openDownloads(library: library, settings: settings);
+    addTearDown(service.dispose);
+    await service.download(1);
+    await service.delete(1);
+    expect(service.statusOf(1), DownloadInfo.none);
+    expect(service.localFileOf(1), isNull);
+    expect(service.episodeIds, isEmpty);
+  }, skip: !Platform.isLinux);
 
   test('dismissal always deletes and cancels unfinished work', () async {
     settings.deleteAfterPlayed = false;
@@ -392,7 +388,6 @@ class _Library extends Library {
   Episode episode(int id) => Episode(
     id: id,
     podcastId: 1,
-    guid: '$id',
     title: 'Field Notes $id',
     enclosureUrl: 'https://example.test/$id.mp3',
   );

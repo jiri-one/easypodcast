@@ -3,21 +3,23 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:http/http.dart' as http;
+import 'package:http/io_client.dart';
 
 import '../core/api.dart';
 import '../core/models.dart';
-import 'state_confirmation.dart';
 
 class HttpApiClient implements ApiClient {
   HttpApiClient({
-    required String serverUrl,
+    String serverUrl = '',
     this.token,
     http.Client? client,
     Duration? timeout,
   }) : _serverUrl = normalizeServerUrl(serverUrl),
        timeout = timeout ?? const Duration(seconds: 10),
        _listTimeout = timeout ?? const Duration(seconds: 30),
-       _client = client ?? http.Client();
+       _client =
+           client ??
+           IOClient(HttpClient()..idleTimeout = const Duration(seconds: 45));
 
   static const _feedTimeout = Duration(seconds: 90);
   final http.Client _client;
@@ -82,8 +84,6 @@ class HttpApiClient implements ApiClient {
           .timeout(timeout ?? this.timeout);
     } on TimeoutException catch (e) {
       throw OfflineException(e);
-    } on SocketException catch (e) {
-      throw OfflineException(e);
     } on http.ClientException catch (e) {
       throw OfflineException(e);
     } on IOException catch (e) {
@@ -95,19 +95,26 @@ class HttpApiClient implements ApiClient {
       token = null;
       onUnauthorized?.call();
     }
-    throw ApiException(status, _errorMessage(response));
+    throw _error(response);
   }
 
-  static String _errorMessage(http.Response response) {
+  static ApiException _error(http.Response response) {
     try {
       final decoded = jsonDecode(utf8.decode(response.bodyBytes));
       if (decoded is Map && decoded['error'] is String) {
-        return decoded['error'] as String;
+        return ApiException(
+          response.statusCode,
+          decoded['error'] as String,
+          serverId: decoded['server_id'] as String?,
+        );
       }
     } on FormatException {
       // Proxies answer with HTML; the reason phrase is better than nothing.
     }
-    return response.reasonPhrase ?? 'HTTP ${response.statusCode}';
+    return ApiException(
+      response.statusCode,
+      response.reasonPhrase ?? 'HTTP ${response.statusCode}',
+    );
   }
 
   static Object? _json(http.Response response) =>
@@ -127,6 +134,7 @@ class HttpApiClient implements ApiClient {
     required String username,
     required String password,
     required String deviceName,
+    Duration? timeout,
   }) async {
     final normalized = normalizeServerUrl(serverUrl);
     final response = await _send(
@@ -137,6 +145,7 @@ class HttpApiClient implements ApiClient {
         'password': password,
         'device_name': deviceName,
       },
+      timeout: timeout,
       authenticated: false,
       serverUrl: normalized,
     );
@@ -152,20 +161,24 @@ class HttpApiClient implements ApiClient {
   }
 
   @override
-  Future<void> logout() async {
+  Future<void> logout({Duration? timeout}) async {
     final requestToken = token;
     try {
-      await _send('POST', '/api/logout');
+      await _send('POST', '/api/logout', timeout: timeout);
     } finally {
       if (token == requestToken) token = null;
     }
   }
 
   @override
-  Future<Fetched<List<Podcast>>?> podcasts({String? ifNoneMatch}) async {
+  Future<Fetched<List<Podcast>>?> podcasts({
+    String? ifNoneMatch,
+    Duration? timeout,
+  }) async {
     final response = await _send(
       'GET',
       '/api/podcasts',
+      timeout: timeout,
       ifNoneMatch: ifNoneMatch,
     );
     if (response.statusCode == 304) return null;
@@ -175,31 +188,32 @@ class HttpApiClient implements ApiClient {
   }
 
   @override
-  Future<Podcast> subscribe(String feedUrl) async {
+  Future<Podcast> subscribe(String feedUrl, {Duration? timeout}) async {
     final response = await _send(
       'POST',
       '/api/podcasts',
       json: {'feed_url': feedUrl},
-      timeout: _feedTimeout,
+      timeout: timeout ?? _feedTimeout,
     );
     return Podcast.fromJson(_object(response));
   }
 
   @override
-  Future<void> unsubscribe(int podcastId) async {
-    await _send('DELETE', '/api/podcasts/$podcastId');
+  Future<void> unsubscribe(int podcastId, {Duration? timeout}) async {
+    await _send('DELETE', '/api/podcasts/$podcastId', timeout: timeout);
   }
 
   @override
   Future<Fetched<List<Episode>>?> episodes(
     int podcastId, {
     String? ifNoneMatch,
+    Duration? timeout,
   }) async {
     final response = await _send(
       'GET',
       '/api/podcasts/$podcastId/episodes',
       ifNoneMatch: ifNoneMatch,
-      timeout: _listTimeout,
+      timeout: timeout ?? _listTimeout,
     );
     if (response.statusCode == 304) return null;
     return Fetched([
@@ -208,8 +222,13 @@ class HttpApiClient implements ApiClient {
   }
 
   @override
-  Future<({Episode episode, String description})> episode(int episodeId) async {
-    final body = _object(await _send('GET', '/api/episodes/$episodeId'));
+  Future<({Episode episode, String description})> episode(
+    int episodeId, {
+    Duration? timeout,
+  }) async {
+    final body = _object(
+      await _send('GET', '/api/episodes/$episodeId', timeout: timeout),
+    );
     return (
       episode: Episode.fromJson(body),
       description: body['description'] as String? ?? '',
@@ -217,14 +236,15 @@ class HttpApiClient implements ApiClient {
   }
 
   @override
-  Future<StateSnapshot> state() async => (await fetchState())!.value;
-
-  Future<Fetched<StateSnapshot>?> fetchState({String? ifNoneMatch}) async {
+  Future<Fetched<StateSnapshot>?> fetchState({
+    String? ifNoneMatch,
+    Duration? timeout,
+  }) async {
     final response = await _send(
       'GET',
       '/api/state',
       ifNoneMatch: ifNoneMatch,
-      timeout: _listTimeout,
+      timeout: timeout ?? _listTimeout,
     );
     if (response.statusCode == 304) {
       if (ifNoneMatch == null) throw const FormatException('Unexpected 304');
@@ -247,34 +267,40 @@ class HttpApiClient implements ApiClient {
 
   @override
   Future<StatePushResult> pushState({
+    String? serverId,
     List<EpisodeState> episodes = const [],
     QueueState? queue,
+    Duration? timeout,
   }) async {
     final body = _object(
       await _send(
         'POST',
         '/api/state',
+        timeout: timeout,
         json: {
+          'server_id': ?serverId,
           'episodes': [for (final e in episodes) e.toJson()],
           'queue': ?queue?.toJson(),
         },
       ),
     );
     final stored = body['queue'];
-    final result = StatePushResult(
+    return StatePushResult(
       episodes: [
         for (final item in _list(body['episodes'])) EpisodeState.fromJson(item),
       ],
       queue: stored == null
           ? null
           : QueueState.fromJson((stored as Map).cast<String, Object?>()),
+      future: {
+        for (final id in (body['future'] as List?) ?? const [])
+          id == 'queue' ? null : id as int,
+      },
       unknown: [
         for (final id in (body['unknown'] as List?) ?? const []) id as int,
       ],
       serverId: body['server_id'] as String,
     );
-    result.requireConfirmation(episodes, queue);
-    return result;
   }
 
   @override
@@ -289,25 +315,25 @@ class HttpApiClient implements ApiClient {
   }
 
   @override
-  Future<void> refresh() async {
-    await _send('POST', '/api/refresh');
+  Future<void> refresh({Duration? timeout}) async {
+    await _send('POST', '/api/refresh', timeout: timeout);
   }
 
   @override
-  Future<String> exportOpml() async {
-    final response = await _send('GET', '/api/opml');
+  Future<String> exportOpml({Duration? timeout}) async {
+    final response = await _send('GET', '/api/opml', timeout: timeout);
     return utf8.decode(response.bodyBytes);
   }
 
   @override
-  Future<OpmlImportResult> importOpml(String opml) async {
+  Future<OpmlImportResult> importOpml(String opml, {Duration? timeout}) async {
     final body = _object(
       await _send(
         'POST',
         '/api/opml',
         body: opml,
         contentType: 'text/x-opml; charset=utf-8',
-        timeout: _feedTimeout,
+        timeout: timeout ?? _feedTimeout,
       ),
     );
     return OpmlImportResult(

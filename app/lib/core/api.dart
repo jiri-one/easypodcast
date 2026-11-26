@@ -1,8 +1,9 @@
 import 'models.dart';
 
 class ApiException implements Exception {
-  ApiException(this.statusCode, this.message);
+  ApiException(this.statusCode, this.message, {this.serverId});
 
+  final String? serverId;
   final int statusCode;
   final String message;
 
@@ -58,12 +59,16 @@ class StatePushResult {
     required this.episodes,
     required this.queue,
     required this.unknown,
+    this.future = const {},
     this.serverId,
   });
 
   final List<EpisodeState> episodes;
   final QueueState? queue;
   final List<int> unknown;
+
+  /// Null identifies a skipped queue.
+  final Set<int?> future;
   final String? serverId;
 }
 
@@ -86,34 +91,50 @@ abstract interface class ApiClient {
     required String username,
     required String password,
     required String deviceName,
+    Duration? timeout,
   });
 
-  Future<void> logout();
+  Future<void> logout({Duration? timeout});
 
   /// Null means not modified since [ifNoneMatch].
-  Future<Fetched<List<Podcast>>?> podcasts({String? ifNoneMatch});
+  Future<Fetched<List<Podcast>>?> podcasts({
+    String? ifNoneMatch,
+    Duration? timeout,
+  });
 
-  Future<Podcast> subscribe(String feedUrl);
+  Future<Podcast> subscribe(String feedUrl, {Duration? timeout});
 
-  Future<void> unsubscribe(int podcastId);
+  Future<void> unsubscribe(int podcastId, {Duration? timeout});
 
   /// Null means not modified since [ifNoneMatch].
-  Future<Fetched<List<Episode>>?> episodes(int podcastId, {String? ifNoneMatch});
+  Future<Fetched<List<Episode>>?> episodes(
+    int podcastId, {
+    String? ifNoneMatch,
+    Duration? timeout,
+  });
 
-  Future<({Episode episode, String description})> episode(int episodeId);
+  Future<({Episode episode, String description})> episode(
+    int episodeId, {
+    Duration? timeout,
+  });
 
-  Future<StateSnapshot> state();
+  Future<Fetched<StateSnapshot>?> fetchState({
+    String? ifNoneMatch,
+    Duration? timeout,
+  });
 
   Future<StatePushResult> pushState({
+    String? serverId,
     List<EpisodeState> episodes = const [],
     QueueState? queue,
+    Duration? timeout,
   });
 
   Future<EpisodeState?> episodeState(int episodeId, {Duration? timeout});
 
-  Future<void> refresh();
+  Future<void> refresh({Duration? timeout});
 
-  Future<String> exportOpml();
+  Future<String> exportOpml({Duration? timeout});
 
-  Future<OpmlImportResult> importOpml(String opml);
+  Future<OpmlImportResult> importOpml(String opml, {Duration? timeout});
 }

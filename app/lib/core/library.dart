@@ -35,7 +35,7 @@ abstract class Library extends ChangeNotifier {
     DateTime? latest;
     for (final episode in candidates) {
       final state = stateOf(episode.id);
-      if (state.status == EpisodeStatus.none &&
+      if (!state.isFinished &&
           state.positionMs > 0 &&
           (latest == null || state.updatedAt.isAfter(latest))) {
         recent = episode;
@@ -48,13 +48,17 @@ abstract class Library extends ChangeNotifier {
   /// Episodes still eligible for queue playback, in queue order.
   List<Episode> get queue;
 
+  List<Episode> get projectedQueue => queue;
+
+  bool get queueSaving => false;
+
   int? get queueHeadId => queue.firstOrNull?.id;
 
   Future<Episode?> resolveQueueEpisode(int episodeId) async =>
       episode(episodeId);
 
   /// New episodes of subscribed podcasts, newest first.
-  List<Episode> newEpisodes({int limit = 100});
+  List<Episode> newEpisodes({required DateTime since});
 
   /// Ids of episodes that just became played or dismissed, locally or from another device.
   Stream<int> get finishedEpisodes;

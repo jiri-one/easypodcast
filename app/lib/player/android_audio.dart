@@ -36,19 +36,20 @@ class EpisodeAudioHandler extends BaseAudioHandler {
       (change) {
         _publish(change.force);
         if (change.pauseReport case final pausedAt? when _android) {
-          _background(_finishPauseReport(pausedAt));
+          background(_finishPauseReport(pausedAt));
         }
       },
       onDone: () {
         if (!_android) return;
         _library.removeListener(_notifyChildrenChanged);
-        _downloads.removeListener(_notifyChildrenChanged);
+        _downloads.removeListener(_notifyDownloadsChanged);
         unawaited(_childrenChanged.close());
       },
     );
     if (_android) {
       _library.addListener(_notifyChildrenChanged);
-      _downloads.addListener(_notifyChildrenChanged);
+      _downloadedIds = List.of(_downloads.downloadedEpisodeIds);
+      _downloads.addListener(_notifyDownloadsChanged);
     }
     if (!_android) _player.position.addListener(() => _publish(true));
     _publish(true);
@@ -61,13 +62,15 @@ class EpisodeAudioHandler extends BaseAudioHandler {
   final bool _android;
   final String Function() _languageCode;
   final _childrenChanged = BehaviorSubject<Map<String, dynamic>>();
+  late List<int> _downloadedIds;
   Future<void>? _libraryRefresh;
   int? _preparedEpisodeId;
 
   static String _deviceLanguage() =>
       WidgetsBinding.instance.platformDispatcher.locale.languageCode;
 
-  bool get _czech => _languageCode() == 'cs';
+  AppLocalizations get _strings =>
+      lookupAppLocalizations(Locale(_languageCode() == 'cs' ? 'cs' : 'en'));
 
   static const _inProgress = 'in-progress';
   static const _queue = 'queue';
@@ -75,24 +78,15 @@ class EpisodeAudioHandler extends BaseAudioHandler {
   static const _podcasts = 'podcasts';
   static const _episodePrefix = 'episode:';
   static const _podcastPrefix = 'podcast:';
-  List<MediaItem> get _rootItems => [
-    MediaItem(
-      id: _inProgress,
-      title: _czech ? 'Rozposlouchané' : 'In progress',
-      playable: false,
-    ),
-    MediaItem(id: _queue, title: _czech ? 'Fronta' : 'Queue', playable: false),
-    MediaItem(
-      id: _downloaded,
-      title: _czech ? 'Stažené' : 'Downloads',
-      playable: false,
-    ),
-    MediaItem(
-      id: _podcasts,
-      title: _czech ? 'Podcasty' : 'Podcasts',
-      playable: false,
-    ),
-  ];
+  List<MediaItem> get _rootItems {
+    final strings = _strings;
+    return [
+      MediaItem(id: _inProgress, title: strings.inProgress, playable: false),
+      MediaItem(id: _queue, title: strings.queue, playable: false),
+      MediaItem(id: _downloaded, title: strings.downloads, playable: false),
+      MediaItem(id: _podcasts, title: strings.podcasts, playable: false),
+    ];
+  }
 
   MediaItem _item(Episode episode, {Duration? duration}) {
     final podcast = _library.podcast(episode.podcastId);
@@ -126,7 +120,7 @@ class EpisodeAudioHandler extends BaseAudioHandler {
   ]) async {
     switch (parentMediaId) {
       case AudioService.browsableRootId:
-        if (_android) _background(_refreshLibrary());
+        if (_android) background(_refreshLibrary());
         return _rootItems;
       case AudioService.recentRootId:
         if (_android && _libraryRefresh != null) await _refreshLibrary();
@@ -164,12 +158,19 @@ class EpisodeAudioHandler extends BaseAudioHandler {
       return super.subscribeToChildren(parentMediaId);
     }
     if (parentMediaId == AudioService.recentRootId) {
-      _background(_refreshLibrary());
+      background(_refreshLibrary());
     }
     return _childrenChanged;
   }
 
   void _notifyChildrenChanged() => _childrenChanged.add(const {});
+
+  void _notifyDownloadsChanged() {
+    final ids = _downloads.downloadedEpisodeIds;
+    if (listEquals(ids, _downloadedIds)) return;
+    _downloadedIds = List.of(ids);
+    _notifyChildrenChanged();
+  }
 
   Future<void> _finishPauseReport(DateTime pausedAt) async {
     await _player._waitForPendingSend(const Duration(seconds: 5));
@@ -265,11 +266,12 @@ class EpisodeAudioHandler extends BaseAudioHandler {
   Future<void> play() {
     final id = _preparedEpisodeId;
     _preparedEpisodeId = null;
+    _player._cancelFocusResume();
     return _playRequest(
-      () => _player.resume(
-        preferredEpisodeId: id,
-        refreshLibrary: _android ? _refreshLibrary : null,
-      ),
+      () => _player._commands.run(() async {
+        if (_android && _player.current == null) await _refreshLibrary();
+        await _player._resume(id);
+      }),
     );
   }
 
@@ -348,11 +350,7 @@ class EpisodeAudioHandler extends BaseAudioHandler {
     if (item?.id != previous?.id || item?.duration != previous?.duration) {
       mediaItem.add(item);
     }
-    final position =
-        loaded &&
-            !_player._seeking &&
-            _player._failureAttempt == null &&
-            engine.processingState != ProcessingState.completed
+    final position = loaded && !_player._seeking
         ? engine.position
         : _player.position.value;
     final state = playbackState.value;
@@ -364,25 +362,18 @@ class EpisodeAudioHandler extends BaseAudioHandler {
         (state.position - position).abs() < const Duration(seconds: 1)) {
       return;
     }
+    final strings = _strings;
     playbackState.add(
       PlaybackState(
         controls: episode == null
             ? []
             : [
-                MediaControl.skipToPrevious.copyWith(
-                  label: _czech ? 'Skok zpět' : 'Skip back',
-                ),
+                MediaControl.skipToPrevious.copyWith(label: strings.skipBack),
                 playing
-                    ? MediaControl.pause.copyWith(
-                        label: _czech ? 'Pauza' : 'Pause',
-                      )
-                    : MediaControl.play.copyWith(
-                        label: _czech ? 'Přehrát' : 'Play',
-                      ),
-                MediaControl.skipToNext.copyWith(
-                  label: _czech ? 'Skok vpřed' : 'Skip forward',
-                ),
-                MediaControl.stop.copyWith(label: _czech ? 'Zastavit' : 'Stop'),
+                    ? MediaControl.pause.copyWith(label: strings.pause)
+                    : MediaControl.play.copyWith(label: strings.play),
+                MediaControl.skipToNext.copyWith(label: strings.skipForward),
+                MediaControl.stop.copyWith(label: strings.stop),
               ],
         androidCompactActionIndices: episode == null ? [] : [0, 1, 2],
         systemActions: loaded && !_android
@@ -390,7 +381,14 @@ class EpisodeAudioHandler extends BaseAudioHandler {
             : const {},
         processingState: processing,
         playing: playing,
-        errorMessage: error == null ? null : _errorMessage(error.reason),
+        errorMessage: switch (error?.reason) {
+          PlaybackErrorReason.loadFailed => strings.playbackLoadFailed,
+          PlaybackErrorReason.streamFailed => strings.playbackStreamFailed,
+          PlaybackErrorReason.seekFailed => strings.playbackSeekFailed,
+          PlaybackErrorReason.audioFocusUnavailable =>
+            strings.playbackFocusUnavailable,
+          null => null,
+        },
         updatePosition: position,
         bufferedPosition: loaded ? engine.bufferedPosition : Duration.zero,
         speed: _player.speed,
@@ -399,18 +397,7 @@ class EpisodeAudioHandler extends BaseAudioHandler {
     if (_android &&
         error != null &&
         state.processingState != AudioProcessingState.error) {
-      _background(androidPlatform.invokeMethod<void>('stopForeground'));
+      background(androidPlatform.invokeMethod<void>('stopForeground'));
     }
   }
-
-  String _errorMessage(PlaybackErrorReason reason) => switch (reason) {
-    PlaybackErrorReason.loadFailed =>
-      _czech ? 'Díl se nepodařilo otevřít.' : 'Could not open the episode.',
-    PlaybackErrorReason.streamFailed =>
-      _czech ? 'Přehrávání se přerušilo.' : 'Playback was interrupted.',
-    PlaybackErrorReason.seekFailed =>
-      _czech ? 'Přeskočení se nezdařilo.' : 'Could not seek.',
-    PlaybackErrorReason.audioFocusUnavailable =>
-      _czech ? 'Zvuk teď není dostupný.' : 'Audio is unavailable.',
-  };
 }

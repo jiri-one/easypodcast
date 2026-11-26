@@ -16,6 +16,7 @@ class DemoApiClient implements ApiClient {
     required String username,
     required String password,
     required String deviceName,
+    Duration? timeout,
   }) async {
     if (loginErrorCode case final int code) {
       throw ApiException(code, 'Demo login error');
@@ -24,22 +25,27 @@ class DemoApiClient implements ApiClient {
   }
 
   @override
-  Future<void> logout() async {}
+  Future<void> logout({Duration? timeout}) async {}
 
   @override
-  Future<Fetched<List<Podcast>>?> podcasts({String? ifNoneMatch}) async =>
-      Fetched(_library.allPodcasts, null);
+  Future<Fetched<List<Podcast>>?> podcasts({
+    String? ifNoneMatch,
+    Duration? timeout,
+  }) async => Fetched(_library.allPodcasts, null);
 
   @override
-  Future<Podcast> subscribe(String feedUrl) => _library.subscribe(feedUrl);
+  Future<Podcast> subscribe(String feedUrl, {Duration? timeout}) =>
+      _library.subscribe(feedUrl);
 
   @override
-  Future<void> unsubscribe(int podcastId) => _library.unsubscribe(podcastId);
+  Future<void> unsubscribe(int podcastId, {Duration? timeout}) =>
+      _library.unsubscribe(podcastId);
 
   @override
   Future<Fetched<List<Episode>>?> episodes(
     int podcastId, {
     String? ifNoneMatch,
+    Duration? timeout,
   }) async {
     final podcast = _library.podcast(podcastId);
     if (podcast == null) throw ApiException(404, 'Podcast not found');
@@ -49,7 +55,10 @@ class DemoApiClient implements ApiClient {
   }
 
   @override
-  Future<({Episode episode, String description})> episode(int episodeId) async {
+  Future<({Episode episode, String description})> episode(
+    int episodeId, {
+    Duration? timeout,
+  }) async {
     final episode = _library.episode(episodeId);
     if (episode == null) throw ApiException(404, 'Episode not found');
     return (
@@ -59,16 +68,24 @@ class DemoApiClient implements ApiClient {
   }
 
   @override
-  Future<StateSnapshot> state() async => StateSnapshot(
-    episodes: _library.states,
-    queue: _library.queueState,
-    serverTime: nowUtc(),
+  Future<Fetched<StateSnapshot>?> fetchState({
+    String? ifNoneMatch,
+    Duration? timeout,
+  }) async => Fetched(
+    StateSnapshot(
+      episodes: _library.states,
+      queue: _library.queueState,
+      serverTime: nowUtc(),
+    ),
+    null,
   );
 
   @override
   Future<StatePushResult> pushState({
+    String? serverId,
     List<EpisodeState> episodes = const [],
     QueueState? queue,
+    Duration? timeout,
   }) async {
     final known = <EpisodeState>[];
     final unknown = <int>[];
@@ -94,10 +111,10 @@ class DemoApiClient implements ApiClient {
   }
 
   @override
-  Future<void> refresh() async => _library.refreshFeeds();
+  Future<void> refresh({Duration? timeout}) async => _library.refreshFeeds();
 
   @override
-  Future<String> exportOpml() async {
+  Future<String> exportOpml({Duration? timeout}) async {
     const escape = HtmlEscape(HtmlEscapeMode.attribute);
     final outlines = [
       for (final podcast in _library.podcasts)
@@ -120,7 +137,7 @@ class DemoApiClient implements ApiClient {
   };
 
   @override
-  Future<OpmlImportResult> importOpml(String opml) async {
+  Future<OpmlImportResult> importOpml(String opml, {Duration? timeout}) async {
     if (!_opmlRoot.hasMatch(opml)) throw ApiException(422, 'Invalid OPML');
     final urls = {
       for (final match in _opmlUrl.allMatches(opml))

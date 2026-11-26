@@ -25,6 +25,9 @@ abstract class PlayerController extends ChangeNotifier {
 
   bool get isBuffering;
 
+  /// The episode whose saved position is being checked.
+  int? get checkingPosition => null;
+
   ValueListenable<Duration> get position;
 
   /// From the player once known, else from the feed.
@@ -34,6 +37,10 @@ abstract class PlayerController extends ChangeNotifier {
 
   /// Null when no sleep timer runs.
   Duration? get sleepRemaining;
+
+  DateTime? get sleepDeadline => null;
+
+  Duration? get sleepDuration => null;
 
   bool get sleepAtEndOfEpisode => false;
 
