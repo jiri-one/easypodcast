@@ -48,6 +48,12 @@ func devicesCommand(ctx context.Context, s store, args []string, out io.Writer) 
 		}
 		return nil
 	case len(args) == 2 && args[0] == "revoke":
+		if args[1] == "--all" {
+			if _, err := s.db.Exec(ctx, "DELETE FROM devices"); err != nil {
+				return databaseError("could not revoke devices", err)
+			}
+			return nil
+		}
 		id, err := strconv.ParseInt(args[1], 10, 64)
 		if err != nil || id <= 0 {
 			return errors.New("invalid device id")
@@ -61,7 +67,7 @@ func devicesCommand(ctx context.Context, s store, args []string, out io.Writer) 
 		}
 		return nil
 	default:
-		return errors.New("usage: easypodcast devices list | devices revoke <id>")
+		return errors.New("usage: easypodcast devices list | devices revoke <id|--all>")
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -106,8 +107,15 @@ const (
 func parseTrustedProxies(value string) []*net.IPNet {
 	var networks []*net.IPNet
 	for part := range strings.SplitSeq(value, ",") {
-		if _, network, err := net.ParseCIDR(strings.TrimSpace(part)); err == nil {
+		part = strings.TrimSpace(part)
+		if _, network, err := net.ParseCIDR(part); err == nil {
 			networks = append(networks, network)
+		} else if ip := net.ParseIP(part); ip != nil {
+			bits := net.IPv6len * 8
+			if ip.To4() != nil {
+				bits = net.IPv4len * 8
+			}
+			networks = append(networks, &net.IPNet{IP: ip, Mask: net.CIDRMask(bits, bits)})
 		}
 	}
 	return networks
@@ -122,21 +130,32 @@ func (l *loginLimiter) clientAddress(r *http.Request) string {
 	if err != nil {
 		return address
 	}
-	for _, network := range l.trustedProxies {
-		if !network.Contains(peer.AsSlice()) {
-			continue
-		}
-		values := r.Header.Values("X-Forwarded-For")
-		if len(values) > 0 {
-			last := values[len(values)-1]
-			last = strings.TrimSpace(last[strings.LastIndexByte(last, ',')+1:])
-			if client, err := netip.ParseAddr(last); err == nil && client.Zone() == "" {
-				return client.Unmap().String()
+	peer = peer.WithZone("").Unmap()
+	if !l.trustsProxy(peer) {
+		return peer.String()
+	}
+	for _, field := range slices.Backward(r.Header.Values("X-Forwarded-For")) {
+		for _, part := range slices.Backward(strings.Split(field, ",")) {
+			client, err := netip.ParseAddr(strings.TrimSpace(part))
+			if err != nil || client.Zone() != "" {
+				return peer.String()
+			}
+			client = client.Unmap()
+			if !l.trustsProxy(client) {
+				return client.String()
 			}
 		}
-		break
 	}
-	return peer.Unmap().String()
+	return peer.String()
+}
+
+func (l *loginLimiter) trustsProxy(ip netip.Addr) bool {
+	for _, network := range l.trustedProxies {
+		if network.Contains(ip.AsSlice()) {
+			return true
+		}
+	}
+	return false
 }
 
 func (l *loginLimiter) start(r *http.Request) (func(bool), time.Duration) {

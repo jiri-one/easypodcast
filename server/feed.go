@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -22,7 +23,8 @@ import (
 	"github.com/mmcdole/gofeed"
 )
 
-const maxFeedBytes = 8 << 20
+const maxFeedBytes = 64 << 20
+const largeFeedBytes = 8 << 20
 
 const (
 	errInvalidFeedURL  = feedError("feed_url must be an HTTP or HTTPS URL without credentials")
@@ -52,6 +54,23 @@ func feedURL(raw string) (*url.URL, error) {
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Hostname() == "" || u.User != nil {
 		return nil, errInvalidFeedURL
 	}
+	host, port := u.Hostname(), u.Port()
+	name, zone, zoned := strings.Cut(host, "%")
+	host = strings.ToLower(name)
+	if zoned {
+		host += "%" + zone
+	}
+	if port == "80" && u.Scheme == "http" || port == "443" && u.Scheme == "https" {
+		port = ""
+	}
+	switch {
+	case port != "":
+		u.Host = net.JoinHostPort(host, port)
+	case strings.HasPrefix(u.Host, "["):
+		u.Host = "[" + host + "]"
+	default:
+		u.Host = host
+	}
 	u.Fragment = ""
 	u.RawFragment = ""
 	return u, nil
@@ -65,7 +84,7 @@ func feedHTTPClient() http.Client {
 		dialer.Control = publicFeedAddress
 	}
 	transport.DialContext = dialer.DialContext
-	return http.Client{Transport: transport, Timeout: fetchTimeout}
+	return http.Client{Transport: transport}
 }
 
 var nonPublicFeedNetworks = []netip.Prefix{
@@ -134,6 +153,8 @@ func (r *refresher) fetch(ctx context.Context, target feedTarget) (feedResponse,
 	case <-ctx.Done():
 		return feedResponse{}, feedTransportError(ctx.Err(), "feed request canceled")
 	}
+	ctx, cancel := context.WithTimeout(ctx, fetchTimeout)
+	defer cancel()
 	canonical := target.URL
 	permanent := true
 	client := r.client
@@ -178,12 +199,32 @@ func (r *refresher) fetch(ctx context.Context, target feedTarget) (feedResponse,
 	if resp.StatusCode != http.StatusOK {
 		return feedResponse{}, feedError(fmt.Sprintf("feed returned HTTP %d", resp.StatusCode))
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxFeedBytes+1))
-	if err != nil {
-		return feedResponse{}, feedTransportError(err, "could not read feed")
-	}
-	result.document, err = parseFeed(ctx, body, resp.Request.URL)
+	result.document, err = r.parseFeedBody(ctx, resp)
 	return result, err
+}
+
+func (r *refresher) parseFeedBody(ctx context.Context, resp *http.Response) (*feedDocument, error) {
+	if resp.ContentLength > maxFeedBytes {
+		return nil, errFeedTooLarge
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, largeFeedBytes+1))
+	if err != nil {
+		return nil, feedTransportError(err, "could not read feed")
+	}
+	if len(body) > largeFeedBytes {
+		select {
+		case r.large <- struct{}{}:
+			defer func() { <-r.large }()
+		case <-ctx.Done():
+			return nil, feedTransportError(ctx.Err(), "feed request canceled")
+		}
+		buffer := bytes.NewBuffer(body)
+		if _, err := buffer.ReadFrom(io.LimitReader(resp.Body, int64(maxFeedBytes+1-len(body)))); err != nil {
+			return nil, feedTransportError(err, "could not read feed")
+		}
+		body = buffer.Bytes()
+	}
+	return parseFeed(ctx, body, resp.Request.URL)
 }
 
 func parseFeed(ctx context.Context, body []byte, base *url.URL) (*feedDocument, error) {
@@ -225,6 +266,9 @@ func parseFeed(ctx context.Context, body []byte, base *url.URL) (*feedDocument, 
 			e.DurationSeconds = durationSeconds(item.ITunesExt.Duration)
 		}
 		result.episodes = append(result.episodes, e)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, feedTransportError(err, "feed request canceled")
 	}
 	return result, nil
 }

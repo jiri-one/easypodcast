@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -17,10 +18,14 @@ import (
 var migrations embed.FS
 
 const (
-	migrationLock = 47091031
-	feedLock      = 47091032
-	stateLock     = 47091033
+	migrationLock        = 47091031
+	feedLock             = 47091032
+	stateLock            = 47091033
+	feedRefreshMigration = "migrations/006_feed_refresh.sql"
 )
+
+var errUnknownMigration = errors.New("database has a migration this binary does not know")
+var errIncompleteSchema = errors.New("database migrations are incomplete")
 
 type store struct {
 	db         *pgxpool.Pool
@@ -45,12 +50,12 @@ func (s store) migrate(ctx context.Context) error {
 		)`); err != nil {
 			return err
 		}
+		applied, err := appliedMigrations(ctx, tx, files)
+		if err != nil {
+			return err
+		}
 		for _, file := range files {
-			var exists bool
-			if err := tx.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version = $1)", file).Scan(&exists); err != nil {
-				return err
-			}
-			if exists {
+			if slices.Contains(applied, file) {
 				continue
 			}
 			sql, err := migrations.ReadFile(file)
@@ -60,12 +65,51 @@ func (s store) migrate(ctx context.Context) error {
 			if _, err := tx.Exec(ctx, string(sql)); err != nil {
 				return fmt.Errorf("%s: %w", file, err)
 			}
+			if file == feedRefreshMigration {
+				if err := migrateFeedAliases(ctx, tx); err != nil {
+					return err
+				}
+			}
 			if _, err := tx.Exec(ctx, "INSERT INTO schema_migrations (version) VALUES ($1)", file); err != nil {
 				return err
 			}
 		}
 		return nil
 	})
+}
+
+func appliedMigrations(ctx context.Context, db interface {
+	Query(context.Context, string, ...any) (pgx.Rows, error)
+}, known []string) ([]string, error) {
+	rows, err := db.Query(ctx, "SELECT version FROM schema_migrations")
+	if err != nil {
+		return nil, err
+	}
+	applied, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return nil, err
+	}
+	for _, file := range applied {
+		if !slices.Contains(known, file) {
+			return nil, errUnknownMigration
+		}
+	}
+	return applied, nil
+}
+
+func (s store) checkSchema(ctx context.Context) error {
+	files, err := fs.Glob(migrations, "migrations/*.sql")
+	if err != nil {
+		return err
+	}
+	applied, err := appliedMigrations(ctx, s.db, files)
+	if err != nil {
+		return err
+	}
+	if len(applied) != len(files) {
+		return errIncompleteSchema
+	}
+	return nil
 }
 
 type scanner interface {
@@ -146,8 +190,13 @@ func (s store) episodes(ctx context.Context, podcastID int64) ([]episode, error)
 	if !exists {
 		return nil, pgx.ErrNoRows
 	}
-	rows, err := s.db.Query(ctx, "SELECT "+episodeColumns+` FROM episodes WHERE podcast_id = $1
-		ORDER BY COALESCE(published_at, estimated_publication) DESC NULLS LAST, feed_order NULLS LAST, id DESC`, podcastID)
+	rows, err := s.db.Query(ctx, "SELECT "+episodeColumns+` FROM episodes
+		LEFT JOIN (
+			SELECT f.episode_id, f.position FROM podcasts p CROSS JOIN LATERAL
+				unnest(p.feed_episode_order) WITH ORDINALITY AS f(episode_id, position) WHERE p.id = $1
+		) AS feed ON feed.episode_id = episodes.id
+		WHERE podcast_id = $1 ORDER BY COALESCE(published_at, estimated_publication) DESC NULLS LAST,
+			COALESCE(feed.position - 1, feed_order) NULLS LAST, id DESC`, podcastID)
 	if err != nil {
 		return nil, err
 	}
@@ -196,9 +245,37 @@ func readQueue(ctx context.Context, tx pgx.Tx) (*queue, error) {
 	return &q, err
 }
 
-func (s store) state(ctx context.Context) (stateChange, error) {
-	var result stateChange
+const stateRevisionSQL = "SELECT server_id::text, state_version FROM server_metadata"
+
+func scanStateRevision(row scanner) (stateRevision, error) {
+	var revision stateRevision
+	err := row.Scan(&revision.ServerID, &revision.version)
+	if errors.Is(err, pgx.ErrNoRows) {
+		err = errors.New("database is missing the server identity")
+	}
+	return revision, err
+}
+
+func (s store) currentStateRevision(ctx context.Context) (stateRevision, error) {
+	return scanStateRevision(s.db.QueryRow(ctx, stateRevisionSQL))
+}
+
+func (s store) newServerID(ctx context.Context) error {
+	tag, err := s.db.Exec(ctx, "UPDATE server_metadata SET server_id = DEFAULT")
+	if err == nil && tag.RowsAffected() != 1 {
+		return errors.New("database is missing the server identity")
+	}
+	return err
+}
+
+func (s store) state(ctx context.Context) (stateSnapshot, error) {
+	var result stateSnapshot
 	err := pgx.BeginTxFunc(ctx, s.db, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}, func(tx pgx.Tx) error {
+		revision, err := scanStateRevision(tx.QueryRow(ctx, stateRevisionSQL))
+		if err != nil {
+			return err
+		}
+		result.stateRevision = revision
 		rows, err := tx.Query(ctx, "SELECT episode_id, position_ms, status, duration_ms, updated_at FROM episode_state ORDER BY episode_id")
 		if err != nil {
 			return err
@@ -249,6 +326,11 @@ func (s store) updateState(ctx context.Context, change stateChange, now time.Tim
 		if err != nil {
 			return err
 		}
+		revision, err := scanStateRevision(tx.QueryRow(ctx, stateRevisionSQL))
+		if err != nil {
+			return err
+		}
+		result.ServerID = revision.ServerID
 		result.Queue, err = readQueue(ctx, tx)
 		return err
 	})
@@ -284,6 +366,7 @@ func applyStates(ctx context.Context, tx pgx.Tx, ids []int64, latest map[int64]e
 	}
 
 	batch := &pgx.Batch{}
+	changed := false
 	for _, id := range ids {
 		if !exists[id] {
 			continue
@@ -292,7 +375,11 @@ func applyStates(ctx context.Context, tx pgx.Tx, ids []int64, latest map[int64]e
 		batch.Queue(`INSERT INTO episode_state (episode_id, position_ms, status, duration_ms, updated_at) VALUES ($1,$2,$3,$4,$5)
 			ON CONFLICT (episode_id) DO UPDATE SET position_ms = EXCLUDED.position_ms,
 			status = EXCLUDED.status, duration_ms = EXCLUDED.duration_ms, updated_at = EXCLUDED.updated_at
-			WHERE EXCLUDED.updated_at > episode_state.updated_at`, id, e.PositionMS, e.Status, e.DurationMS, e.UpdatedAt.Time)
+			WHERE EXCLUDED.updated_at > episode_state.updated_at`, id, e.PositionMS, e.Status, e.DurationMS, e.UpdatedAt.Time).
+			Exec(func(tag pgconn.CommandTag) error {
+				changed = changed || tag.RowsAffected() != 0
+				return nil
+			})
 	}
 	if q != nil {
 		filtered := make([]int64, 0, len(q.EpisodeIDs))
@@ -303,9 +390,12 @@ func applyStates(ctx context.Context, tx pgx.Tx, ids []int64, latest map[int64]e
 		}
 		batch.Queue(`INSERT INTO queue (episode_ids, updated_at) VALUES ($1,$2)
 			ON CONFLICT (singleton) DO UPDATE SET episode_ids = EXCLUDED.episode_ids, updated_at = EXCLUDED.updated_at
-			WHERE EXCLUDED.updated_at > queue.updated_at AND (NOT $3 OR cardinality(queue.episode_ids) = 0)`,
+			WHERE EXCLUDED.updated_at > queue.updated_at AND (NOT $3 OR NOT EXISTS (
+				SELECT 1 FROM unnest(queue.episode_ids) AS shown(id)
+				LEFT JOIN episode_state es ON es.episode_id = shown.id WHERE COALESCE(es.status, '') = ''))`,
 			filtered, q.UpdatedAt.Time, queueOnlyIfEmpty).Exec(func(tag pgconn.CommandTag) error {
 			if tag.RowsAffected() != 0 {
+				changed = true
 				result.queueEntriesWritten = len(filtered)
 			}
 			return nil
@@ -313,6 +403,11 @@ func applyStates(ctx context.Context, tx pgx.Tx, ids []int64, latest map[int64]e
 	}
 	if err := tx.SendBatch(ctx, batch).Close(); err != nil {
 		return err
+	}
+	if changed {
+		if _, err := tx.Exec(ctx, "UPDATE server_metadata SET state_version = state_version + 1"); err != nil {
+			return err
+		}
 	}
 	rows, err = tx.Query(ctx, `SELECT es.episode_id, es.position_ms, es.status, es.duration_ms, es.updated_at
 		FROM unnest($1::bigint[]) WITH ORDINALITY AS input(id, position)

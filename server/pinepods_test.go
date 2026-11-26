@@ -163,7 +163,7 @@ func TestImportPinepods(t *testing.T) {
 	newer := episodeState{
 		EpisodeID: copper, PositionMS: 1800, DurationMS: &measured, UpdatedAt: timestamp{listenAt.Add(time.Hour)},
 	}
-	manualQueue := &queue{EpisodeIDs: []int64{archived.ID}, UpdatedAt: timestamp{state.Queue.UpdatedAt.Add(time.Microsecond)}}
+	manualQueue := &queue{EpisodeIDs: []int64{copper}, UpdatedAt: timestamp{state.Queue.UpdatedAt.Add(time.Microsecond)}}
 	change := stateChange{Episodes: []episodeState{newer}, Queue: manualQueue}
 	if _, err := s.updateState(t.Context(), change, time.Now()); err != nil {
 		t.Fatal(err)
@@ -181,17 +181,21 @@ func TestImportPinepods(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(manualQueue, afterEdit.Queue) {
 		t.Fatalf("manual queue changed after import: %+v, %v", afterEdit.Queue, err)
 	}
-	empty := &queue{EpisodeIDs: []int64{}, UpdatedAt: timestamp{manualQueue.UpdatedAt.Add(time.Microsecond)}}
-	if _, err := s.updateState(t.Context(), stateChange{Queue: empty}, time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	result, err = r.importPinepods(t.Context(), db, "fixture-listener")
-	if err != nil || result.queueEntries != 3 {
-		t.Fatalf("import into a stored empty queue %+v, %v", result, err)
-	}
-	refilled, err := s.state(t.Context())
-	if err != nil || refilled.Queue == nil || !slices.Equal(state.Queue.EpisodeIDs, refilled.Queue.EpisodeIDs) {
-		t.Fatalf("import did not refill the empty queue: %+v, %v", refilled.Queue, err)
+	changedAt := manualQueue.UpdatedAt.Time
+	for _, hidden := range [][]int64{{paper, archived.ID}, {}} {
+		empty := &queue{EpisodeIDs: hidden, UpdatedAt: timestamp{changedAt.Add(time.Microsecond)}}
+		if _, err := s.updateState(t.Context(), stateChange{Queue: empty}, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		result, err = r.importPinepods(t.Context(), db, "fixture-listener")
+		if err != nil || result.queueEntries != 3 {
+			t.Fatalf("import into a queue with no visible entries %+v, %v", result, err)
+		}
+		refilled, err := s.state(t.Context())
+		if err != nil || refilled.Queue == nil || !slices.Equal(state.Queue.EpisodeIDs, refilled.Queue.EpisodeIDs) {
+			t.Fatalf("import did not refill the queue: %+v, %v", refilled.Queue, err)
+		}
+		changedAt = refilled.Queue.UpdatedAt.Time
 	}
 }
 

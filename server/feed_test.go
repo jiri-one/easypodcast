@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"net/url"
 	"os"
 	"strings"
@@ -89,12 +90,80 @@ func TestParseFeedLimits(t *testing.T) {
 		{"invalid JSON prefix", "\x01" + `{"title":"Fixture","items":[{}]}`, errUnusableFeed},
 		{"null JSON item", `{"title":"Fixture","items":[null]}`, errUnusableFeed},
 		{"body size", strings.Repeat(" ", maxFeedBytes+1), errFeedTooLarge},
-		{"Atom markup", `<feed><title>Fixture</title><subtitle type="html"><![CDATA[` +
+		{"Atom markup", `<feed xml:base="https://example.invalid/"><title>Fixture</title><subtitle type="html"><![CDATA[` +
 			strings.Repeat("<p>Line</p>", 400) + "]]></subtitle></feed>", errAtomMarkup},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := parseFeed(t.Context(), []byte(tc.body), base); !errors.Is(err, tc.want) {
 				t.Fatalf("got %v, want %v", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseAtomHTMLWithoutBase(t *testing.T) {
+	base, _ := url.Parse("https://example.invalid/feed")
+	html := strings.Repeat(`<p>Read the <a href="/notes">notes</a> for this episode.</p>`, 20)
+	for name, content := range map[string]string{
+		"escaped": strings.NewReplacer("<", "&lt;", ">", "&gt;").Replace(html),
+		"CDATA":   "<![CDATA[" + html + "]]>",
+	} {
+		t.Run(name, func(t *testing.T) {
+			var body strings.Builder
+			body.WriteString(`<feed xmlns="http://www.w3.org/2005/Atom"><title>Fixture</title>`)
+			for i := range 100 {
+				fmt.Fprintf(&body, `<entry><id>%d</id><title>Episode</title><content type="html">%s</content>
+					<link rel="enclosure" type="audio/mpeg" href="/audio/%d.mp3"/></entry>`, i, content, i)
+			}
+			body.WriteString("</feed>")
+			f, err := parseFeed(t.Context(), []byte(body.String()), base)
+			if err != nil || len(f.episodes) != 100 ||
+				!strings.Contains(f.episodes[99].Description, "notes (https://example.invalid/notes)") {
+				t.Fatalf("valid Atom HTML feed was not parsed: %v", err)
+			}
+		})
+	}
+}
+
+func TestParseJSONFeedNUL(t *testing.T) {
+	base, _ := url.Parse("https://example.invalid/feed")
+	for _, value := range []string{`"Episode\u0000"`, `"Episode\\\u0000"`} {
+		body := fmt.Sprintf(`{"title":"Fixture","items":[{"id":%s,"title":"Episode","attachments":[{"url":"/audio.mp3"}]}]}`, value)
+		if _, err := parseFeed(t.Context(), []byte(body), base); err != errUnusableFeed {
+			t.Errorf("got %v, want %v", err, errUnusableFeed)
+		}
+	}
+	body := `{"title":"Fixture","items":[{"id":"Episode\\u0000","attachments":[{"url":"/audio.mp3"}]}]}`
+	f, err := parseFeed(t.Context(), []byte(body), base)
+	if err != nil || len(f.episodes) != 1 || f.episodes[0].GUID != `Episode\u0000` {
+		t.Fatalf("literal backslash in JSON feed was not preserved: %v", err)
+	}
+}
+
+func BenchmarkParseLargeFeed(b *testing.B) {
+	base, _ := url.Parse("https://example.invalid/feed")
+	for _, mib := range []int{30, 61} {
+		b.Run(fmt.Sprintf("%dMiB", mib), func(b *testing.B) {
+			var feed strings.Builder
+			feed.Grow(mib << 20)
+			feed.WriteString(`<rss xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:content="http://purl.org/rss/1.0/modules/content/"><channel><title>Fixture</title>`)
+			notes := strings.Repeat(`<p>Episode notes with a <a href="https://example.invalid/notes">link</a> and more text.</p>`, 120)
+			items := 0
+			for feed.Len() < (mib << 20) {
+				fmt.Fprintf(&feed, `<item><guid>e%d</guid><title>Episode %d</title><pubDate>Thu, 26 Nov 2026 09:15:00 GMT</pubDate>
+					<description><![CDATA[%s]]></description><content:encoded><![CDATA[%s]]></content:encoded><itunes:summary><![CDATA[%s]]></itunes:summary>
+					<enclosure url="/audio/%d.mp3" type="audio/mpeg"/></item>`, items, items, notes, notes, notes, items)
+				items++
+			}
+			feed.WriteString("</channel></rss>")
+			body := []byte(feed.String())
+			b.SetBytes(int64(len(body)))
+			b.ReportAllocs()
+			for b.Loop() {
+				f, err := parseFeed(b.Context(), body, base)
+				if err != nil || len(f.episodes) != items {
+					b.Fatalf("parse of %d items: %v", items, err)
+				}
 			}
 		})
 	}

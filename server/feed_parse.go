@@ -57,6 +57,9 @@ func parseBoundedFeed(ctx context.Context, body []byte) (parsed *gofeed.Feed, re
 	prefix := bytes.TrimLeft(body, " \t\r\n\uFEFF")
 	switch {
 	case bytes.HasPrefix(prefix, []byte("{")):
+		if hasJSONNUL(body) {
+			return nil, errUnusableFeed
+		}
 		var feed struct{ Items jsonItemLimit }
 		if bytes.Count(body, []byte("{"))+bytes.Count(body, []byte("[")) > maxFeedElements {
 			return nil, errFeedTooLarge
@@ -106,6 +109,24 @@ func invalidXMLControl(r rune) bool {
 	return r < 0x20 && r != '\t' && r != '\n' && r != '\r'
 }
 
+func hasJSONNUL(body []byte) bool {
+	escape := []byte(`\u0000`)
+	for {
+		i := bytes.Index(body, escape)
+		if i == -1 {
+			return false
+		}
+		start := i
+		for start > 0 && body[start-1] == '\\' {
+			start--
+		}
+		if (i-start)%2 == 0 {
+			return true
+		}
+		body = body[i+len(escape):]
+	}
+}
+
 type jsonItemLimit struct{}
 
 func (*jsonItemLimit) UnmarshalJSON(data []byte) error {
@@ -124,7 +145,7 @@ func checkFeedXML(reader io.Reader) error {
 	d.Strict = false
 	d.CharsetReader = charset.NewReaderLabel
 	depth, items, elements := 0, 0, 0
-	isAtom := false
+	isAtom, baseSeen := false, false
 	var rich atomHTMLLimit
 	for {
 		offset := d.InputOffset()
@@ -138,6 +159,9 @@ func checkFeedXML(reader io.Reader) error {
 					return err
 				}
 			} else {
+				if _, text := token.(xml.CharData); !text {
+					rich.plain = false
+				}
 				rich.markup += htmlMarkers(token)
 			}
 		}
@@ -151,6 +175,11 @@ func checkFeedXML(reader io.Reader) error {
 			if elements > maxFeedElements {
 				return errFeedTooLarge
 			}
+			if isAtom || depth == 1 {
+				for _, attr := range tag.Attr {
+					baseSeen = baseSeen || attr.Name.Local == "base"
+				}
+			}
 			name := strings.ToLower(tag.Name.Local)
 			if name == "item" || name == "entry" {
 				items++
@@ -160,8 +189,12 @@ func checkFeedXML(reader io.Reader) error {
 			}
 			if depth == 1 {
 				isAtom = name == "feed"
-			} else if isAtom && rich.depth == 0 && atomRichText(tag) {
-				rich.depth, rich.start, rich.markup = depth, d.InputOffset(), 0
+			} else if isAtom && rich.depth == 0 {
+				kind := atomRichText(tag)
+				if kind != "" {
+					rich.depth, rich.start, rich.markup = depth, d.InputOffset(), 0
+					rich.plain = kind == "html" && !baseSeen
+				}
 			}
 		case xml.EndElement:
 			depth--
@@ -172,19 +205,23 @@ func checkFeedXML(reader io.Reader) error {
 	}
 }
 
-func atomRichText(tag xml.StartElement) bool {
+func atomRichText(tag xml.StartElement) string {
 	for _, attr := range tag.Attr {
 		if attr.Name.Local == "type" {
 			value := strings.ToLower(attr.Value)
-			if value == "html" || strings.Contains(value, "xhtml") {
-				return true
+			if strings.Contains(value, "xhtml") {
+				return "xhtml"
+			}
+			if value == "html" {
+				return "html"
 			}
 		}
 	}
-	return false
+	return ""
 }
 
 type atomHTMLLimit struct {
+	plain  bool
 	depth  int
 	start  int64
 	markup int64
@@ -192,6 +229,11 @@ type atomHTMLLimit struct {
 }
 
 func (limit *atomHTMLLimit) finish(end int64) error {
+	limit.depth = 0
+	// gofeed skips the HTML tree for escaped or CDATA text without an xml:base.
+	if limit.plain {
+		return nil
+	}
 	size := end - limit.start
 	tags := limit.markup + 1
 	// Atom's HTML tree builder can recreate formatting elements at each tag.
@@ -199,7 +241,6 @@ func (limit *atomHTMLLimit) finish(end int64) error {
 	if size > maxDescriptionBytes || limit.work > maxAtomHTMLWork {
 		return errAtomMarkup
 	}
-	limit.depth = 0
 	return nil
 }
 

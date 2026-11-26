@@ -3,6 +3,9 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"strings"
@@ -69,6 +72,19 @@ func integrationStore(t *testing.T) store {
 	return s
 }
 
+func testDatabaseURL(t *testing.T, pool *pgxpool.Pool) *url.URL {
+	t.Helper()
+	config := pool.Config()
+	u, err := url.Parse(config.ConnString())
+	if err != nil || (u.Scheme != "postgres" && u.Scheme != "postgresql") {
+		t.Skip("requires a PostgreSQL test URL")
+	}
+	params := u.Query()
+	params.Set("search_path", config.ConnConfig.RuntimeParams["search_path"])
+	u.RawQuery = params.Encode()
+	return u
+}
+
 func TestMigrateAsDatabaseOwner(t *testing.T) {
 	parent := integrationDatabase(t)
 	name := "ep_owner_" + strings.ToLower(rand.Text())
@@ -107,7 +123,7 @@ func TestMigrateAsDatabaseOwner(t *testing.T) {
 		}
 	}
 	var migrations int
-	if err := pool.QueryRow(t.Context(), "SELECT count(*) FROM schema_migrations").Scan(&migrations); err != nil || migrations != 4 {
+	if err := pool.QueryRow(t.Context(), "SELECT count(*) FROM schema_migrations").Scan(&migrations); err != nil || migrations != 6 {
 		t.Fatalf("migration count: %d, %v", migrations, err)
 	}
 }
@@ -124,7 +140,9 @@ func TestUpgradeInitialSchema(t *testing.T) {
 		CREATE TABLE schema_migrations (version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now());
 		INSERT INTO schema_migrations (version) VALUES ('migrations/001_initial.sql');
 		INSERT INTO users (username, password_hash) VALUES ('listener', decode('00', 'hex'));
-		INSERT INTO podcasts (feed_url) VALUES ('https://example.invalid/feed');
+		INSERT INTO podcasts (feed_url, last_error, next_refresh_at)
+			VALUES ('https://Example.Invalid:443/feed', 'feed is too large', now() + interval '24 hours');
+		INSERT INTO feed_aliases (url, podcast_id) SELECT feed_url, id FROM podcasts;
 		INSERT INTO episodes (podcast_id, guid, title, enclosure_url, description)
 			SELECT id, 'archive', 'Quiet Archive', 'https://example.invalid/archive.mp3', '' FROM podcasts;
 		INSERT INTO episode_state (episode_id, position_ms, status, updated_at)
@@ -153,19 +171,52 @@ func TestUpgradeInitialSchema(t *testing.T) {
 	if err != nil || len(devices) != 1 || devices[0].CreatedAt != nil || devices[0].LastSeenAt == nil {
 		t.Fatal("legacy device did not record last seen")
 	}
+	id, err = s.resubscribe(t.Context(), "https://example.invalid/feed")
+	if err != nil || id != 1 {
+		t.Fatalf("canonical URL lost its legacy subscription: id=%d, %v", id, err)
+	}
+	var due bool
+	if err := s.db.QueryRow(t.Context(), "SELECT next_refresh_at <= now() FROM podcasts WHERE id = $1", id).Scan(&due); err != nil || !due {
+		t.Fatalf("size-limited feed is still on backoff: %v", err)
+	}
+}
+
+func TestRejectsUnknownSchemaVersion(t *testing.T) {
+	s := integrationStore(t)
+	testExec(t, s.db, "INSERT INTO schema_migrations (version) VALUES ('migrations/000_unknown.sql')")
+	t.Setenv("EASYPODCAST_DATABASE_URL", testDatabaseURL(t, s.db).String())
+	t.Setenv("EASYPODCAST_LISTEN", "127.0.0.1:0")
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	for _, cmd := range []string{"serve", "migrate"} {
+		if err := run(ctx, []string{cmd}); !errors.Is(err, errUnknownMigration) {
+			t.Fatalf("%s with an unknown schema: %v", cmd, err)
+		}
+	}
+	handler := newAPI(s, nil).routes()
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest("GET", "/health", nil))
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("unknown schema reported healthy: HTTP %d", w.Code)
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	t.Setenv("EASYPODCAST_LISTEN", strings.TrimPrefix(server.URL, "http://"))
+	if err := run(t.Context(), []string{"healthcheck"}); err == nil || !strings.Contains(err.Error(), "HTTP 503") {
+		t.Fatalf("container health check with an unknown schema: %v", err)
+	}
 }
 
 func TestPasswordlessDatabaseURL(t *testing.T) {
 	pool := isolatedSchema(t)
 	original := pool.Config()
-	u, err := url.Parse(original.ConnString())
-	if err != nil || (u.Scheme != "postgres" && u.Scheme != "postgresql") || original.ConnConfig.Password == "" {
+	u := testDatabaseURL(t, pool)
+	if original.ConnConfig.Password == "" {
 		t.Skip("requires a PostgreSQL test URL with a test password")
 	}
 	u.User = url.User(original.ConnConfig.User)
 	params := u.Query()
 	params.Del("password")
-	params.Set("search_path", original.ConnConfig.RuntimeParams["search_path"])
 	u.RawQuery = params.Encode()
 	t.Setenv("PGPASSWORD", original.ConnConfig.Password)
 	t.Setenv("EASYPODCAST_DATABASE_URL", u.String())
@@ -177,7 +228,7 @@ func TestPasswordlessDatabaseURL(t *testing.T) {
 		t.Fatal(err)
 	}
 	var count int
-	if err := pool.QueryRow(t.Context(), "SELECT count(*) FROM schema_migrations").Scan(&count); err != nil || count != 4 {
+	if err := pool.QueryRow(t.Context(), "SELECT count(*) FROM schema_migrations").Scan(&count); err != nil || count != 6 {
 		t.Fatalf("migration via PGPASSWORD: %d, %v", count, err)
 	}
 }

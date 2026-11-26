@@ -46,6 +46,29 @@ func (s store) resubscribe(ctx context.Context, address string) (int64, error) {
 	return id, err
 }
 
+func migrateFeedAliases(ctx context.Context, tx pgx.Tx) error {
+	type alias struct {
+		URL       string
+		PodcastID int64
+	}
+	rows, err := tx.Query(ctx, "SELECT url, podcast_id FROM feed_aliases ORDER BY podcast_id, url")
+	if err != nil {
+		return err
+	}
+	aliases, err := pgx.CollectRows(rows, pgx.RowToStructByPos[alias])
+	if err != nil {
+		return err
+	}
+	var batch pgx.Batch
+	for _, a := range aliases {
+		u, err := feedURL(a.URL)
+		if err == nil && u.String() != a.URL {
+			batch.Queue("INSERT INTO feed_aliases (url, podcast_id) VALUES ($1,$2) ON CONFLICT DO NOTHING", u.String(), a.PodcastID)
+		}
+	}
+	return tx.SendBatch(ctx, &batch).Close()
+}
+
 func (s store) feedTarget(ctx context.Context, id int64) (feedTarget, error) {
 	var f feedTarget
 	err := s.db.QueryRow(ctx, `SELECT id, feed_url, etag, last_modified, failures, fetch_generation
@@ -143,8 +166,13 @@ func saveEpisodes(ctx context.Context, tx pgx.Tx, podcastID int64, incoming []ep
 		return err
 	}
 	counts := make(map[string]int)
+	repeated := make(map[[2]string]bool)
 	for _, e := range incoming {
-		counts[e.GUID]++
+		key := [2]string{e.GUID, e.EnclosureURL}
+		if e.GUID != "" && !repeated[key] {
+			repeated[key] = true
+			counts[e.GUID]++
+		}
 	}
 	ambiguous, err := rememberAmbiguousGUIDs(ctx, tx, podcastID, counts)
 	if err != nil {
@@ -195,32 +223,29 @@ func saveEpisodes(ctx context.Context, tx pgx.Tx, podcastID int64, incoming []ep
 			published = &e.PublishedAt.Time
 		}
 		args := []any{e.GUID, e.Title, published, e.DurationSeconds, e.EnclosureURL, e.EnclosureType,
-			e.EnclosureLength, e.Link, e.ImageURL, e.Description, estimates[i], i}
+			e.EnclosureLength, e.Link, e.ImageURL, e.Description, estimates[i]}
 		if match == nil {
 			added++
 			if len(existing)+added > maxStoredFeedEpisodes {
 				return errStoredEpisodeLimit
 			}
 			match = &episodeIdentity{}
+			position := len(live)
+			live = append(live, 0)
 			batch.Queue(`INSERT INTO episodes (guid, title, published_at, duration_s, enclosure_url, enclosure_type,
-				enclosure_length, link, image_url, description, estimated_publication, feed_order, podcast_id)
-				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING id`, append(args, podcastID)...).
+				enclosure_length, link, image_url, description, estimated_publication, podcast_id)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`, append(args, podcastID)...).
 				QueryRow(func(row pgx.Row) error {
-					var id int64
-					if err := row.Scan(&id); err != nil {
-						return err
-					}
-					live = append(live, id)
-					return nil
+					return row.Scan(&live[position])
 				})
 			changed = true
 		} else {
 			batch.Queue(`UPDATE episodes SET guid = $1, title = $2, published_at = $3, duration_s = $4,
 				enclosure_url = $5, enclosure_type = $6, enclosure_length = $7, link = $8, image_url = $9,
-				description = $10, estimated_publication = $11, feed_order = $12, removed_from_feed = false WHERE id = $13 AND
+				description = $10, estimated_publication = $11, removed_from_feed = false WHERE id = $12 AND
 				(removed_from_feed OR ROW(guid, title, published_at, duration_s, enclosure_url, enclosure_type,
-				enclosure_length, link, image_url, description, estimated_publication, feed_order) IS DISTINCT FROM
-				ROW($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12))`, append(args, match.ID)...).
+				enclosure_length, link, image_url, description, estimated_publication) IS DISTINCT FROM
+				ROW($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11))`, append(args, match.ID)...).
 				Exec(func(tag pgconn.CommandTag) error {
 					changed = changed || tag.RowsAffected() != 0
 					return nil
@@ -247,9 +272,8 @@ func saveEpisodes(ctx context.Context, tx pgx.Tx, podcastID int64, incoming []ep
 	if err != nil {
 		return err
 	}
-	if changed || tag.RowsAffected() != 0 {
-		_, err = tx.Exec(ctx, "UPDATE podcasts SET episodes_version = episodes_version + 1 WHERE id = $1", podcastID)
-	}
+	_, err = tx.Exec(ctx, `UPDATE podcasts SET feed_episode_order = $2, episodes_version = episodes_version + 1
+		WHERE id = $1 AND ($3 OR feed_episode_order IS DISTINCT FROM $2)`, podcastID, live, changed || tag.RowsAffected() != 0)
 	return err
 }
 

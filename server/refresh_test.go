@@ -44,6 +44,8 @@ func TestRefreshRejectsLimitedFeedWithoutChangingHistory(t *testing.T) {
 			_, _ = io.WriteString(w, testRSS(strings.Repeat("<box>", maxFeedDepth)+strings.Repeat("</box>", maxFeedDepth)))
 		case 3:
 			_, _ = io.WriteString(w, testRSS(testRSSItem("new", "New episode", "", "/new.mp3")))
+		case 4:
+			_, _ = io.WriteString(w, `{"title":"Fixture\u0000","items":[]}`)
 		default:
 			_, _ = io.WriteString(w, initial)
 		}
@@ -74,7 +76,7 @@ func TestRefreshRejectsLimitedFeedWithoutChangingHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	episodeCount := int64(1)
-	for i, want := range []feedError{errTooManyItems, errFeedTooDeep, errStoredEpisodeLimit} {
+	for i, want := range []feedError{errTooManyItems, errFeedTooDeep, errStoredEpisodeLimit, errUnusableFeed} {
 		if want == errStoredEpisodeLimit {
 			testExec(t, s.db, `INSERT INTO episodes (podcast_id, guid, title, enclosure_url, removed_from_feed, description)
 				SELECT $1, '', 'Archived episode', '/archive/' || n, true, ''
@@ -96,6 +98,47 @@ func TestRefreshRejectsLimitedFeedWithoutChangingHistory(t *testing.T) {
 		if err != nil || len(episodes) != 1 || episodes[0].Title != fmt.Sprintf("Revision %d", i+1) {
 			t.Fatalf("other feed did not refresh: %+v, %v", episodes, err)
 		}
+	}
+}
+
+func TestIdenticalGUIDAndEnclosureKeepsEpisodeState(t *testing.T) {
+	t.Setenv("EASYPODCAST_ALLOW_PRIVATE_FEEDS", "true")
+	s := integrationStore(t)
+	var body atomic.Value
+	first := testRSSItem("same", "Episode", "", "/original.mp3")
+	body.Store(testRSS(first))
+	feed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, body.Load().(string))
+	}))
+	defer feed.Close()
+	r := newRefresher(s, "EasyPodcast/test", time.Hour)
+	p, _, err := r.subscribe(t.Context(), feed.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	episodes, err := s.episodes(t.Context(), p.ID)
+	if err != nil || len(episodes) != 1 {
+		t.Fatalf("initial episodes: %+v, %v", episodes, err)
+	}
+	id := episodes[0].ID
+	now := time.Now()
+	if _, err := s.updateState(t.Context(), stateChange{
+		Episodes: []episodeState{{EpisodeID: id, PositionMS: 1_200_000, UpdatedAt: timestamp{now}}},
+	}, now); err != nil {
+		t.Fatal(err)
+	}
+	body.Store(testRSS(first, first))
+	r.refreshDue(t.Context(), true)
+	body.Store(testRSS(testRSSItem("same", "Episode", "", "/new-cdn.mp3")))
+	r.refreshDue(t.Context(), true)
+	episodes, err = s.episodes(t.Context(), p.ID)
+	if err != nil || len(episodes) != 1 || episodes[0].ID != id || episodes[0].GUID != "same" ||
+		episodes[0].RemovedFromFeed || episodes[0].EnclosureURL != feed.URL+"/new-cdn.mp3" {
+		t.Fatalf("duplicate item changed episode identity: %+v, %v", episodes, err)
+	}
+	state, err := s.episodeState(t.Context(), id)
+	if err != nil || state == nil || state.PositionMS != 1_200_000 {
+		t.Fatalf("episode lost its state: %+v, %v", state, err)
 	}
 }
 
@@ -239,6 +282,166 @@ func TestUndatedFeedItemsKeepOrder(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestFeedOrderChangesWithoutRewritingEpisodes(t *testing.T) {
+	t.Setenv("EASYPODCAST_ALLOW_PRIVATE_FEEDS", "true")
+	for _, date := range []string{"", "26 Nov 26 09:15 GMT"} {
+		t.Run("published="+date, func(t *testing.T) {
+			s := integrationStore(t)
+			item := func(i int) string {
+				return testRSSItem(fmt.Sprint(i), fmt.Sprint(i), date, fmt.Sprintf("/%d.mp3", i))
+			}
+			items := make([]string, 128)
+			for i := range items {
+				items[i] = item(i)
+			}
+			var body atomic.Value
+			body.Store(testRSS(items...))
+			feed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, body.Load().(string))
+			}))
+			defer feed.Close()
+			r := newRefresher(s, "EasyPodcast/test", time.Hour)
+			p, _, err := r.subscribe(t.Context(), feed.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var previousXID string
+			if err := s.db.QueryRow(t.Context(), "SELECT xmin::text FROM episodes WHERE podcast_id = $1 LIMIT 1", p.ID).Scan(&previousXID); err != nil {
+				t.Fatal(err)
+			}
+			var previousVersion = p.EpisodesVersion
+			for added, input := range [][]string{
+				append([]string{item(128)}, items...),
+				append([]string{item(127), item(128)}, items[:127]...),
+			} {
+				body.Store(testRSS(input...))
+				r.refreshDue(t.Context(), true)
+				current, err := s.podcast(t.Context(), p.ID)
+				if err != nil || current.EpisodesVersion == previousVersion || current.LastError != nil {
+					t.Fatalf("episode order change did not update the version: %+v, %v", current, err)
+				}
+				previousVersion = current.EpisodesVersion
+				var unchanged int
+				if err := s.db.QueryRow(t.Context(), "SELECT count(*) FROM episodes WHERE podcast_id = $1 AND xmin::text = $2",
+					p.ID, previousXID).Scan(&unchanged); err != nil || unchanged != len(items) {
+					t.Fatalf("%d of %d existing rows left untouched: %v", unchanged, len(items), err)
+				}
+				ordered, err := s.episodes(t.Context(), p.ID)
+				if err != nil || len(ordered) != len(input) || ordered[0].GUID != fmt.Sprint(128-added) {
+					t.Fatalf("unexpected episode order after refresh: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestCanceledRefreshRestoresSchedule(t *testing.T) {
+	for _, superseded := range []bool{false, true} {
+		t.Run(fmt.Sprintf("superseded=%t", superseded), func(t *testing.T) {
+			s := integrationStore(t)
+			testExec(t, s.db, `INSERT INTO podcasts (feed_url, failures, last_error, next_refresh_at)
+				VALUES ('https://feed.invalid', 2, 'earlier failure', now() + interval '1 hour')`)
+			r := newRefresher(s, "EasyPodcast/test", time.Hour)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			entered := make(chan struct{})
+			r.client.Transport = feedRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+				close(entered)
+				<-req.Context().Done()
+				return nil, req.Context().Err()
+			})
+			target, err := s.feedTarget(ctx, 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			done := make(chan error, 1)
+			go func() { done <- r.refresh(ctx, target) }()
+			select {
+			case <-entered:
+			case err := <-done:
+				t.Fatalf("refresh ended before fetching: %v", err)
+			case <-time.After(5 * time.Second):
+				t.Fatal("refresh never started")
+			}
+			type schedule struct {
+				failures   int
+				due        bool
+				lastError  string
+				generation int64
+			}
+			read := func() schedule {
+				t.Helper()
+				var state schedule
+				if err := s.db.QueryRow(t.Context(), `SELECT failures, next_refresh_at <= now(), last_error,
+					fetch_generation FROM podcasts WHERE id = 1`).
+					Scan(&state.failures, &state.due, &state.lastError, &state.generation); err != nil {
+					t.Fatal(err)
+				}
+				return state
+			}
+			if got := read(); got != (schedule{3, false, "earlier failure", target.Generation}) {
+				t.Fatalf("refresh had no crash guard: %+v", got)
+			}
+			want := schedule{2, true, "earlier failure", target.Generation}
+			if superseded {
+				testExec(t, s.db, `UPDATE podcasts SET failures = 0, last_error = 'newer result',
+					next_refresh_at = now() + interval '1 hour', fetch_generation = fetch_generation + 1 WHERE id = 1`)
+				want = schedule{0, false, "newer result", target.Generation + 1}
+			}
+			cancel()
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("canceled refresh did not finish")
+			}
+			if got := read(); got != want {
+				t.Fatalf("after cancellation: %+v, want %+v", got, want)
+			}
+		})
+	}
+}
+
+func TestSubscribeHasSlotDuringBackgroundRefresh(t *testing.T) {
+	s := integrationStore(t)
+	testExec(t, s.db, `INSERT INTO podcasts (feed_url)
+		SELECT 'https://feed.invalid/slow/' || n FROM generate_series(1,4) n`)
+	r := newRefresher(s, "EasyPodcast/test", time.Hour)
+	entered := make(chan struct{}, 4)
+	r.client.Transport = feedRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if strings.HasPrefix(req.URL.Path, "/slow/") {
+			entered <- struct{}{}
+			<-req.Context().Done()
+			return nil, req.Context().Err()
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK, Request: req,
+			Body: io.NopCloser(strings.NewReader(testRSS(testRSSItem("healthy", "Healthy", "", "/healthy.mp3")))),
+		}, nil
+	})
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() { r.refreshDue(ctx, false); close(done) }()
+	defer func() { cancel(); <-done }()
+	wait := time.After(5 * time.Second)
+	for range 3 {
+		select {
+		case <-entered:
+		case <-wait:
+			t.Fatal("background workers did not start")
+		}
+	}
+	select {
+	case <-entered:
+		t.Fatal("background refresh used the reserved slot")
+	case <-time.After(100 * time.Millisecond):
+	}
+	request, stop := context.WithTimeout(t.Context(), 3*time.Second)
+	defer stop()
+	if p, added, err := r.subscribe(request, "https://feed.invalid/healthy"); err != nil || !added || p.EpisodeCount != 1 {
+		t.Fatalf("healthy feed was blocked by background fetches: %+v, %v", p, err)
 	}
 }
 

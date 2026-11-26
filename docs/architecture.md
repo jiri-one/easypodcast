@@ -139,20 +139,20 @@ JSON in UTF-8. Every endpoint except `POST /api/login` and `GET /health` needs
 
 | Method and path | Request | Response |
 |---|---|---|
-| `POST /api/login` | `{"username", "password", "device_name"}` | 200 `{"token", "device_id"}`; 401 wrong credentials; 429 after 5 failed attempts per minute from one address |
+| `POST /api/login` | `{"username", "password", "device_name"}` | 200 `{"token", "device_id", "server_id"}`, 401 for wrong credentials, 429 when the per-address or global login limit is reached |
 | `POST /api/logout` | – | 204, revokes the token used |
 | `GET /api/podcasts` | – | 200 `[Podcast]`: every podcast that is subscribed, has an episode with a state, or has an episode in the queue; supports `ETag`/`If-None-Match` |
-| `POST /api/podcasts` | `{"feed_url"}` | 201 Podcast after a synchronous fetch (max 20 s); 200 if it existed (it is subscribed again); 422 if the URL is not a usable feed |
+| `POST /api/podcasts` | `{"feed_url"}` | 201 Podcast after a synchronous fetch (max 80 s overall), 200 if it existed (it is subscribed again), 422 if the URL is not a usable feed |
 | `DELETE /api/podcasts/{id}` | – | 204, unsubscribes and keeps everything |
 | `GET /api/podcasts/{id}/episodes` | – | 200 `[Episode]`, newest first; `ETag` |
 | `GET /api/episodes/{id}` | – | 200 Episode plus `"description"` (plain text, links written as URLs) |
-| `GET /api/state` | – | 200 `{"episodes": [EpisodeState], "queue": Queue or null, "server_time"}` |
-| `POST /api/state` | `{"episodes": [EpisodeState], "queue": Queue}`, both optional | 200 `{"episodes": [EpisodeState as stored], "queue": Queue or null, "unknown": [episode ids the server does not know]}` |
+| `GET /api/state` | Optional `If-None-Match` | 200 `{"episodes": [EpisodeState], "queue": Queue or null, "server_time", "server_id"}` with `ETag`, or 304 with an empty body when the validator matches |
+| `POST /api/state` | `{"episodes": [EpisodeState], "queue": Queue}`, both optional | 200 `{"episodes": [EpisodeState as stored], "queue": Queue or null, "unknown": [episode ids the server does not know], "server_id"}` |
 | `GET /api/episodes/{id}/state` | – | 200 `{"state": EpisodeState or null}` |
 | `POST /api/refresh` | – | 202, starts fetching all subscribed feeds now |
 | `GET /api/opml` | – | 200 OPML of subscribed podcasts |
 | `POST /api/opml` | OPML document as the body | 200 `{"added", "existing", "failed": [{"feed_url", "error"}]}` |
-| `GET /health` | – | 200 `{"status": "ok"}` if the database answers, otherwise 503 |
+| `GET /health` | – | 200 `{"status": "ok"}` if the database is reachable and its recorded migrations match this binary, otherwise 503 |
 
 A `POST /api/state` with an episode id the server does not know stores nothing for it and lists the
 id under `unknown`; the client then drops the pending change. A body over 1 MiB gets 413.
@@ -167,29 +167,41 @@ id under `unknown`; the client then drops the pending change. A body over 1 MiB 
   `EASYPODCAST_USER_AGENT` (default `EasyPodcast/<version> (+https://github.com/jiri-one/easypodcast)`).
 - Commands of the single binary `easypodcast`: `serve` (runs migrations first), `migrate`,
   `user set-password <name>` (asks twice without echo, creates the user if missing; nothing is
-  generated), `devices list`, `devices revoke <id>`, `import-opml <file>`, `import-pinepods`
-  (see WP-S, part 2).
+  generated), `devices list`, `devices revoke <id>`, `devices revoke --all`, `new-server-id`,
+  `import-opml <file>`, `import-pinepods` (see WP-S, part 2).
 - Behind the reverse proxy every request comes from the proxy: the login limit uses the client
   address from `X-Forwarded-For` only when the direct peer is in `EASYPODCAST_TRUSTED_PROXIES`
-  (comma-separated CIDRs, empty by default).
+  (comma-separated addresses or CIDRs, empty by default). It skips trusted addresses from the
+  right and uses the first address outside the trusted set.
 - PostgreSQL in a shared server: the role owns only its own database. Migrations must not need a
   superuser, extensions, `CREATE DATABASE` or the `postgres` database. Embedded SQL migrations
-  with a `schema_migrations` table.
+  with a `schema_migrations` table. A recorded migration unknown to the binary prevents startup.
+- Server identity is a database UUID. After restoring a backup, run `new-server-id` before
+  starting the server. Clients keep the UUID with their local copy and compare it on login and
+  in state replies. If the UUID changes, the client must discard its local copy and pending
+  changes and fetch all podcasts, episodes and state again. Check the identity with
+  `GET /api/state` before uploading pending changes. A 304 confirms the UUID and state covered by
+  the saved validator. The state validator changes when the UUID, an episode state, or the queue
+  changes. `server_time` is provided on 200 responses.
 - Single user: a `users` table exists only for the login; devices have their own tokens (32 random
-  bytes, stored as SHA-256), revocable one by one.
+  bytes, stored as SHA-256), revocable individually or together.
 - Feeds: each subscribed podcast is fetched every refresh interval with jitter, at most 4 at a
-  time, with `ETag`/`Last-Modified`; on errors the interval doubles up to 24 h. A permanent
+  time, with `ETag`/`Last-Modified`; background refresh leaves a slot for subscription requests.
+  Fetching and parsing share a 60-second budget. The decompressed size cap is 64 MiB, and only one
+  response over 8 MiB is processed at a time. On errors the interval doubles up to 24 h. A permanent
   redirect updates `feed_url`. Items without an enclosure are skipped. Episodes are matched by
   GUID, without GUID by enclosure URL; changed fields are updated; episodes gone from the feed are
   marked `removed_from_feed`, never deleted. `episodes_version` changes with every change of the
-  list.
+  list. Feed order is stored per podcast to preserve the order of items with tied or missing dates.
 - Description: HTML turned into plain text, a link written as `text (url)` when the text differs
   from the URL, at most 20 000 characters.
-- Logs: plain text via `log/slog`; never passwords, tokens or full request bodies.
+- Logs: plain text via `log/slog`. HTTP 500 logs include the method, route pattern, status and
+  SQLSTATE when available.
 - Container: multi-stage `server/Dockerfile`, static binary, non-root, CA certificates included,
   `linux/arm64` and `linux/amd64`. Image `ghcr.io/jiri-one/easypodcast`.
-- CI `.github/workflows/server.yml`: `go vet`, tests against a PostgreSQL service, multi-arch
-  image pushed to ghcr.io on `main` (tag `main`) and on tags `v*` (tag = version).
+- CI `.github/workflows/server.yml` runs `go vet` and tests against PostgreSQL 18. It publishes a
+  multi-arch image per qualifying ref, tagged `main` on the main branch or with the `v*` tag.
+  The commit SHA identifies the binary version and image revision.
 - Tests: the state rules (newer wins, equal or older ignored, 24 h guard, unknown ids), every
   endpoint with `httptest`, feed parsing on fixture feeds (missing GUIDs, changed enclosure URLs,
   odd dates, HTML descriptions), migrations on a real PostgreSQL when

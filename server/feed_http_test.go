@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
@@ -13,6 +15,68 @@ import (
 	"testing"
 	"time"
 )
+
+func TestFeedURLCanonicalizesHostAndPort(t *testing.T) {
+	for input, want := range map[string]string{
+		"  https://EXample.Invalid:443/Mixed?Case=Keep#ignored ": "https://example.invalid/Mixed?Case=Keep",
+		"http://EXample.Invalid:80/feed":                         "http://example.invalid/feed",
+		"https://EXample.Invalid:80/feed":                        "https://example.invalid:80/feed",
+		"https://[2001:DB8::A]:443/feed":                         "https://[2001:db8::a]/feed",
+		"http://[FE80::1%25TestNet]:8080/feed":                   "http://[fe80::1%25TestNet]:8080/feed",
+	} {
+		u, err := feedURL(input)
+		if err != nil || u.String() != want {
+			t.Errorf("feedURL(%q) = %v, %v, want %s", input, u, err, want)
+		}
+	}
+}
+
+func TestFetchDecompressedFeedSizeLimit(t *testing.T) {
+	t.Setenv("EASYPODCAST_ALLOW_PRIVATE_FEEDS", "true")
+	const capBytes = 64 << 20
+	feed := fixture(t, "first.xml")
+	padding := bytes.Repeat([]byte(" "), 64<<10)
+	var zipped bytes.Buffer
+	gz, err := gzip.NewWriterLevel(&zipped, gzip.BestSpeed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gz.Write(feed); err != nil {
+		t.Fatal(err)
+	}
+	for remaining := capBytes - len(feed); remaining > 0; remaining -= len(padding) {
+		if _, err := gz.Write(padding[:min(remaining, len(padding))]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	over := bytes.NewBuffer(nil)
+	gz.Reset(over)
+	if _, err := gz.Write(padding[:1]); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Encoding", "gzip")
+		_, _ = w.Write(zipped.Bytes())
+		if r.URL.Path == "/over" {
+			_, _ = w.Write(over.Bytes())
+		}
+	}))
+	defer server.Close()
+	r := newRefresher(store{}, "EasyPodcast/test", time.Hour)
+	doc, err := r.fetch(t.Context(), feedTarget{URL: server.URL})
+	if err != nil || doc.document == nil || len(doc.document.episodes) != 2 {
+		t.Fatalf("64 MiB feed was not accepted: %v", err)
+	}
+	if _, err := r.fetch(t.Context(), feedTarget{URL: server.URL + "/over"}); err != errFeedTooLarge {
+		t.Fatalf("oversized decompressed feed: %v", err)
+	}
+}
 
 func TestPublicFeedAddress(t *testing.T) {
 	for _, ip := range []string{

@@ -87,7 +87,7 @@ func (a *api) authenticated(next apiCall) apiCall {
 			return
 		}
 		if err != nil {
-			storeError(w, err)
+			storeError(w, r, err)
 			return
 		}
 		w.Header().Set("Cache-Control", "private, no-cache")
@@ -95,12 +95,16 @@ func (a *api) authenticated(next apiCall) apiCall {
 	}
 }
 
-func jsonReply(w http.ResponseWriter, status int, value any) {
+func jsonReply(w http.ResponseWriter, r *http.Request, status int, value any) {
 	data, err := json.Marshal(value)
 	if err != nil {
-		storeError(w, err)
+		storeError(w, r, err)
 		return
 	}
+	writeJSON(w, status, data)
+}
+
+func writeJSON(w http.ResponseWriter, status int, data []byte) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_, _ = w.Write(data)
@@ -109,35 +113,53 @@ func jsonReply(w http.ResponseWriter, status int, value any) {
 func conditionalJSON(w http.ResponseWriter, r *http.Request, value any) {
 	data, err := json.Marshal(value)
 	if err != nil {
-		storeError(w, err)
+		storeError(w, r, err)
 		return
 	}
 	tag := fmt.Sprintf("\"%x\"", sha256.Sum256(data))
-	w.Header().Set("ETag", tag)
+	if !respondNotModified(w, r, tag) {
+		w.Header().Set("ETag", tag)
+		writeJSON(w, http.StatusOK, data)
+	}
+}
+
+func respondNotModified(w http.ResponseWriter, r *http.Request, tag string) bool {
+	value := strings.TrimPrefix(tag, "W/")
 	for _, field := range r.Header.Values("If-None-Match") {
 		for part := range strings.SplitSeq(field, ",") {
 			part = strings.TrimSpace(part)
-			if part == "*" || strings.TrimPrefix(part, "W/") == tag {
+			if part == "*" || strings.TrimPrefix(part, "W/") == value {
+				w.Header().Set("ETag", tag)
 				w.WriteHeader(http.StatusNotModified)
-				return
+				return true
 			}
 		}
 	}
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_, _ = w.Write(data)
+	return false
 }
 
 func apiError(w http.ResponseWriter, status int, message string) {
-	jsonReply(w, status, map[string]string{"error": message})
+	data, _ := json.Marshal(map[string]string{"error": message})
+	writeJSON(w, status, data)
 }
 
-func storeError(w http.ResponseWriter, err error) {
+func storeError(w http.ResponseWriter, r *http.Request, err error) {
 	if errors.Is(err, pgx.ErrNoRows) {
 		apiError(w, http.StatusNotFound, "not found")
 		return
 	}
-	slog.Error("Could not complete request")
-	apiError(w, http.StatusInternalServerError, "internal server error")
+	status := http.StatusInternalServerError
+	attrs := []slog.Attr{slog.String("method", r.Method), slog.String("route", r.Pattern), slog.Int("status", status)}
+	switch code := databaseSQLState(err); {
+	case code != "":
+		attrs = append(attrs, slog.String("sqlstate", code))
+	case errors.Is(err, context.Canceled):
+		attrs = append(attrs, slog.String("reason", "context canceled"))
+	case errors.Is(err, context.DeadlineExceeded):
+		attrs = append(attrs, slog.String("reason", "context deadline exceeded"))
+	}
+	slog.LogAttrs(r.Context(), slog.LevelError, "Could not complete request", attrs...)
+	apiError(w, status, "internal server error")
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, out any) bool {
@@ -161,11 +183,11 @@ func pathID(w http.ResponseWriter, r *http.Request) (int64, bool) {
 func (a *api) health(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
-	if err := a.store.db.Ping(ctx); err != nil {
+	if err := a.store.checkSchema(ctx); err != nil {
 		apiError(w, http.StatusServiceUnavailable, "database unavailable")
 		return
 	}
-	jsonReply(w, http.StatusOK, map[string]string{"status": "ok"})
+	jsonReply(w, r, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (a *api) login(w http.ResponseWriter, r *http.Request) {
@@ -202,7 +224,7 @@ func (a *api) login(w http.ResponseWriter, r *http.Request) {
 	defer func() { finish(failed) }()
 	valid, err := a.store.verifyPassword(r.Context(), input.Username, input.Password)
 	if err != nil {
-		storeError(w, err)
+		storeError(w, r, err)
 		return
 	}
 	if !valid {
@@ -210,21 +232,27 @@ func (a *api) login(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusUnauthorized, "wrong credentials")
 		return
 	}
-	token, id, err := a.store.createDevice(r.Context(), input.Username, input.DeviceName)
+	revision, err := a.store.currentStateRevision(r.Context())
 	if err != nil {
-		storeError(w, err)
+		storeError(w, r, err)
 		return
 	}
-	jsonReply(w, http.StatusOK, struct {
+	token, id, err := a.store.createDevice(r.Context(), input.Username, input.DeviceName)
+	if err != nil {
+		storeError(w, r, err)
+		return
+	}
+	jsonReply(w, r, http.StatusOK, struct {
 		Token    string `json:"token"`
 		DeviceID int64  `json:"device_id"`
-	}{token, id})
+		ServerID string `json:"server_id"`
+	}{token, id, revision.ServerID})
 }
 
 func (a *api) logout(w http.ResponseWriter, r *http.Request) {
 	id := r.Context().Value(deviceContextKey{}).(int64)
 	if _, err := a.store.revokeDevice(r.Context(), id); err != nil {
-		storeError(w, err)
+		storeError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -233,7 +261,7 @@ func (a *api) logout(w http.ResponseWriter, r *http.Request) {
 func (a *api) podcasts(w http.ResponseWriter, r *http.Request) {
 	items, err := a.store.podcasts(r.Context(), false)
 	if err != nil {
-		storeError(w, err)
+		storeError(w, r, err)
 		return
 	}
 	conditionalJSON(w, r, items)
@@ -252,11 +280,11 @@ func (a *api) subscribe(w http.ResponseWriter, r *http.Request) {
 	case errors.As(err, &issue):
 		apiError(w, http.StatusUnprocessableEntity, issue.Error())
 	case err != nil:
-		storeError(w, err)
+		storeError(w, r, err)
 	case added:
-		jsonReply(w, http.StatusCreated, p)
+		jsonReply(w, r, http.StatusCreated, p)
 	default:
-		jsonReply(w, http.StatusOK, p)
+		jsonReply(w, r, http.StatusOK, p)
 	}
 }
 
@@ -266,7 +294,7 @@ func (a *api) unsubscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.store.unsubscribe(r.Context(), id); err != nil {
-		storeError(w, err)
+		storeError(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -279,7 +307,7 @@ func (a *api) episodes(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := a.store.episodes(r.Context(), id)
 	if err != nil {
-		storeError(w, err)
+		storeError(w, r, err)
 		return
 	}
 	conditionalJSON(w, r, items)
@@ -292,10 +320,10 @@ func (a *api) episode(w http.ResponseWriter, r *http.Request) {
 	}
 	detail, err := a.store.episode(r.Context(), id)
 	if err != nil {
-		storeError(w, err)
+		storeError(w, r, err)
 		return
 	}
-	jsonReply(w, http.StatusOK, detail)
+	jsonReply(w, r, http.StatusOK, detail)
 }
 
 func (a *api) episodeState(w http.ResponseWriter, r *http.Request) {
@@ -305,22 +333,42 @@ func (a *api) episodeState(w http.ResponseWriter, r *http.Request) {
 	}
 	state, err := a.store.episodeState(r.Context(), id)
 	if err != nil {
-		storeError(w, err)
+		storeError(w, r, err)
 		return
 	}
-	jsonReply(w, http.StatusOK, map[string]*episodeState{"state": state})
+	jsonReply(w, r, http.StatusOK, map[string]*episodeState{"state": state})
 }
 
 func (a *api) state(w http.ResponseWriter, r *http.Request) {
+	if len(r.Header.Values("If-None-Match")) > 0 {
+		revision, err := a.store.currentStateRevision(r.Context())
+		if err != nil {
+			storeError(w, r, err)
+			return
+		}
+		if respondNotModified(w, r, revision.etag()) {
+			return
+		}
+	}
 	snapshot, err := a.store.state(r.Context())
 	if err != nil {
-		storeError(w, err)
+		storeError(w, r, err)
 		return
 	}
-	jsonReply(w, http.StatusOK, struct {
-		stateChange
+	tag := snapshot.etag()
+	if respondNotModified(w, r, tag) {
+		return
+	}
+	w.Header().Set("ETag", tag)
+	jsonReply(w, r, http.StatusOK, struct {
+		stateSnapshot
 		ServerTime timestamp `json:"server_time"`
 	}{snapshot, timestamp{a.now()}})
+}
+
+func (r stateRevision) etag() string {
+	// The server clock changes even when the state representation is otherwise equivalent.
+	return fmt.Sprintf(`W/"state-%s-%d"`, r.ServerID, r.version)
 }
 
 func (a *api) updateState(w http.ResponseWriter, r *http.Request) {
@@ -337,9 +385,9 @@ func (a *api) updateState(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, errFutureState), errors.Is(err, errInvalidState):
 		apiError(w, http.StatusBadRequest, err.Error())
 	case err != nil:
-		storeError(w, err)
+		storeError(w, r, err)
 	default:
-		jsonReply(w, http.StatusOK, result)
+		jsonReply(w, r, http.StatusOK, result)
 	}
 }
 
@@ -354,12 +402,12 @@ func (a *api) refreshAll(w http.ResponseWriter, _ *http.Request) {
 func (a *api) exportOPML(w http.ResponseWriter, r *http.Request) {
 	podcasts, err := a.store.podcasts(r.Context(), true)
 	if err != nil {
-		storeError(w, err)
+		storeError(w, r, err)
 		return
 	}
 	data, err := exportOPML(podcasts)
 	if err != nil {
-		storeError(w, err)
+		storeError(w, r, err)
 		return
 	}
 	w.Header().Set("Content-Type", "text/x-opml; charset=utf-8")
@@ -376,8 +424,8 @@ func (a *api) importOPML(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	result, err := a.refresh.importOPML(ctx, addresses)
 	if err != nil {
-		storeError(w, err)
+		storeError(w, r, err)
 		return
 	}
-	jsonReply(w, http.StatusOK, result)
+	jsonReply(w, r, http.StatusOK, result)
 }

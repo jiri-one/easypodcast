@@ -96,4 +96,16 @@ func TestDeviceCommands(t *testing.T) {
 	if strings.Contains(out.String(), strconv.Quote(firstName)) || !strings.Contains(out.String(), `"Kitchen speaker"`) {
 		t.Fatal("device list did not reflect revocation")
 	}
+	third := login("Desk speaker")
+	t.Setenv("EASYPODCAST_DATABASE_URL", testDatabaseURL(t, s.db).String())
+	for range 2 {
+		if err := run(ctx, []string{"devices", "revoke", "--all"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	checkAccess(second.Token, 401)
+	checkAccess(third.Token, 401)
+	if devices, err := s.devices(ctx); err != nil || len(devices) != 0 {
+		t.Fatalf("devices remained after revoke --all: %d, %v", len(devices), err)
+	}
 }

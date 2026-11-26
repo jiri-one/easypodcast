@@ -30,7 +30,7 @@ func main() {
 	}
 }
 
-const usage = "usage: easypodcast serve | healthcheck | migrate | user set-password <name> [--password-stdin] | devices list | devices revoke <id> | import-opml <file> | import-pinepods --pinepods-dsn <dsn> --pinepods-user <name>"
+const usage = "usage: easypodcast serve | healthcheck | migrate | new-server-id | user set-password <name> [--password-stdin] | devices list | devices revoke <id|--all> | import-opml <file> | import-pinepods --pinepods-dsn <dsn> --pinepods-user <name>"
 
 func run(ctx context.Context, args []string) error {
 	if len(args) == 0 {
@@ -62,6 +62,9 @@ func run(ctx context.Context, args []string) error {
 			return errors.New(usage)
 		}
 		if err := s.migrate(ctx); err != nil {
+			if errors.Is(err, errUnknownMigration) {
+				return err
+			}
 			return databaseError("database migration failed", err)
 		}
 		if args[0] == "serve" {
@@ -70,6 +73,14 @@ func run(ctx context.Context, args []string) error {
 				return err
 			}
 			return serve(ctx, s, r)
+		}
+		return nil
+	case "new-server-id":
+		if len(args) != 1 {
+			return errors.New(usage)
+		}
+		if err := s.newServerID(ctx); err != nil {
+			return databaseError("could not replace server identity", err)
 		}
 		return nil
 	case "user":
@@ -198,13 +209,13 @@ func serve(ctx context.Context, s store, r *refresher) error {
 	go func() {
 		defer close(shutdownDone)
 		<-runCtx.Done()
-		shutdownCtx, stop := context.WithTimeout(context.Background(), fetchTimeout+time.Second)
+		shutdownCtx, stop := context.WithTimeout(context.Background(), 21*time.Second)
 		defer stop()
 		if err := server.Shutdown(shutdownCtx); err != nil {
 			_ = server.Close()
 		}
 	}()
-	slog.Info("Serving EasyPodcast", "listen", address)
+	slog.Info("Serving EasyPodcast", "listen", address, "version", version)
 	err := server.ListenAndServe()
 	cancel()
 	<-shutdownDone
@@ -247,9 +258,16 @@ func readPassword(fromStdin bool) (string, error) {
 }
 
 func databaseError(message string, err error) error {
-	var sqlErr interface{ SQLState() string }
-	if errors.As(err, &sqlErr) {
-		return fmt.Errorf("%s (SQLSTATE %s)", message, sqlErr.SQLState())
+	if code := databaseSQLState(err); code != "" {
+		return fmt.Errorf("%s (SQLSTATE %s)", message, code)
 	}
 	return errors.New(message)
+}
+
+func databaseSQLState(err error) string {
+	var sqlErr interface{ SQLState() string }
+	if errors.As(err, &sqlErr) {
+		return sqlErr.SQLState()
+	}
+	return ""
 }

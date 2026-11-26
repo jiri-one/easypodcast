@@ -19,30 +19,39 @@ export EASYPODCAST_DATABASE_URL='postgres://easypodcast@localhost/easypodcast?ss
 | `EASYPODCAST_LISTEN` | `:8080` |
 | `EASYPODCAST_REFRESH_INTERVAL` | `1h` (Go duration) |
 | `EASYPODCAST_USER_AGENT` | `EasyPodcast/<version> (+https://github.com/jiri-one/easypodcast)` |
-| `EASYPODCAST_TRUSTED_PROXIES` | Empty (comma-separated IPv4 or IPv6 CIDRs) |
+| `EASYPODCAST_TRUSTED_PROXIES` | Empty (comma-separated IPv4 or IPv6 addresses or CIDRs) |
 | `EASYPODCAST_ALLOW_PRIVATE_FEEDS` | `false` (set to `true` for local test feeds) |
 
-- `serve` applies the migrations and starts HTTP and feed refresh. Use HTTPS at your reverse proxy for remote access.
-- `healthcheck` sends `GET /health` to `127.0.0.1` on the port from `EASYPODCAST_LISTEN`. It exits silently with 0 on HTTP 200 and exits with 1 otherwise. The request times out after 3 seconds. The scratch image runs `/easypodcast healthcheck`.
+- `serve` applies the migrations and starts HTTP and feed refresh. It refuses to start if the database records an unknown migration. Use HTTPS at your reverse proxy for remote access.
+- `healthcheck` sends `GET /health` to `127.0.0.1` on the port from `EASYPODCAST_LISTEN`. It exits silently with 0 on HTTP 200 and exits with 1 otherwise. The endpoint requires a reachable database with all the migrations known to the binary. The request times out after 3 seconds. The scratch image runs `/easypodcast healthcheck`.
 - `migrate` applies embedded migrations. Run it before the setup and import commands.
+- `new-server-id` replaces the server UUID. After restoring a backup, run `easypodcast migrate` and `easypodcast new-server-id` before starting the service.
 - `user set-password <name>` creates the listener or changes their password. For automation, append `--password-stdin` and supply one line on standard input.
 - `devices list` prints the ID, quoted device name, creation time and last seen time in UTC. Last seen starts at login and updates on authenticated requests. Unknown times for devices created before the upgrade appear as `-`.
-- `devices revoke <id>` revokes that device's token immediately.
+- `devices revoke <id>` revokes that device's token immediately. `devices revoke --all` revokes every device token. Changing the password leaves device tokens valid.
 - `import-opml <file>` imports subscriptions and prints counts.
 - `import-pinepods --pinepods-dsn <dsn> --pinepods-user <name>` reads PinePods 0.9.2 PostgreSQL, refreshes the subscriptions, and imports episode state and the queue. Use a read-only database login and a password file for the source. The command reports counts and can be run again before switching to EasyPodcast.
 
-The login rate limit uses the direct peer's IP by default. When that peer is in a configured
-trusted proxy CIDR, the server uses the final address in `X-Forwarded-For`. Caddy sends a single
-client address. Invalid CIDRs are ignored, and an absent or malformed final address falls back
-to the direct peer.
+The login rate limit uses the direct peer's IP by default. For a trusted peer it reads
+`X-Forwarded-For` from right to left, skipping trusted proxies and using the first address
+outside the trusted set. An absent header, a malformed address in the trusted chain, or a
+chain containing only trusted addresses falls back to the direct peer. Bare IPv4 and IPv6
+addresses match a single host. Invalid entries are ignored. Configure Caddy to sanitize the
+forwarded header and trust the tunnel peer when Caddy receives connections from Cloudflare.
 
 Login allows five failures per minute per IPv4 address or IPv6 /64. Across all clients, it
 allows 20 failures per minute and 200 per 24 hours. A limited login returns 429 with
-`Retry-After`. Existing device tokens continue to work.
+`Retry-After`. The global limit blocks new logins. Existing device tokens continue to work.
+Restarting the server clears the counters. For the systemd user service, run
+`systemctl --user restart easypodcast`.
 
 Feed fetches require public addresses, including after DNS resolution and redirects. A feed
-may contain up to 10,000 items and 8 MiB of decompressed data. Automated feed updates can
-store up to 50,000 episodes per podcast, including archived episodes. A refresh that would
+may contain up to 10,000 items and 64 MiB of decompressed data. The fetch and parse budget is
+60 seconds once a fetch slot is acquired. Background refresh uses up to three of the four
+slots, leaving one available for subscriptions. Responses larger than 8 MiB are read past
+that threshold and parsed one at a time. HTTP subscription work has an overall 80-second
+limit. Automated feed updates can store up to 50,000 episodes per podcast, including archived
+episodes. A refresh that would
 exceed these limits records an error and preserves the stored episodes and their states.
 HTTP OPML imports use four workers and have 80 seconds to finish. The result lists feeds
 that need another import attempt.
@@ -51,13 +60,18 @@ that need another import attempt.
 as an integer or `null`. The duration comes from the player. A strictly newer state replaces
 the entire record, including its duration. Requests that omit the field supply `null`.
 
+Login and both state endpoints return `server_id`. A client that sees a different UUID must
+discard its local copy and pending changes and fetch the library and state again. `GET /api/state`
+supports `ETag` and `If-None-Match`. A matching validator returns 304 with an empty body.
+
 The PinePods import matches by GUID, then by enclosure URL. Episodes missing from the feed are
 created as `removed_from_feed` using the PinePods title, enclosure URL, GUID, publication date
 and feed duration. Their listening states contribute to played counts. If a feed is unavailable,
 the import can also restore the subscription from PinePods. Imported states follow the same
-newer-wins rule as the API and have `duration_ms: null`. The import fills the queue only while
-its stored list is empty. If a feed outage leaves a queued episode unresolved, the queue import
-waits for a later run. PinePods timestamps without a time zone are interpreted as
+newer-wins rule as the API and have `duration_ms: null`. The import fills the queue while there
+are no visible entries. Played and dismissed episodes are hidden. If a feed outage leaves a
+queued episode unresolved, the queue import waits for a later run. PinePods timestamps without
+a time zone are interpreted as
 UTC. A completion without its own date uses the listen date or one millisecond after the Unix
 epoch when both dates are missing.
 

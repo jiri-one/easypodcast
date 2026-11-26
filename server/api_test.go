@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -10,6 +13,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestHTTPAPI(t *testing.T) {
@@ -29,6 +34,8 @@ func TestHTTPAPI(t *testing.T) {
 		switch r.URL.Path {
 		case "/old":
 			http.Redirect(w, r, "/feeds/cloudberry.xml", http.StatusMovedPermanently)
+		case "/bad-json":
+			_, _ = w.Write([]byte(`{"title":"Fixture","items":[{"id":"episode\u0000","attachments":[{"url":"/audio.mp3"}]}]}`))
 		case "/feeds/cloudberry.xml":
 			calls.Add(1)
 			switch mode.Load() {
@@ -85,12 +92,17 @@ func TestHTTPAPI(t *testing.T) {
 	call("POST", "/api/login", login, "", "", 429)
 	loginReply := call("POST", "/api/login", login, "", "192.0.2.2:46001", 200)
 	tokens := response[struct {
-		Token string `json:"token"`
-		ID    int64  `json:"device_id"`
+		Token    string `json:"token"`
+		ID       int64  `json:"device_id"`
+		ServerID string `json:"server_id"`
 	}](t, loginReply)
 	token = tokens.Token
 	if len(token) != 43 || tokens.ID == 0 {
 		t.Fatal("invalid login response")
+	}
+	var uuid pgtype.UUID
+	if err := uuid.Scan(tokens.ServerID); err != nil || uuid.Bytes[6]>>4 != 4 || uuid.Bytes[8]>>6 != 2 {
+		t.Fatalf("invalid server UUID in login reply: %v", err)
 	}
 
 	call("POST", "/api/state", strings.Repeat(" ", maxRequestBytes+1), "", "", 413)
@@ -99,11 +111,18 @@ func TestHTTPAPI(t *testing.T) {
 	if got := call("GET", "/api/podcasts", "", "", "", 200).Body.String(); got != "[]" {
 		t.Fatal(got)
 	}
-	emptyState := call("GET", "/api/state", "", "", "", 200).Body.String()
-	if emptyState != `{"episodes":[],"queue":null,"server_time":"2026-11-26T12:00:00.000Z"}` {
-		t.Fatal(emptyState)
+	emptyState := response[struct {
+		stateSnapshot
+		ServerTime timestamp `json:"server_time"`
+	}](t, call("GET", "/api/state", "", "", "", 200))
+	if emptyState.Episodes == nil || len(emptyState.Episodes) != 0 || emptyState.Queue != nil ||
+		emptyState.ServerID != tokens.ServerID || !emptyState.ServerTime.Equal(now) {
+		t.Fatalf("unexpected initial snapshot: %+v", emptyState)
 	}
 	call("POST", "/api/podcasts", `{"feed_url":"file:///a"}`, "", "", 422)
+	if got := call("POST", "/api/podcasts", fmt.Sprintf(`{"feed_url":%q}`, feeds.URL+"/bad-json"), "", "", 422).Body.String(); !strings.Contains(got, errUnusableFeed.Error()) {
+		t.Fatal(got)
+	}
 	input := fmt.Sprintf(`{"feed_url":%q}`, feeds.URL+"/old")
 	p := response[podcast](t, call("POST", "/api/podcasts", input, "", "", 201))
 	if p.EpisodeCount != 2 || p.FeedURL != feeds.URL+"/feeds/cloudberry.xml" {
@@ -161,7 +180,7 @@ func TestHTTPAPI(t *testing.T) {
 	at := now.Add(-time.Minute)
 	measured, remeasured := int64(243210), int64(250123)
 	result := response[stateResult](t, send(at, 120000, "", &measured, []int64{paper.ID, 999999, copper.ID}, 200))
-	if len(result.Episodes) != 1 || result.Episodes[0].PositionMS != 120000 ||
+	if result.ServerID != tokens.ServerID || len(result.Episodes) != 1 || result.Episodes[0].PositionMS != 120000 ||
 		result.Episodes[0].DurationMS == nil || *result.Episodes[0].DurationMS != measured ||
 		!slices.Equal(result.Unknown, []int64{999999}) || !slices.Equal(result.Queue.EpisodeIDs, []int64{paper.ID, copper.ID}) {
 		t.Fatalf("initial state: %+v", result)
@@ -269,13 +288,138 @@ func TestHTTPAPI(t *testing.T) {
 	call("GET", "/health", "", "", "", 503)
 }
 
+func TestStateETagAndServerIdentity(t *testing.T) {
+	s := integrationStore(t)
+	testExec(t, s.db, `INSERT INTO users (username, password_hash) VALUES ('listener', decode('00', 'hex'));
+		INSERT INTO podcasts (feed_url) VALUES ('https://fixture.invalid');
+		INSERT INTO episodes (podcast_id, guid, title, enclosure_url, description)
+			VALUES (1, 'fixture', 'Episode', 'https://fixture.invalid/audio.mp3', '')`)
+	token, _, err := s.createDevice(t.Context(), "listener", "Reader")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := newAPI(s, nil)
+	now := time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return now }
+	handler := a.routes()
+	call := func(ctx context.Context, method, etag, body string, want int) *httptest.ResponseRecorder {
+		t.Helper()
+		r := httptest.NewRequestWithContext(ctx, method, "/api/state", strings.NewReader(body))
+		r.Header.Set("Authorization", "Bearer "+token)
+		if etag != "" {
+			r.Header.Set("If-None-Match", etag)
+		}
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		if w.Code != want {
+			t.Fatalf("%s state: %d, want %d: %s", method, w.Code, want, w.Body.String())
+		}
+		return w
+	}
+
+	ctx := t.Context()
+	first := call(ctx, "GET", "", "", 200)
+	identity := response[stateSnapshot](t, first).ServerID
+	tag := first.Header().Get("ETag")
+	if identity == "" || !strings.HasPrefix(tag, "W/") {
+		t.Fatal("state response is missing the identity or a weak validator")
+	}
+	now = now.Add(time.Hour)
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	if _, err := tx.Exec(ctx, "LOCK TABLE episode_state IN ACCESS EXCLUSIVE MODE"); err != nil {
+		t.Fatal(err)
+	}
+	conditionalCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	cached := call(conditionalCtx, "GET", `"unrelated", `+strings.TrimPrefix(tag, "W/"), "", 304)
+	if cached.Body.Len() != 0 || cached.Header().Get("ETag") != tag {
+		t.Fatal("304 had a body or lost its validator")
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	const sample = `{"episodes":[{"episode_id":1,"position_ms":120000,"status":"","updated_at":"2026-11-26T12:00:00.000Z"}]}`
+	call(ctx, "POST", "", sample, 200)
+	updated := call(ctx, "GET", tag, "", 200)
+	tag = updated.Header().Get("ETag")
+	call(ctx, "POST", "", sample, 200)
+	call(ctx, "GET", tag, "", 304)
+
+	call(ctx, "POST", "", `{"queue":{"episode_ids":[1],"updated_at":"2026-11-26T12:01:00.000Z"}}`, 200)
+	updated = call(ctx, "GET", tag, "", 200)
+	tag = updated.Header().Get("ETag")
+	call(ctx, "POST", "", `{"queue":{"episode_ids":[],"updated_at":"2026-11-26T12:02:00.000Z"}}`, 200)
+	updated = call(ctx, "GET", tag, "", 200)
+	tag = updated.Header().Get("ETag")
+
+	t.Setenv("EASYPODCAST_DATABASE_URL", testDatabaseURL(t, s.db).String())
+	if err := run(ctx, []string{"new-server-id"}); err != nil {
+		t.Fatal(err)
+	}
+	reset := response[stateSnapshot](t, call(ctx, "GET", tag, "", 200))
+	if reset.ServerID == "" || reset.ServerID == identity || len(reset.Episodes) != 1 ||
+		reset.Episodes[0].PositionMS != 120000 || reset.Queue == nil || len(reset.Queue.EpisodeIDs) != 0 {
+		t.Fatalf("identity reset changed the wrong records: %+v", reset)
+	}
+	if posted := response[stateResult](t, call(ctx, "POST", "", "{}", 200)); posted.ServerID != reset.ServerID {
+		t.Fatalf("state update returned server ID %q after rotation", posted.ServerID)
+	}
+	if err := s.migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if revision, err := s.currentStateRevision(ctx); err != nil || revision.ServerID != reset.ServerID {
+		t.Fatalf("migrations replaced an existing identity: %v", err)
+	}
+}
+
+func TestAPIDatabaseErrorLog(t *testing.T) {
+	s := integrationStore(t)
+	testExec(t, s.db, `INSERT INTO users (username, password_hash) VALUES ('listener', decode('00', 'hex'));
+		DROP TABLE episode_state`)
+	token, _, err := s.createDevice(t.Context(), "listener", "Reader")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logged bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logged, nil)))
+	defer slog.SetDefault(old)
+	r := httptest.NewRequest("GET", "/api/episodes/123/state?filter=query-fixture", strings.NewReader("body-fixture"))
+	r.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	newAPI(s, nil).routes().ServeHTTP(w, r)
+	if w.Code != http.StatusInternalServerError || w.Body.String() != `{"error":"internal server error"}` {
+		t.Fatalf("unexpected database error response: %d %s", w.Code, w.Body)
+	}
+	var entry struct {
+		Method   string `json:"method"`
+		Route    string `json:"route"`
+		Status   int    `json:"status"`
+		SQLState string `json:"sqlstate"`
+	}
+	if err := json.Unmarshal(logged.Bytes(), &entry); err != nil || entry.Method != "GET" ||
+		entry.Route != "GET /api/episodes/{id}/state" || entry.Status != 500 || entry.SQLState != "42P01" {
+		t.Fatalf("missing safe database error diagnostics: %+v, %v", entry, err)
+	}
+	for _, sensitive := range []string{token, "123/state", "query-fixture", "body-fixture"} {
+		if strings.Contains(logged.String(), sensitive) {
+			t.Fatal("database error log exposed request data")
+		}
+	}
+}
+
 func TestLoginTrustedProxy(t *testing.T) {
 	s := integrationStore(t)
 	if err := s.setPassword(t.Context(), "listener", "fixture password"); err != nil {
 		t.Fatal(err)
 	}
 	a := newAPI(s, nil)
-	a.logins.trustedProxies = parseTrustedProxies("malformed, 192.0.2.0/24")
+	a.logins.trustedProxies = parseTrustedProxies("malformed, 192.0.2.0/24, 198.51.100.9")
 	handler := a.routes()
 	login := func(peer, forwarded, password string, want int) {
 		t.Helper()
@@ -291,17 +435,26 @@ func TestLoginTrustedProxy(t *testing.T) {
 	}
 	for i := range 5 {
 		spoof := fmt.Sprintf("203.0.113.%d", i+10)
-		login("192.0.2.2:41000", spoof+", 198.51.100.2", "wrong", 401)
+		login("192.0.2.2:41000", spoof+", 198.51.100.2, 198.51.100.9", "wrong", 401)
 		login(fmt.Sprintf("203.0.113.2:%d", 42000+i), spoof, "wrong", 401)
 	}
 	login("192.0.2.2:41001", "203.0.113.90, 198.51.100.2", "fixture password", 429)
 	login("203.0.113.2:42005", "203.0.113.91", "fixture password", 429)
-	login("192.0.2.2:41002", "198.51.100.3", "fixture password", 200)
+	login("192.0.2.2:41002", "198.51.100.3, 198.51.100.9", "fixture password", 200)
 }
 
 func TestLoginGlobalLimitAtAPI(t *testing.T) {
-	a := newAPI(store{}, nil)
-	req := httptest.NewRequest("POST", "/api/login", strings.NewReader(`{"username":"listener","password":"guess","device_name":"Test"}`))
+	s := integrationStore(t)
+	if err := s.setPassword(t.Context(), "listener", "fixture password"); err != nil {
+		t.Fatal(err)
+	}
+	token, _, err := s.createDevice(t.Context(), "listener", "Existing reader")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := newAPI(s, nil)
+	const login = `{"username":"listener","password":"fixture password","device_name":"New reader"}`
+	req := httptest.NewRequest("POST", "/api/login", strings.NewReader(login))
 	for i := range loginMinuteLimit {
 		req.RemoteAddr = fmt.Sprintf("198.51.100.%d:8080", i+1)
 		finish, wait := a.logins.start(req)
@@ -315,6 +468,18 @@ func TestLoginGlobalLimitAtAPI(t *testing.T) {
 	a.routes().ServeHTTP(rec, req)
 	if rec.Code != http.StatusTooManyRequests || rec.Header().Get("Retry-After") == "" {
 		t.Fatalf("rotated address got HTTP %d without a rate limit, %v", rec.Code, rec.Header())
+	}
+	req = httptest.NewRequest("GET", "/api/state", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec = httptest.NewRecorder()
+	a.routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("global login block affected an existing token: HTTP %d", rec.Code)
+	}
+	rec = httptest.NewRecorder()
+	newAPI(s, nil).routes().ServeHTTP(rec, httptest.NewRequest("POST", "/api/login", strings.NewReader(login)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("a fresh server still had a login block: HTTP %d", rec.Code)
 	}
 }
 

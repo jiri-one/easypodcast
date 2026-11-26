@@ -91,8 +91,19 @@ type stateChange struct {
 	queueOnlyIfEmpty bool
 }
 
+type stateRevision struct {
+	ServerID string `json:"server_id"`
+	version  int64
+}
+
+type stateSnapshot struct {
+	stateChange
+	stateRevision
+}
+
 type stateResult struct {
 	stateChange
+	ServerID            string  `json:"server_id"`
 	Unknown             []int64 `json:"unknown"`
 	queueEntriesWritten int
 }

@@ -12,8 +12,11 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const fetchTimeout = 20 * time.Second
-const maxBackoff = 24 * time.Hour
+const (
+	fetchTimeout     = 60 * time.Second
+	subscribeTimeout = 80 * time.Second
+	maxBackoff       = 24 * time.Hour
+)
 
 type feedTarget struct {
 	ID           int64
@@ -30,11 +33,15 @@ type refresher struct {
 	userAgent string
 	interval  time.Duration
 	slots     chan struct{}
+	large     chan struct{}
 	force     chan struct{}
 }
 
 func newRefresher(s store, userAgent string, interval time.Duration) *refresher {
-	return &refresher{s, feedHTTPClient(), userAgent, interval, make(chan struct{}, 4), make(chan struct{}, 1)}
+	return &refresher{
+		store: s, client: feedHTTPClient(), userAgent: userAgent, interval: interval,
+		slots: make(chan struct{}, 4), large: make(chan struct{}, 1), force: make(chan struct{}, 1),
+	}
 }
 
 func (r *refresher) run(ctx context.Context) {
@@ -69,7 +76,8 @@ func (r *refresher) refreshDue(ctx context.Context, force bool) {
 	}
 	var workers sync.WaitGroup
 	jobs := make(chan feedTarget)
-	for range cap(r.slots) {
+	// Keep a slot available when background hosts are slow.
+	for range cap(r.slots) - 1 {
 		workers.Go(func() {
 			for target := range jobs {
 				if err := r.refresh(ctx, target); err != nil && ctx.Err() == nil {
@@ -90,7 +98,7 @@ send:
 	workers.Wait()
 }
 
-func (r *refresher) refresh(ctx context.Context, target feedTarget) error {
+func (r *refresher) refresh(ctx context.Context, target feedTarget) (resultErr error) {
 	failures := min(target.Failures+1, 63)
 	backoff := r.delay(failures)
 	// A process crash during parsing must leave the feed on backoff.
@@ -104,9 +112,19 @@ func (r *refresher) refresh(ctx context.Context, target feedTarget) error {
 	if err != nil || !scheduled {
 		return err
 	}
-	fetchCtx, cancel := context.WithTimeout(ctx, fetchTimeout)
-	defer cancel()
-	result, err := r.fetch(fetchCtx, target)
+	defer func() {
+		if ctx.Err() != nil {
+			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+			defer cancel()
+			err := r.store.withFeedWriter(cleanup, func() error {
+				_, err := r.store.db.Exec(cleanup, `UPDATE podcasts SET failures = $2, next_refresh_at = now()
+					WHERE id = $1 AND fetch_generation = $3`, target.ID, target.Failures, target.Generation)
+				return err
+			})
+			resultErr = errors.Join(resultErr, err)
+		}
+	}()
+	result, err := r.fetch(ctx, target)
 	if err == nil {
 		err = r.store.applyRefresh(ctx, target, result, time.Now().Add(r.delay(0)))
 	}
@@ -149,7 +167,7 @@ func (r *refresher) subscribe(ctx context.Context, raw string) (podcast, bool, e
 	if err != nil {
 		return podcast{}, false, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, fetchTimeout)
+	ctx, cancel := context.WithTimeout(ctx, subscribeTimeout)
 	defer cancel()
 	address := u.String()
 	id, err := r.store.resubscribe(ctx, address)
