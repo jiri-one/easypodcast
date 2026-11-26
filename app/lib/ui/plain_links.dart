@@ -3,6 +3,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'eink_widgets.dart';
+import 'theme.dart';
 
 final _urlCredentials = RegExp(
   r'''([a-z][a-z0-9+.-]*://)[^/\s?#<>"“”]+@''',
@@ -110,7 +111,7 @@ class _PlainLinksState extends State<PlainLinks> {
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
       Text.rich(TextSpan(children: _spans), style: widget.style),
-      if (_failed) ProblemBox(context.strings.linkFailed),
+      if (_failed) EinkError(context.strings.linkFailed, inset: true),
     ],
   );
 }

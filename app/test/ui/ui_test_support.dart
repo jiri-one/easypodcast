@@ -7,11 +7,6 @@ import 'package:easypodcast/l10n/app_localizations.dart';
 import 'package:easypodcast/ui/account_pages.dart';
 import 'package:easypodcast/ui/app_root.dart';
 import 'package:easypodcast/ui/cover_image.dart';
-import 'package:easypodcast/ui/demo/demo_api.dart';
-import 'package:easypodcast/ui/demo/demo_downloads.dart';
-import 'package:easypodcast/ui/demo/demo_library.dart';
-import 'package:easypodcast/ui/demo/demo_services.dart';
-import 'package:easypodcast/ui/demo/demo_sync.dart';
 import 'package:easypodcast/ui/eink_widgets.dart';
 import 'package:easypodcast/ui/episode_queue.dart';
 import 'package:easypodcast/ui/library_views.dart';
@@ -24,6 +19,13 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
+
+import 'fixtures/demo_api.dart';
+import 'fixtures/demo_downloads.dart';
+import 'fixtures/demo_library.dart';
+import 'fixtures/demo_services.dart';
+import 'fixtures/demo_sync.dart';
+import 'fixtures/fake_playback_engine.dart';
 
 const palmaSize = Size(440, 879);
 const palmaTextScale = 1.3;
@@ -63,10 +65,11 @@ Future<String> loadTestFonts() async {
 }
 
 class UiHarness {
-  UiHarness._(this.tester, this.services, this.desktop);
+  UiHarness._(this.tester, this.services, this.engine, this.desktop);
 
   final WidgetTester tester;
   final AppServices services;
+  final FakePlaybackEngine engine;
   final bool desktop;
   final surface = GlobalKey();
 
@@ -75,8 +78,8 @@ class UiHarness {
 
   static Future<UiHarness> open(
     WidgetTester tester, {
-    required Size size,
-    required Locale locale,
+    Size size = const Size(360, 720),
+    Locale locale = const Locale('cs'),
     double textScale = 1.8,
     String? desktopFont,
     bool loggedIn = true,
@@ -86,15 +89,16 @@ class UiHarness {
   }) async {
     final desktop = desktopFont != null;
     if (playerCover) await _cacheCover(desktop ? 52 : size.width.round());
+    final engine = FakePlaybackEngine(tester.binding.clock.now);
     final demo = await createDemoServices(
+      engine: engine,
       loggedIn: loggedIn,
       library:
           library ??
           (playerCover ? DemoLibrary(firstPodcastCover: _coverUrl) : null),
     );
     final services = configure?.call(demo) ?? demo;
-    if (!identical(services.player, demo.player)) demo.player.dispose();
-    final app = UiHarness._(tester, services, desktop);
+    final app = UiHarness._(tester, services, engine, desktop);
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1;
     tester.platformDispatcher.localesTestValue = [locale];
@@ -389,6 +393,10 @@ Future<void> tourPhone(UiHarness app, VisitScreen visit) async {
     find.byType(PodcastList),
   );
   await visit('11-podcast');
+  await app.row(l.searchThisPodcast);
+  await app.tester.enterText(find.byType(TextField), 'nocni nadrazi');
+  await visit('30-podcast-search');
+  await app.tap(find.byTooltip(l.clearSearch));
   await app.row(l.aboutPodcast);
   await visit('20-about-podcast');
   await app.tapText(l.unsubscribe);

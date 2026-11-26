@@ -2,6 +2,7 @@ import 'package:intl/intl.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../core/downloads.dart';
+import '../core/models.dart';
 import '../l10n/app_localizations.dart';
 import 'eink_widgets.dart';
 
@@ -50,6 +51,27 @@ String playbackTime(
 
 String speedText(AppLocalizations strings, double speed) =>
     strings.speedValue(NumberFormat('0.0#', strings.localeName).format(speed));
+
+String episodeStatusText(
+  AppLocalizations strings,
+  EpisodeState state,
+  Duration? duration, {
+  required bool playing,
+  bool showTotal = false,
+}) => switch ((playing, state.status, state.isInProgress)) {
+  (true, _, _) => strings.statePlaying,
+  (_, EpisodeStatus.played, _) => strings.statePlayed,
+  (_, EpisodeStatus.dismissed, _) => strings.stateDismissed,
+  (_, _, true) => playbackTime(
+    strings,
+    state.resumePosition,
+    duration,
+    showTotal: showTotal,
+  ),
+  _ when showTotal && duration != null =>
+    strings.stateNew + metadataSeparator + minuteLength(strings, duration),
+  _ => strings.stateNew,
+};
 
 String clockText(AppLocalizations strings, DateTime time) =>
     DateFormat('H:mm', strings.localeName).format(time.toLocal());

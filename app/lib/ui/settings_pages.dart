@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -8,34 +6,22 @@ import '../core/models.dart';
 import '../core/services.dart';
 import 'eink_widgets.dart';
 import 'episode_text.dart';
+import 'library_views.dart';
 import 'plain_links.dart';
 import 'playback_actions.dart';
 import 'player_views.dart';
-import 'sync_feedback.dart';
 import 'theme.dart';
 
 class SettingsPage extends StatelessWidget {
   const SettingsPage({
     super.key,
     required this.playback,
-    required this.alphabetical,
-    required this.preferencesFailed,
-    required this.onAlphabetical,
-    required this.redrawSeconds,
-    required this.onRedrawSeconds,
-    required this.downloadsAvailable,
     required this.onServer,
     required this.onFeeds,
     required this.onOpml,
   });
 
   final PlaybackActions playback;
-  final bool alphabetical;
-  final bool preferencesFailed;
-  final VoidCallback onAlphabetical;
-  final int redrawSeconds;
-  final ValueChanged<int> onRedrawSeconds;
-  final bool downloadsAvailable;
   final VoidCallback onServer;
   final VoidCallback onFeeds;
   final VoidCallback onOpml;
@@ -63,20 +49,18 @@ class SettingsPage extends StatelessWidget {
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-              child: Builder(
-                builder: (context) => Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  spacing: 4,
-                  children: [
-                    ServerStatusLine(services: services),
-                    if (SyncFeedback.of(context).status.clockSkewWarning
-                        case final skew?)
-                      Text(
-                        strings.serverClockSkew(skew.abs().inMinutes),
-                        style: detailStyle,
-                      ),
-                  ],
-                ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                spacing: 4,
+                children: [
+                  ServerStatusLine(services: services),
+                  if (services.sync.status.value.clockSkewWarning
+                      case final skew?)
+                    Text(
+                      strings.serverClockSkew(skew.abs().inMinutes),
+                      style: detailStyle,
+                    ),
+                ],
               ),
             ),
             const Divider(height: 1),
@@ -110,20 +94,6 @@ class SettingsPage extends StatelessWidget {
           value: settings.skipForwardSeconds,
           onChange: (value) => settings.skipForwardSeconds = value,
         ),
-        _SecondsRow(
-          title: strings.playerRedraw,
-          options: const [1, 10, 60],
-          value: redrawSeconds,
-          onChange: onRedrawSeconds,
-          showMinute: true,
-        ),
-        _SecondsRow(
-          title: strings.listRedraw,
-          options: const [1, 10, 60],
-          value: settings.positionRedrawSeconds,
-          onChange: (value) => settings.positionRedrawSeconds = value,
-          showMinute: true,
-        ),
         if (downloadsAvailable) ...[
           _ToggleRow(
             title: strings.downloadWifi,
@@ -146,10 +116,10 @@ class SettingsPage extends StatelessWidget {
         ],
         _ToggleRow(
           title: strings.alphabeticalPodcasts,
-          value: alphabetical,
-          onPressed: onAlphabetical,
+          value: settings.alphabeticalPodcasts,
+          onPressed: () =>
+              settings.alphabeticalPodcasts = !settings.alphabeticalPodcasts,
         ),
-        if (preferencesFailed) ProblemBox(strings.actionFailed),
         EinkRow(
           title: strings.feedStatus,
           trailing: const Icon(Icons.chevron_right),
@@ -218,14 +188,12 @@ class _SecondsRow extends StatelessWidget {
     required this.options,
     required this.value,
     required this.onChange,
-    this.showMinute = false,
   });
 
   final String title;
   final List<int> options;
   final int value;
   final ValueChanged<int> onChange;
-  final bool showMinute;
 
   @override
   Widget build(BuildContext context) {
@@ -249,9 +217,7 @@ class _SecondsRow extends StatelessWidget {
                       widthFactor: 1,
                       heightFactor: 1,
                       child: Text(
-                        showMinute && seconds == 60
-                            ? strings.minutes(1)
-                            : strings.seconds(seconds),
+                        strings.seconds(seconds),
                         textAlign: TextAlign.center,
                       ),
                     ),
@@ -279,42 +245,19 @@ class _SecondsRow extends StatelessWidget {
   }
 }
 
-class ServerStatusLine extends StatefulWidget {
+class ServerStatusLine extends StatelessWidget {
   const ServerStatusLine({super.key, required this.services});
 
   final AppServices services;
 
   @override
-  State<ServerStatusLine> createState() => _ServerStatusLineState();
-}
-
-class _ServerStatusLineState extends State<ServerStatusLine> {
-  bool _sending = false;
-  bool _failed = false;
-
-  Future<void> _send() async {
-    if (_sending) return;
-    _sending = true;
-    if (_failed) setState(() => _failed = false);
-    try {
-      await widget.services.sync.syncNow();
-    } on Exception {
-      if (mounted) setState(() => _failed = true);
-    } finally {
-      _sending = false;
-    }
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final feedback = SyncFeedback.of(context);
-    final status = feedback.status;
+    final status = services.sync.status.value;
     final strings = context.strings;
-    final problem =
-        feedback.problem(context) ?? (_failed ? strings.syncError : null);
+    final problem = syncProblem(context, status);
     final last = status.lastSuccess;
     final lastSync = last == null
-        ? (feedback.loadingLibrary(widget.services.library)
+        ? (loadingLibrary(services)
               ? strings.syncLoading
               : strings.serverConnected)
         : strings.serverLastSync(
@@ -330,7 +273,7 @@ class _ServerStatusLineState extends State<ServerStatusLine> {
       children: [
         if (status.pending > 0)
           TextButton(
-            onPressed: _send,
+            onPressed: services.sync.syncNow,
             style: const ButtonStyle(
               alignment: AlignmentDirectional.centerStart,
               padding: WidgetStatePropertyAll(EdgeInsets.zero),
@@ -407,7 +350,7 @@ class _ServerPageState extends State<ServerPage> {
             details: [Text(sync.deviceName, style: detailStyle)],
           ),
         PageMessage(strings.serverChangeHelp),
-        if (_failed) ProblemBox(strings.actionFailed),
+        if (_failed) EinkError(strings.actionFailed, inset: true),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12),
           child: EinkButton(
@@ -435,26 +378,15 @@ class AboutPodcastPage extends StatefulWidget {
   State<AboutPodcastPage> createState() => _AboutPodcastPageState();
 }
 
-class _AboutPodcastPageState extends State<AboutPodcastPage> {
-  bool _working = false;
-  bool _failed = false;
+class _AboutPodcastPageState extends State<AboutPodcastPage>
+    with ActionTapGuard {
+  String? _error;
   bool? _subscribing;
-  Timer? _tapGuard;
 
-  @override
-  void dispose() {
-    _tapGuard?.cancel();
-    super.dispose();
-  }
-
-  Future<void> _changeSubscription() async {
-    if (_working || _tapGuard?.isActive == true) return;
+  Future<void> _changeSubscription() => guardAction(() async {
     final podcast = widget.podcast;
     final strings = context.strings;
-    setState(() {
-      _working = true;
-      _failed = false;
-    });
+    if (_error != null) setState(() => _error = null);
     try {
       if (podcast.subscribed) {
         final confirmed = await confirmAction(
@@ -463,29 +395,19 @@ class _AboutPodcastPageState extends State<AboutPodcastPage> {
           message: strings.unsubscribeHelp,
           action: strings.unsubscribe,
         );
-        if (confirmed && mounted) {
-          setState(() => _subscribing = false);
-          await widget.services.library.unsubscribe(podcast.id);
-        }
+        if (!confirmed || !mounted) return;
+        setState(() => _subscribing = false);
+        await widget.services.library.unsubscribe(podcast.id);
       } else {
         setState(() => _subscribing = true);
         await widget.services.library.subscribe(podcast.feedUrl);
       }
-    } on Exception {
-      _failed = true;
+    } on Exception catch (error) {
+      if (mounted) _error = actionError(context, error);
     } finally {
-      if (mounted) {
-        _tapGuard = Timer(
-          const Duration(milliseconds: 600),
-          () => _tapGuard = null,
-        );
-        setState(() {
-          _working = false;
-          _subscribing = null;
-        });
-      }
+      if (mounted) setState(() => _subscribing = null);
     }
-  }
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -521,7 +443,7 @@ class _AboutPodcastPageState extends State<AboutPodcastPage> {
             strings.addingPodcast,
           ],
         ),
-        if (_failed) ProblemBox(strings.actionFailed),
+        if (_error case final error?) EinkError(error, inset: true),
         if (!podcast.subscribed) PageMessage(strings.notSubscribed),
       ],
     );
@@ -708,7 +630,9 @@ class _OpmlPageState extends State<OpmlPage> {
                 onPressed: () => _run(_OpmlAction.export),
               ),
               if (_message case final String message)
-                _failed ? ProblemBox(message) : PageMessage(message),
+                _failed
+                    ? EinkError(message, inset: true)
+                    : PageMessage(message),
             ],
           ),
         ),

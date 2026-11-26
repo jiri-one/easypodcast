@@ -9,8 +9,6 @@
   "settings": "Settings",
   "changeList": "Switch list",
   "player": "Player",
-  "playerRedraw": "Player time refresh interval",
-  "listRedraw": "List playback progress refresh interval",
   "seekPlayback": "Playback position",
   "seekUnavailable": "The playback position can’t be changed yet.",
   "nextInQueue": "Next in queue: {title}",
@@ -49,6 +47,9 @@
   "podcastsEmpty": "You haven't subscribed to any podcasts yet.",
   "downloadsEmpty": "There are no downloads on this phone yet.",
   "podcastEmpty": "This podcast has no episodes yet.",
+  "searchThisPodcast": "Search this podcast",
+  "clearSearch": "Clear search",
+  "noMatchingEpisodes": "No episodes match your search.",
   "episodeMissing": "This episode is no longer available.",
   "podcastMissing": "This podcast is no longer available.",
   "selectEpisode": "Select an episode from the list.",
@@ -443,17 +444,6 @@
   "@storageUsed": {
     "placeholders": {
       "used": {
-        "type": "String"
-      }
-    }
-  },
-  "storageUsedAndFree": "{used} used, {free} free",
-  "@storageUsedAndFree": {
-    "placeholders": {
-      "used": {
-        "type": "String"
-      },
-      "free": {
         "type": "String"
       }
     }

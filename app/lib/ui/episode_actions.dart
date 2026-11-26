@@ -7,7 +7,6 @@ import 'eink_widgets.dart';
 import 'episode_text.dart';
 import 'playback_actions.dart';
 import 'player_views.dart';
-import 'queue_edits.dart';
 import 'theme.dart';
 
 class EpisodeAction {
@@ -45,19 +44,10 @@ class EpisodeAction {
 }
 
 class EpisodeActions {
-  const EpisodeActions({
-    required this.episode,
-    required this.playback,
-    required this.queueEdits,
-    required this.downloadsAvailable,
-    required this.onTrackDownload,
-  });
+  const EpisodeActions({required this.episode, required this.playback});
 
   final Episode episode;
   final PlaybackActions playback;
-  final QueueEdits queueEdits;
-  final bool downloadsAvailable;
-  final ValueChanged<int> onTrackDownload;
 
   Library get _library => playback.services.library;
   DownloadService get _downloads => playback.services.downloads;
@@ -82,7 +72,7 @@ class EpisodeActions {
     final strings = context.strings;
     final id = episode.id;
     final state = _library.stateOf(id);
-    final queue = queueEdits.episodes;
+    final queue = _library.projectedQueue;
     final queueIndex = queue.indexWhere((item) => item.id == id);
     final queued = queueIndex >= 0;
     return [
@@ -96,8 +86,8 @@ class EpisodeActions {
           strings.loadingPlayback,
           strings.playFrom(
             positionText(
-              state.positionMs > 0
-                  ? Duration(milliseconds: state.positionMs)
+              state.resumePosition > Duration.zero
+                  ? state.resumePosition
                   : const Duration(minutes: 59, seconds: 59),
             ),
           ),
@@ -105,24 +95,26 @@ class EpisodeActions {
       ),
       EpisodeAction(
         queued ? strings.removeFromQueue : strings.addToQueue,
-        (_) => queueEdits.setMembership(episode, queued: !queued),
+        (_) => _changeQueue(
+          () => queued ? _library.dequeue(id) : _library.enqueue(id),
+        ),
         alternatives: [strings.removeFromQueue, strings.addToQueue],
       ),
-      if (queueMoves && queued && !queueEdits.saving) ...[
+      if (queueMoves && queued && !_library.queueSaving) ...[
         if (queueIndex > 0)
           EpisodeAction(
             strings.moveQueueUp,
-            (_) => queueEdits.move(episode, queueIndex - 1),
+            (_) => _changeQueue(() => _library.moveInQueue(id, queueIndex - 1)),
           ),
         if (queueIndex < queue.length - 1)
           EpisodeAction(
             strings.moveQueueDown,
-            (_) => queueEdits.move(episode, queueIndex + 1),
+            (_) => _changeQueue(() => _library.moveInQueue(id, queueIndex + 1)),
           ),
         if (queueIndex > 0)
           EpisodeAction(
             strings.moveQueueFirst,
-            (_) => queueEdits.move(episode, 0),
+            (_) => _changeQueue(() => _library.moveInQueue(id, 0)),
           ),
       ],
       EpisodeAction(
@@ -155,19 +147,12 @@ class EpisodeActions {
         listenable: Listenable.merge([
           _library,
           playback,
-          queueEdits,
           playback.services.settings,
         ]),
         builder: (context, _) => watchDownload(
           context,
           (context, download) => EinkDialogPanel(
             title: episode.title,
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: Text(context.strings.close, style: buttonLabelStyle),
-              ),
-            ],
             children: [
               Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -187,6 +172,10 @@ class EpisodeActions {
       ),
     );
     if (selected != null && context.mounted) await selected.run(context);
+  }
+
+  Future<void> _changeQueue(Future<void> Function() change) async {
+    if (!_library.queueSaving) await change();
   }
 
   EpisodeAction _downloadAction(
@@ -215,7 +204,6 @@ class EpisodeActions {
             await _downloads.delete(id);
           case DownloadStatus.failed:
           case DownloadStatus.none:
-            onTrackDownload(id);
             await _downloads.download(id);
         }
       },
@@ -252,8 +240,7 @@ class EpisodeActions {
     await update();
     final player = playback.services.player;
     final active = player.current?.id;
-    if (active != null &&
-        _library.stateOf(active).status != EpisodeStatus.none) {
+    if (active != null && _library.stateOf(active).isFinished) {
       await player.stop();
     }
   }
@@ -263,12 +250,11 @@ class EpisodeActions {
 
   Duration _currentPosition() {
     final player = playback.services.player;
-    final stored = _library.stateOf(episode.id).positionMs;
-    if (player.current?.id == episode.id &&
-        player.position.value.inMilliseconds > stored) {
+    final stored = _library.stateOf(episode.id).resumePosition;
+    if (player.current?.id == episode.id && player.position.value > stored) {
       return player.position.value;
     }
-    return Duration(milliseconds: stored);
+    return stored;
   }
 
   Future<void> _dismiss(BuildContext context) async {

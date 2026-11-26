@@ -1,15 +1,13 @@
 import 'dart:async';
-
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
-import '../core/library.dart' show BulkDismissNeedsConnection;
 import '../core/models.dart';
 import '../core/services.dart';
+import '../core/sync.dart';
 import 'account_pages.dart';
 import 'app_root.dart';
 import 'downloads_page.dart';
@@ -20,9 +18,8 @@ import 'feed_refresh.dart';
 import 'library_views.dart';
 import 'playback_actions.dart';
 import 'player_views.dart';
-import 'queue_edits.dart';
+import 'podcast_search.dart';
 import 'settings_pages.dart';
-import 'sync_feedback.dart';
 import 'theme.dart';
 
 class PodcastHome extends StatelessWidget {
@@ -65,34 +62,27 @@ class _LibraryHome extends StatefulWidget {
 }
 
 class _LibraryHomeState extends State<_LibraryHome> {
-  static const _sortPreference = 'alphabeticalPodcasts';
-  static const _redrawPreference = 'playerRedrawSeconds';
-
   late final _playback = PlaybackActions(widget.services);
   late final _refresh = FeedRefresh(widget.services);
-  late final _queueEdits = QueueEdits(widget.services.library);
-  late final _syncFeedback = SyncFeedback(widget.services.sync.status);
   late final _updates = Listenable.merge([
     widget.services.library,
     widget.services.settings,
     _playback,
     _refresh,
-    _queueEdits,
+    widget.services.sync.status,
   ]);
   final _pages = <_Page>[];
-  final _requestedDownloads = <int>{};
   final _scrollPositions = PageStorageBucket();
+  final _searchText = TextEditingController();
+  final _searchFocus = FocusNode();
+  int? _searchPodcastId;
+  Timer? _searchTimer;
+  List<String> _searchWords = const [];
+  Set<int> _descriptionMatches = const {};
 
   LibrarySection _section = LibrarySection.inProgress;
   bool _menuOpen = false;
   bool _episodeMenuOpen = false;
-  bool _alphabetical = false;
-  bool _sortEdited = false;
-  bool _sortFailed = false;
-  int _redrawSeconds = 1;
-  bool _redrawEdited = false;
-  bool _redrawFailed = false;
-
   bool get _linux => !kIsWeb && defaultTargetPlatform == TargetPlatform.linux;
   bool get _wide => _linux && MediaQuery.sizeOf(context).width >= 760;
   bool get _atHome =>
@@ -106,71 +96,14 @@ class _LibraryHomeState extends State<_LibraryHome> {
 
   List<LibrarySection> get _sections => [
     for (final section in LibrarySection.values)
-      if (!_linux || section != LibrarySection.downloads) section,
+      if (downloadsAvailable || section != LibrarySection.downloads) section,
   ];
 
   @override
-  void initState() {
-    super.initState();
-    unawaited(_loadPreferences());
-  }
-
-  Future<void> _loadPreferences() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      if (!mounted) return;
-      final sorted = _sortEdited
-          ? _alphabetical
-          : prefs.getBool(_sortPreference) ?? false;
-      final savedRedraw = prefs.getInt(_redrawPreference);
-      final redraw = !_redrawEdited && (savedRedraw == 10 || savedRedraw == 60)
-          ? savedRedraw!
-          : _redrawSeconds;
-      if (sorted == _alphabetical && redraw == _redrawSeconds) return;
-      setState(() {
-        _alphabetical = sorted;
-        _redrawSeconds = redraw;
-      });
-    } on Exception {
-      if (mounted) setState(() => _sortFailed = true);
-    }
-  }
-
-  Future<void> _toggleSort() async {
-    _sortEdited = true;
-    setState(() => _alphabetical = !_alphabetical);
-    final sorted = _alphabetical;
-    var saved = false;
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      saved = await prefs.setBool(_sortPreference, sorted);
-    } on Exception {
-      saved = false;
-    }
-    if (mounted && sorted == _alphabetical && _sortFailed == saved) {
-      setState(() => _sortFailed = !saved);
-    }
-  }
-
-  Future<void> _setRedrawSeconds(int seconds) async {
-    _redrawEdited = true;
-    setState(() => _redrawSeconds = seconds);
-    var saved = false;
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      saved = await prefs.setInt(_redrawPreference, seconds);
-    } on Exception {
-      saved = false;
-    }
-    if (mounted && seconds == _redrawSeconds && _redrawFailed == saved) {
-      setState(() => _redrawFailed = !saved);
-    }
-  }
-
-  @override
   void dispose() {
-    _queueEdits.dispose();
-    _syncFeedback.dispose();
+    _searchTimer?.cancel();
+    _searchText.dispose();
+    _searchFocus.dispose();
     _playback.dispose();
     _refresh.dispose();
     super.dispose();
@@ -181,8 +114,8 @@ class _LibraryHomeState extends State<_LibraryHome> {
     setState(() {
       if (_menuOpen) {
         _menuOpen = false;
-      } else if (_pages.isNotEmpty) {
-        _pages.removeLast();
+      } else if (_pages.lastOrNull case final page?) {
+        if (!_closeSearchOn(page)) _pages.removeLast();
       } else {
         _section = LibrarySection.inProgress;
       }
@@ -196,6 +129,7 @@ class _LibraryHomeState extends State<_LibraryHome> {
         _pages.add((screen: _Screen.settings, id: null));
       }
     } else {
+      _closeSearch();
       _section = section;
       _pages.clear();
     }
@@ -216,13 +150,7 @@ class _LibraryHomeState extends State<_LibraryHome> {
     if (_episodeMenuOpen) return;
     _episodeMenuOpen = true;
     try {
-      await EpisodeActions(
-        episode: episode,
-        playback: _playback,
-        downloadsAvailable: !_linux,
-        queueEdits: _queueEdits,
-        onTrackDownload: _requestedDownloads.add,
-      ).showMenu(
+      await EpisodeActions(episode: episode, playback: _playback).showMenu(
         context,
         queueMoves:
             _section == LibrarySection.queue &&
@@ -233,17 +161,7 @@ class _LibraryHomeState extends State<_LibraryHome> {
       if (!mounted) return;
       await showEinkDialog<void>(
         context: context,
-        builder: (context) => EinkDialogPanel(
-          title: error is BulkDismissNeedsConnection
-              ? context.strings.dismissOlderOffline
-              : context.strings.actionFailed,
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: Text(context.strings.close, style: buttonLabelStyle),
-            ),
-          ],
-        ),
+        builder: (_) => EinkDialogPanel(title: actionError(context, error)),
       );
     } finally {
       _episodeMenuOpen = false;
@@ -251,23 +169,78 @@ class _LibraryHomeState extends State<_LibraryHome> {
   }
 
   void _openPodcast(Podcast podcast) => setState(() {
+    _closeSearch();
     _pages.removeWhere((page) => page.screen == _Screen.add);
     _pages.add((screen: _Screen.podcast, id: podcast.id));
   });
 
+  void _openSearch(int podcastId) {
+    setState(() => _searchPodcastId = podcastId);
+    _searchFocus.requestFocus();
+  }
+
+  void _closeSearch() {
+    if (_searchPodcastId == null) return;
+    _searchTimer?.cancel();
+    _searchFocus.unfocus();
+    _searchText.clear();
+    _searchPodcastId = null;
+    _searchWords = const [];
+    _descriptionMatches = const {};
+  }
+
+  bool _closeSearchOn(_Page page) {
+    if (page.screen != _Screen.podcast || _searchPodcastId != page.id) {
+      return false;
+    }
+    _closeSearch();
+    return true;
+  }
+
+  void _searchChanged(String input) {
+    final id = _searchPodcastId;
+    if (id == null) return;
+    final words = podcastSearchWords(input);
+    _searchTimer?.cancel();
+    setState(() {
+      _searchWords = words;
+      _descriptionMatches = const {};
+    });
+    if (words.isEmpty || (words.length == 1 && words.single.runes.length < 2)) {
+      return;
+    }
+    final services = widget.services;
+    _searchTimer = Timer(const Duration(milliseconds: 400), () async {
+      if (services.sync.status.value.phase == SyncPhase.offline) return;
+      try {
+        final matches = await services.api.searchPodcast(id, input.trim());
+        if (mounted && identical(_searchWords, words)) {
+          setState(() => _descriptionMatches = matches.toSet());
+        }
+      } on Exception {
+        // Local matches stay available when the server cannot answer.
+      }
+    });
+  }
+
+  List<Episode> _podcastEpisodes(int id) {
+    final episodes = widget.services.library.episodesOf(id);
+    return _searchPodcastId == id
+        ? matchPodcastEpisodes(episodes, _searchWords, _descriptionMatches)
+        : episodes;
+  }
+
   List<Episode> _activeEpisodeList() {
     if (_settingsPage != null) return const [];
     final podcast = _podcastPage;
-    return podcast == null
-        ? _sectionEpisodes()
-        : widget.services.library.episodesOf(podcast.id!);
+    return podcast == null ? _sectionEpisodes() : _podcastEpisodes(podcast.id!);
   }
 
   List<Episode> _sectionEpisodes() {
     final library = widget.services.library;
     return switch (_section) {
       LibrarySection.inProgress => library.inProgress,
-      LibrarySection.queue => _queueEdits.episodes,
+      LibrarySection.queue => library.projectedQueue,
       LibrarySection.newEpisodes => _recentNewEpisodes(),
       _ => const [],
     };
@@ -295,13 +268,12 @@ class _LibraryHomeState extends State<_LibraryHome> {
     if (focus?.findAncestorStateOfType<EditableTextState>() != null) {
       return KeyEventResult.ignored;
     }
-    final settings = widget.services.settings;
     if (key == LogicalKeyboardKey.space) {
       unawaited(_playback.toggle());
     } else if (key == LogicalKeyboardKey.arrowLeft) {
-      unawaited(_playback.skip(Duration(seconds: -settings.skipBackSeconds)));
+      unawaited(_playback.skipBack());
     } else if (key == LogicalKeyboardKey.arrowRight) {
-      unawaited(_playback.skip(Duration(seconds: settings.skipForwardSeconds)));
+      unawaited(_playback.skipForward());
     } else if (_wide &&
         (key == LogicalKeyboardKey.arrowUp ||
             key == LogicalKeyboardKey.arrowDown)) {
@@ -332,86 +304,39 @@ class _LibraryHomeState extends State<_LibraryHome> {
   @override
   Widget build(BuildContext context) {
     final desktop = _wide;
-    return SyncFeedbackScope(
-      notifier: _syncFeedback,
-      child: ListenableBuilder(
-        listenable: _updates,
-        builder: (context, _) {
-          final content = Scaffold(
-            body: SafeArea(
-              child: PageStorage(
-                bucket: _scrollPositions,
-                child: desktop ? _desktopBody(context) : _phoneBody(context),
-              ),
+    return ListenableBuilder(
+      listenable: _updates,
+      builder: (context, _) {
+        final content = Scaffold(
+          body: SafeArea(
+            child: PageStorage(
+              bucket: _scrollPositions,
+              child: desktop ? _desktopBody(context) : _phoneBody(context),
             ),
-          );
-          return PopScope(
-            canPop: _atHome,
-            onPopInvokedWithResult: (didPop, _) {
-              if (!didPop) _back();
-            },
-            child: _linux
-                ? Focus(
-                    autofocus: true,
-                    onKeyEvent: _desktopKey,
-                    child: content,
-                  )
-                : content,
-          );
-        },
-      ),
+          ),
+        );
+        return PopScope(
+          canPop: _atHome,
+          onPopInvokedWithResult: (didPop, _) {
+            if (!didPop) _back();
+          },
+          child: _linux
+              ? Focus(autofocus: true, onKeyEvent: _desktopKey, child: content)
+              : content,
+        );
+      },
     );
   }
 
   Widget _phoneBody(BuildContext context) {
     final page = _pages.lastOrNull;
-    final podcast = _podcastPage;
-    final settings = _settingsPage;
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        Visibility(
-          visible: page == null,
-          maintainState: true,
-          child: _phoneFrame(
-            context,
-            title: _section.label(context),
-            body: _sectionBody(context),
-            switcher: true,
-            mini: true,
-          ),
-        ),
-        if (podcast != null)
-          Visibility(
-            visible: page == podcast,
-            maintainState: true,
-            child: _phoneFrame(
-              context,
-              title: _title(context, podcast),
-              body: _podcastBody(context, podcast.id!, desktop: false),
-              onBack: _back,
-              mini: true,
-            ),
-          ),
-        if (settings != null)
-          Visibility(
-            visible: page == settings,
-            maintainState: true,
-            child: _phoneFrame(
-              context,
-              title: context.strings.settings,
-              body: _settingsBody(),
-              onBack: _back,
-            ),
-          ),
-        if (page != null && page != podcast && page != settings)
-          _phoneFrame(
-            context,
-            title: _title(context, page),
-            body: _pageBody(context, page),
-            onBack: _back,
-          ),
-      ],
+    return _phoneFrame(
+      context,
+      title: page == null ? _section.label(context) : _title(context, page),
+      body: page == null ? _sectionBody(context) : _pageBody(context, page),
+      onBack: page == null ? null : _back,
+      switcher: page == null,
+      mini: page == null || page.screen == _Screen.podcast,
     );
   }
 
@@ -557,35 +482,19 @@ class _LibraryHomeState extends State<_LibraryHome> {
                             : _title(context, listPage),
                         onBack: listPage == null
                             ? null
-                            : () => setState(
-                                () => _pages.removeRange(
-                                  _pages.indexOf(listPage),
-                                  _pages.length,
-                                ),
-                              ),
+                            : () => setState(() {
+                                if (!_closeSearchOn(listPage)) {
+                                  _pages.removeRange(
+                                    _pages.indexOf(listPage),
+                                    _pages.length,
+                                  );
+                                }
+                              }),
                       ),
                       Expanded(
-                        child: Stack(
-                          fit: StackFit.expand,
-                          children: [
-                            Visibility(
-                              visible: listPage == null,
-                              maintainState: true,
-                              child: _sectionBody(context, desktop: true),
-                            ),
-                            if (podcast != null)
-                              Visibility(
-                                visible: settings == null,
-                                maintainState: true,
-                                child: _podcastBody(
-                                  context,
-                                  podcast.id!,
-                                  desktop: true,
-                                ),
-                              ),
-                            if (settings != null) _settingsBody(),
-                          ],
-                        ),
+                        child: listPage == null
+                            ? _sectionBody(context, desktop: true)
+                            : _pageBody(context, listPage, desktop: true),
                       ),
                     ],
                   ),
@@ -613,11 +522,7 @@ class _LibraryHomeState extends State<_LibraryHome> {
             ],
           ),
         ),
-        DesktopPlayer(
-          playback: _playback,
-          onEpisode: _openEpisode,
-          redrawSeconds: _redrawSeconds,
-        ),
+        DesktopPlayer(playback: _playback, onEpisode: _openEpisode),
       ],
     );
   }
@@ -690,8 +595,6 @@ class _LibraryHomeState extends State<_LibraryHome> {
         onOpen: _openEpisode,
         onMenu: _openEpisodeMenu,
         desktop: desktop,
-        downloadsAvailable: !_linux,
-        queueEdits: _queueEdits,
         selectedId: selected?.screen == _Screen.episode ? selected?.id : null,
         actions: [
           if (_section == LibrarySection.newEpisodes)
@@ -702,15 +605,12 @@ class _LibraryHomeState extends State<_LibraryHome> {
     return switch (_section) {
       LibrarySection.podcasts => PodcastList(
         playback: _playback,
-        alphabetical: _alphabetical,
         onOpen: _openPodcast,
         onAdd: () => _open(_Screen.add),
         desktop: desktop,
       ),
       LibrarySection.downloads => DownloadsPage(
         playback: _playback,
-        requestedIds: _requestedDownloads,
-        queueEdits: _queueEdits,
         onOpen: _openEpisode,
         onMenu: _openEpisodeMenu,
       ),
@@ -720,12 +620,6 @@ class _LibraryHomeState extends State<_LibraryHome> {
 
   Widget _settingsBody() => SettingsPage(
     playback: _playback,
-    alphabetical: _alphabetical,
-    preferencesFailed: _sortFailed || _redrawFailed,
-    onAlphabetical: _toggleSort,
-    redrawSeconds: _redrawSeconds,
-    onRedrawSeconds: _setRedrawSeconds,
-    downloadsAvailable: !_linux,
     onServer: () => _open(_Screen.server),
     onFeeds: () => _open(_Screen.feeds),
     onOpml: () => _open(_Screen.opml),
@@ -737,18 +631,52 @@ class _LibraryHomeState extends State<_LibraryHome> {
     final strings = context.strings;
     if (podcast == null) return PageMessage(strings.podcastMissing);
     final last = _pages.lastOrNull;
+    final searching = _searchPodcastId == id;
     return EpisodeList(
       key: PageStorageKey(('podcast', id)),
       kind: EpisodeListKind.podcast,
-      episodes: library.episodesOf(id),
+      episodes: _podcastEpisodes(id),
       playback: _playback,
       onOpen: _openEpisode,
       onMenu: _openEpisodeMenu,
       desktop: desktop,
-      downloadsAvailable: !_linux,
-      queueEdits: _queueEdits,
       selectedId: last?.screen == _Screen.episode ? last?.id : null,
+      emptyMessage: searching && _searchWords.isNotEmpty
+          ? strings.noMatchingEpisodes
+          : null,
       actions: [
+        if (searching)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
+            child: Semantics(
+              label: strings.searchThisPodcast,
+              child: TextField(
+                controller: _searchText,
+                focusNode: _searchFocus,
+                onChanged: _searchChanged,
+                textInputAction: TextInputAction.search,
+                showCursor: false,
+                autocorrect: false,
+                enableSuggestions: false,
+                decoration: InputDecoration(
+                  hintText: strings.searchThisPodcast,
+                  suffixIcon: IconButton(
+                    icon: const Icon(Icons.clear),
+                    tooltip: strings.clearSearch,
+                    onPressed: () => setState(_closeSearch),
+                  ),
+                ),
+              ),
+            ),
+          )
+        else
+          EinkRow(
+            title: strings.searchThisPodcast,
+            compact: true,
+            underlined: true,
+            leading: const Icon(Icons.search),
+            onPressed: () => _openSearch(id),
+          ),
         if (podcast.subscribed)
           RefreshRow(
             refresh: _refresh,
@@ -784,9 +712,6 @@ class _LibraryHomeState extends State<_LibraryHome> {
           episode: episode,
           playback: _playback,
           desktopPanel: desktop,
-          downloadsAvailable: !_linux,
-          queueEdits: _queueEdits,
-          onTrackDownload: _requestedDownloads.add,
         );
       case _Screen.podcast:
         return _podcastBody(context, id!, desktop: desktop);
@@ -804,7 +729,6 @@ class _LibraryHomeState extends State<_LibraryHome> {
           playback: _playback,
           onEpisode: _openEpisode,
           sleepAvailable: !_linux,
-          redrawSeconds: _redrawSeconds,
         );
       case _Screen.add:
         return AddPodcastPage(services: services, onAdded: _openPodcast);

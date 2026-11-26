@@ -153,18 +153,6 @@ abstract class AppLocalizations {
   /// **'Player'**
   String get player;
 
-  /// No description provided for @playerRedraw.
-  ///
-  /// In en, this message translates to:
-  /// **'Player time refresh interval'**
-  String get playerRedraw;
-
-  /// No description provided for @listRedraw.
-  ///
-  /// In en, this message translates to:
-  /// **'List playback progress refresh interval'**
-  String get listRedraw;
-
   /// No description provided for @seekPlayback.
   ///
   /// In en, this message translates to:
@@ -380,6 +368,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'This podcast has no episodes yet.'**
   String get podcastEmpty;
+
+  /// No description provided for @searchThisPodcast.
+  ///
+  /// In en, this message translates to:
+  /// **'Search this podcast'**
+  String get searchThisPodcast;
+
+  /// No description provided for @clearSearch.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear search'**
+  String get clearSearch;
+
+  /// No description provided for @noMatchingEpisodes.
+  ///
+  /// In en, this message translates to:
+  /// **'No episodes match your search.'**
+  String get noMatchingEpisodes;
 
   /// No description provided for @episodeMissing.
   ///
@@ -1238,12 +1244,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'{used} used'**
   String storageUsed(String used);
-
-  /// No description provided for @storageUsedAndFree.
-  ///
-  /// In en, this message translates to:
-  /// **'{used} used, {free} free'**
-  String storageUsedAndFree(String used, String free);
 
   /// No description provided for @storageUnknown.
   ///

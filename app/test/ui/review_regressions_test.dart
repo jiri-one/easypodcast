@@ -3,8 +3,6 @@ import 'package:easypodcast/core/models.dart';
 import 'package:easypodcast/core/services.dart';
 import 'package:easypodcast/core/sync.dart';
 import 'package:easypodcast/ui/app_root.dart';
-import 'package:easypodcast/ui/demo/demo_api.dart';
-import 'package:easypodcast/ui/demo/demo_library.dart';
 import 'package:easypodcast/ui/eink_widgets.dart';
 import 'package:easypodcast/ui/episode_page.dart';
 import 'package:easypodcast/ui/episode_text.dart';
@@ -15,6 +13,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
+import 'fixtures/demo_api.dart';
+import 'fixtures/demo_library.dart';
 import 'ui_test_support.dart';
 
 const _settings = PageStorageKey('settings-list');
@@ -124,17 +124,10 @@ void main() {
       try {
         await app.section(LibrarySection.podcasts);
         final podcasts = find.byType(PodcastList);
-        final state = tester.state<ScrollableState>(
-          find.descendant(of: podcasts, matching: find.byType(Scrollable)),
-        );
         await app.section(LibrarySection.settings);
+        expect(podcasts, findsNothing);
         await app.back();
-        expect(
-          tester.state<ScrollableState>(
-            find.descendant(of: podcasts, matching: find.byType(Scrollable)),
-          ),
-          same(state),
-        );
+        expect(podcasts, findsOneWidget);
         await app.scrollToRow(podcast.title, podcasts);
 
         expect(find.text(date), findsOneWidget);
@@ -158,7 +151,7 @@ void main() {
   );
 
   testWidgets(
-    'Back restores the live podcast scroll position and long headings wrap',
+    'Back restores the podcast scroll position and long headings wrap',
     (tester) async {
       final library = _LongPodcastLibrary();
       final app = await _phone(tester, library: library);
@@ -205,8 +198,9 @@ void main() {
         await tester.pumpAndSettle();
         expect(find.byType(EpisodePage), findsOneWidget);
         await app.back();
-        expect(tester.state<ScrollableState>(scroll), same(state));
-        expect(state.position.pixels, offset);
+        final restored = tester.state<ScrollableState>(scroll);
+        expect(restored, isNot(same(state)));
+        expect(restored.position.pixels, offset);
         expect(rows.evaluate().length, lessThan(25));
         expect(tester.takeException(), isNull);
       } finally {
@@ -327,12 +321,7 @@ void main() {
   testWidgets(
     'a new login keeps the last address even after the page is rebuilt',
     (tester) async {
-      final app = await UiHarness.open(
-        tester,
-        size: const Size(360, 720),
-        locale: const Locale('cs'),
-        loggedIn: false,
-      );
+      final app = await UiHarness.open(tester, loggedIn: false);
       final server = find.descendant(
         of: find.byKey(const ValueKey('login-address')),
         matching: find.byType(TextField),
@@ -352,62 +341,34 @@ void main() {
     },
   );
 
-  testWidgets(
-    'Linux Settings expose both redraw intervals and Escape dismisses a named dialog',
-    (tester) async {
-      final semantics = tester.ensureSemantics();
-      final app = await UiHarness.open(
-        tester,
-        size: const Size(760, 700),
-        locale: const Locale('cs'),
-        desktopFont: font,
+  testWidgets('Escape dismisses a named dialog on Linux', (tester) async {
+    final semantics = tester.ensureSemantics();
+    final app = await UiHarness.open(
+      tester,
+      size: const Size(760, 700),
+      desktopFont: font,
+    );
+    final l = app.strings;
+    try {
+      await app.section(LibrarySection.settings);
+      await app.tapText(l.desktopSpeed(speedText(l, 1)));
+      final route = find.byWidgetPredicate(
+        (widget) =>
+            widget is Semantics &&
+            widget.properties.scopesRoute == true &&
+            widget.properties.namesRoute == true &&
+            widget.properties.label == l.speed,
       );
-      final l = app.strings;
-      try {
-        await app.section(LibrarySection.settings);
-        Future<void> setSeconds(String title, int from, int to) async {
-          final row = find.widgetWithText(EinkRow, title);
-          await tester.scrollUntilVisible(
-            row,
-            120,
-            scrollable: find.descendant(
-              of: find.byKey(_settings),
-              matching: find.byType(Scrollable),
-            ),
-          );
-          final control = find.descendant(
-            of: row,
-            matching: find.byType(SegmentedButton<int>),
-          );
-          expect(tester.widget<SegmentedButton<int>>(control).selected, {from});
-          await app.tap(
-            find.descendant(of: control, matching: find.text(l.seconds(to))),
-          );
-          expect(tester.widget<SegmentedButton<int>>(control).selected, {to});
-        }
-
-        await setSeconds(l.playerRedraw, 1, 10);
-        await setSeconds(l.listRedraw, 10, 1);
-        expect(app.services.settings.positionRedrawSeconds, 1);
-        await app.tapText(l.desktopSpeed(speedText(l, 1)));
-        final route = find.byWidgetPredicate(
-          (widget) =>
-              widget is Semantics &&
-              widget.properties.scopesRoute == true &&
-              widget.properties.namesRoute == true &&
-              widget.properties.label == l.speed,
-        );
-        expect(route, findsOneWidget);
-        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-        await tester.pumpAndSettle();
-        expect(find.byType(EinkDialogPanel), findsNothing);
-        expect(find.byKey(_settings), findsOneWidget);
-      } finally {
-        semantics.dispose();
-        await app.finish();
-      }
-    },
-  );
+      expect(route, findsOneWidget);
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(find.byType(EinkDialogPanel), findsNothing);
+      expect(find.byKey(_settings), findsOneWidget);
+    } finally {
+      semantics.dispose();
+      await app.finish();
+    }
+  });
 
   testWidgets(
     'long durations use hours and a stale short duration falls back to elapsed time',
@@ -453,13 +414,7 @@ Future<UiHarness> _phone(
   WidgetTester tester, {
   DemoLibrary? library,
   AppServices Function(AppServices)? configure,
-}) => UiHarness.open(
-  tester,
-  size: const Size(360, 720),
-  locale: const Locale('cs'),
-  library: library,
-  configure: configure,
-);
+}) => UiHarness.open(tester, library: library, configure: configure);
 
 class _EmptyLibrary extends DemoLibrary {
   @override

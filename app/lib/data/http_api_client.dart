@@ -222,6 +222,21 @@ class HttpApiClient implements ApiClient {
   }
 
   @override
+  Future<List<int>> searchPodcast(
+    int podcastId,
+    String query, {
+    Duration? timeout,
+  }) async {
+    final params = Uri(queryParameters: {'q': query}).query;
+    final response = await _send(
+      'GET',
+      '/api/podcasts/$podcastId/search?$params',
+      timeout: timeout,
+    );
+    return (_object(response)['episode_ids'] as List?)?.cast<int>() ?? const [];
+  }
+
+  @override
   Future<({Episode episode, String description})> episode(
     int episodeId, {
     Duration? timeout,

@@ -10,7 +10,6 @@ import 'episode_text.dart';
 import 'plain_links.dart';
 import 'playback_actions.dart';
 import 'player_views.dart';
-import 'queue_edits.dart';
 import 'theme.dart';
 
 class EpisodePage extends StatefulWidget {
@@ -18,86 +17,38 @@ class EpisodePage extends StatefulWidget {
     super.key,
     required this.episode,
     required this.playback,
-    required this.queueEdits,
-    required this.downloadsAvailable,
     required this.desktopPanel,
-    required this.onTrackDownload,
   });
 
   final Episode episode;
   final PlaybackActions playback;
-  final QueueEdits queueEdits;
-  final bool downloadsAvailable;
   final bool desktopPanel;
-  final ValueChanged<int> onTrackDownload;
 
   @override
   State<EpisodePage> createState() => _EpisodePageState();
 }
 
-class _EpisodePageState extends State<EpisodePage> {
-  late Future<String> _description;
-  bool _changing = false;
-  Timer? _tapGuard;
+class _EpisodePageState extends State<EpisodePage> with ActionTapGuard {
+  late var _description = _library.description(_episode.id);
   String? _error;
 
   Episode get _episode => widget.episode;
   Library get _library => widget.playback.services.library;
 
-  @override
-  void initState() {
-    super.initState();
-    _description = _library.description(_episode.id);
-  }
-
-  @override
-  void didUpdateWidget(EpisodePage oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.episode.id != _episode.id ||
-        oldWidget.playback.services.library != _library) {
-      _description = _library.description(_episode.id);
-      _error = null;
-      _tapGuard?.cancel();
-    }
-  }
-
-  @override
-  void dispose() {
-    _tapGuard?.cancel();
-    super.dispose();
-  }
-
-  Future<void> _change(Future<void> Function() action) async {
-    if (_changing || _tapGuard?.isActive == true) return;
-    setState(() {
-      _changing = true;
-      _error = null;
-    });
+  Future<void> _change(Future<void> Function() action) => guardAction(() async {
+    if (_error != null) setState(() => _error = null);
     try {
       await action();
-    } on BulkDismissNeedsConnection {
-      if (mounted) _error = context.strings.dismissOlderOffline;
-    } on Object {
-      if (mounted) _error = context.strings.actionFailed;
-    } finally {
-      if (mounted) {
-        _tapGuard = Timer(
-          const Duration(milliseconds: 600),
-          () => _tapGuard = null,
-        );
-        setState(() => _changing = false);
-      }
+    } on Object catch (error) {
+      if (mounted) setState(() => _error = actionError(context, error));
     }
-  }
+  });
 
   @override
   Widget build(BuildContext context) {
     final actions = EpisodeActions(
       episode: _episode,
       playback: widget.playback,
-      queueEdits: widget.queueEdits,
-      downloadsAvailable: widget.downloadsAvailable,
-      onTrackDownload: widget.onTrackDownload,
     );
     return actions.watchDownload(
       context,
@@ -117,23 +68,18 @@ class _EpisodePageState extends State<EpisodePage> {
     final podcast = _library.podcast(episode.podcastId);
     final playing = playback.playing(id);
     final length = episodeDuration(episode, state);
-    final position = Duration(milliseconds: state.positionMs);
     final meta = [
       if (episode.publishedAt case final DateTime time)
         strings.published(dateText(strings, time)),
       if (length != null) minuteLength(strings, length),
     ];
-    final newSubtitle = [
-      strings.stateNew,
-      if (length != null) minuteLength(strings, length),
-    ].join(metadataSeparator);
-    final subtitle = switch ((playing, state.status, state.isInProgress)) {
-      (true, _, _) => strings.statePlaying,
-      (_, EpisodeStatus.played, _) => strings.statePlayed,
-      (_, EpisodeStatus.dismissed, _) => strings.stateDismissed,
-      (_, _, true) => playbackTime(strings, position, length, showTotal: true),
-      _ => newSubtitle,
-    };
+    final subtitle = episodeStatusText(
+      strings,
+      state,
+      length,
+      playing: playing,
+      showTotal: true,
+    );
 
     return PageList(
       key: PageStorageKey(('episode', id)),
@@ -203,7 +149,7 @@ class _EpisodePageState extends State<EpisodePage> {
             ),
           ),
         ),
-        if (_error case final String error) ProblemBox(error),
+        if (_error case final String error) EinkError(error, inset: true),
         PlaybackProblem(playback: playback, episodeId: id),
         Padding(
           padding: EdgeInsets.fromLTRB(

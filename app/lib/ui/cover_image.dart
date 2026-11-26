@@ -12,7 +12,6 @@ class CoverImage extends ImageProvider<CoverImage> {
   const CoverImage(this.url);
 
   static const _maxCacheBytes = 64 * 1024 * 1024;
-  static int _writeId = 0;
 
   final String url;
 
@@ -28,12 +27,9 @@ class CoverImage extends ImageProvider<CoverImage> {
     final file = await _cacheFile();
     if (file != null) {
       try {
-        final size = await file.length();
-        if (size > 0 && size <= _maxCacheBytes) {
-          return await _decode(await file.readAsBytes(), decode);
-        }
+        return await _decode(await file.readAsBytes(), decode);
       } on Exception {
-        // A cache file can be purged or damaged while the app is open.
+        // The cache can be cleared while an image is loading.
       }
     }
     final bytes = await _download();
@@ -89,33 +85,21 @@ class CoverImage extends ImageProvider<CoverImage> {
   }
 
   Future<void> _save(File file, Uint8List bytes) async {
-    final temporary = File('${file.path}.$pid-${_writeId++}.tmp');
     try {
       await file.parent.create(recursive: true);
-      await temporary.writeAsBytes(bytes);
-      await temporary.rename(file.path);
-      await _trim(file.parent);
-    } on FileSystemException {
-      try {
-        await temporary.delete();
-      } on FileSystemException {
-        return;
+      await file.writeAsBytes(bytes);
+      final directory = file.parent;
+      var total = 0;
+      await for (final entry in directory.list(followLinks: false)) {
+        if (entry is! File) continue;
+        total += await entry.length();
+        if (total > _maxCacheBytes) {
+          await directory.delete(recursive: true);
+          break;
+        }
       }
-    }
-  }
-
-  Future<void> _trim(Directory directory) async {
-    final entries = await Future.wait([
-      await for (final entry in directory.list())
-        if (entry is File && entry.path.endsWith('.img'))
-          entry.stat().then((stat) => (entry, stat)),
-    ]);
-    entries.sort((a, b) => a.$2.modified.compareTo(b.$2.modified));
-    var total = entries.fold<int>(0, (sum, entry) => sum + entry.$2.size);
-    for (final (file, stat) in entries) {
-      if (total <= _maxCacheBytes) break;
-      await file.delete();
-      total -= stat.size;
+    } on FileSystemException {
+      return;
     }
   }
 

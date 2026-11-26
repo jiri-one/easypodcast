@@ -1,8 +1,9 @@
 import 'package:flutter/foundation.dart';
 
-import '../../core/api.dart';
-import '../../core/models.dart';
-import '../../core/sync.dart';
+import 'package:easypodcast/core/api.dart';
+import 'package:easypodcast/core/models.dart';
+import 'package:easypodcast/core/sync.dart';
+
 import 'demo_library.dart';
 
 class DemoSyncService extends SyncService {

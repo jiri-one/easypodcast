@@ -39,12 +39,6 @@ class AppLocalizationsCs extends AppLocalizations {
   String get player => 'Přehrávač';
 
   @override
-  String get playerRedraw => 'Překreslování času v přehrávači';
-
-  @override
-  String get listRedraw => 'Překreslování průběhu v seznamech';
-
-  @override
   String get seekPlayback => 'Pozice přehrávání';
 
   @override
@@ -156,6 +150,15 @@ class AppLocalizationsCs extends AppLocalizations {
 
   @override
   String get podcastEmpty => 'Tento podcast zatím nemá žádné díly.';
+
+  @override
+  String get searchThisPodcast => 'Hledat v podcastu';
+
+  @override
+  String get clearSearch => 'Zrušit hledání';
+
+  @override
+  String get noMatchingEpisodes => 'Žádné díly neodpovídají hledání.';
 
   @override
   String get episodeMissing => 'Tento díl už není k dispozici.';
@@ -704,11 +707,6 @@ class AppLocalizationsCs extends AppLocalizations {
   @override
   String storageUsed(String used) {
     return 'Staženo $used';
-  }
-
-  @override
-  String storageUsedAndFree(String used, String free) {
-    return '$used, volno $free';
   }
 
   @override

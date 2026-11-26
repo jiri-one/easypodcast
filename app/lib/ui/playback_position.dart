@@ -14,13 +14,13 @@ class PlaybackPositionView extends StatefulWidget {
     super.key,
     required this.playback,
     required this.episode,
-    required this.redrawSeconds,
     required this.builder,
+    this.sparse = false,
   });
 
   final PlaybackActions playback;
   final Episode episode;
-  final int redrawSeconds;
+  final bool sparse;
   final Widget Function(BuildContext, Duration, Duration?) builder;
 
   @override
@@ -31,18 +31,18 @@ class _PlaybackPositionViewState extends State<PlaybackPositionView>
     with WidgetsBindingObserver {
   late (Duration, Duration?) _time;
   Timer? _timer;
-  bool _visible = true;
 
-  bool get _isCurrent =>
-      widget.playback.services.player.current?.id == widget.episode.id;
+  late final _playback = widget.playback;
+  late final _player = _playback.services.player;
+
+  bool get _isCurrent => _player.current?.id == widget.episode.id;
 
   (Duration, Duration?) _read() {
-    final services = widget.playback.services;
-    final state = services.library.stateOf(widget.episode.id);
+    final state = _playback.services.library.stateOf(widget.episode.id);
     final duration = episodeDuration(widget.episode, state);
     return _isCurrent
-        ? (services.player.position.value, services.player.duration ?? duration)
-        : (Duration(milliseconds: state.positionMs), duration);
+        ? (_player.position.value, _player.duration ?? duration)
+        : (state.resumePosition, duration);
   }
 
   @override
@@ -50,58 +50,20 @@ class _PlaybackPositionViewState extends State<PlaybackPositionView>
     super.initState();
     _time = _read();
     WidgetsBinding.instance.addObserver(this);
-    _listen(widget.playback);
-    _schedule();
-  }
-
-  void _listen(PlaybackActions playback) {
-    playback.services.player.addListener(_playerChanged);
-    playback.services.player.position.addListener(_positionChanged);
-    playback.interaction.addListener(_sample);
-  }
-
-  void _unlisten(PlaybackActions playback) {
-    playback.services.player.removeListener(_playerChanged);
-    playback.services.player.position.removeListener(_positionChanged);
-    playback.interaction.removeListener(_sample);
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    final visible = TickerMode.valuesOf(context).enabled;
-    if (visible && !_visible) _time = _read();
-    _visible = visible;
-    _schedule();
-  }
-
-  @override
-  void didUpdateWidget(PlaybackPositionView oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    final changed = oldWidget.playback != widget.playback;
-    if (changed) {
-      _unlisten(oldWidget.playback);
-      _listen(widget.playback);
-    }
-    final intervalChanged = oldWidget.redrawSeconds != widget.redrawSeconds;
-    if (intervalChanged) _stopTimer();
-    if (changed ||
-        intervalChanged ||
-        oldWidget.episode.id != widget.episode.id ||
-        !_isCurrent) {
-      _time = _read();
-    }
+    _player.addListener(_playerChanged);
+    _player.position.addListener(_positionChanged);
+    _playback.interaction.addListener(_sample);
     _schedule();
   }
 
   void _sample() {
-    if (!mounted || !_visible) return;
+    if (!mounted) return;
     final next = _read();
     if (next != _time) setState(() => _time = next);
   }
 
   void _positionChanged() {
-    if (!widget.playback.playing(widget.episode.id)) {
+    if (!widget.sparse || !_playback.playing(widget.episode.id)) {
       _sample();
     }
   }
@@ -119,15 +81,12 @@ class _PlaybackPositionViewState extends State<PlaybackPositionView>
 
   void _schedule() {
     final lifecycle = WidgetsBinding.instance.lifecycleState;
-    if (_visible &&
-        widget.playback.playing(widget.episode.id) &&
+    if (widget.sparse &&
+        _playback.playing(widget.episode.id) &&
         (lifecycle == null ||
             lifecycle == AppLifecycleState.resumed ||
             lifecycle == AppLifecycleState.inactive)) {
-      _timer ??= Timer.periodic(
-        Duration(seconds: math.max(1, widget.redrawSeconds)),
-        (_) => _sample(),
-      );
+      _timer ??= Timer.periodic(const Duration(seconds: 10), (_) => _sample());
     } else {
       _stopTimer();
     }
@@ -140,15 +99,19 @@ class _PlaybackPositionViewState extends State<PlaybackPositionView>
 
   @override
   void dispose() {
-    _unlisten(widget.playback);
+    _player.removeListener(_playerChanged);
+    _player.position.removeListener(_positionChanged);
+    _playback.interaction.removeListener(_sample);
     WidgetsBinding.instance.removeObserver(this);
     _stopTimer();
     super.dispose();
   }
 
   @override
-  Widget build(BuildContext context) =>
-      RepaintBoundary(child: widget.builder(context, _time.$1, _time.$2));
+  Widget build(BuildContext context) {
+    final (position, duration) = _isCurrent ? _time : _read();
+    return RepaintBoundary(child: widget.builder(context, position, duration));
+  }
 }
 
 double playedFraction(Duration elapsed, Duration? duration) =>
@@ -161,7 +124,6 @@ class PlaybackTimeline extends StatefulWidget {
     super.key,
     required this.playback,
     required this.episode,
-    required this.redrawSeconds,
   });
 
   static const trackKey = ValueKey('seek-track');
@@ -169,7 +131,6 @@ class PlaybackTimeline extends StatefulWidget {
 
   final PlaybackActions playback;
   final Episode episode;
-  final int redrawSeconds;
 
   @override
   State<PlaybackTimeline> createState() => _PlaybackTimelineState();
@@ -214,7 +175,6 @@ class _PlaybackTimelineState extends State<PlaybackTimeline> {
   Widget build(BuildContext context) => PlaybackPositionView(
     playback: widget.playback,
     episode: widget.episode,
-    redrawSeconds: widget.redrawSeconds,
     builder: (context, elapsed, duration) {
       final known = duration != null && duration > Duration.zero;
       final canSeek = known && widget.playback.canSeek(widget.episode.id);

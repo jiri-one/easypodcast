@@ -1,15 +1,49 @@
-import 'dart:math' as math;
+import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../core/downloads.dart';
+import '../core/library.dart';
 import '../core/services.dart';
 import '../l10n/app_localizations.dart';
 import 'theme.dart';
 
 extension UiLocalizations on BuildContext {
   AppLocalizations get strings => AppLocalizations.of(this);
+}
+
+bool get downloadsAvailable =>
+    kIsWeb || defaultTargetPlatform != TargetPlatform.linux;
+
+String actionError(BuildContext context, Object error) =>
+    error is BulkDismissNeedsConnection
+    ? context.strings.dismissOlderOffline
+    : context.strings.actionFailed;
+
+mixin ActionTapGuard<T extends StatefulWidget> on State<T> {
+  bool _runningAction = false;
+  Timer? _tapGuard;
+
+  Future<void> guardAction(Future<void> Function() action) async {
+    if (_runningAction || _tapGuard?.isActive == true) return;
+    _runningAction = true;
+    try {
+      await action();
+    } finally {
+      _runningAction = false;
+      if (mounted) {
+        _tapGuard = Timer(const Duration(milliseconds: 600), () {});
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _tapGuard?.cancel();
+    super.dispose();
+  }
 }
 
 const headingStyle = TextStyle(
@@ -237,17 +271,22 @@ class EinkButton extends StatelessWidget {
   final bool error;
   final bool reserveSpaceOnly;
 
-  Widget _button(TextStyle labelStyle, double height) {
-    if (reserveSpaceOnly) return SizedBox(height: height);
+  @override
+  Widget build(BuildContext context) {
+    final labelStyle = error
+        ? buttonLabelStyle.copyWith(fontWeight: FontWeight.w700)
+        : buttonLabelStyle;
     const padding = EdgeInsets.symmetric(horizontal: 8, vertical: 6);
     var style =
         (selected == null
                 ? const ButtonStyle()
                 : choiceButtonStyle(selected: selected!))
             .copyWith(
-              minimumSize: WidgetStatePropertyAll(Size(48, height)),
+              minimumSize: WidgetStatePropertyAll(Size(48, minHeight)),
               padding: const WidgetStatePropertyAll(padding),
-              textStyle: WidgetStatePropertyAll(labelStyle),
+              textStyle: WidgetStatePropertyAll(
+                Theme.of(context).textTheme.labelLarge!.merge(labelStyle),
+              ),
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             );
     if (error) {
@@ -258,7 +297,15 @@ class EinkButton extends StatelessWidget {
         ),
       );
     }
-    final text = Text(label, textAlign: TextAlign.center);
+    final text = alternatives.isEmpty
+        ? Text(label, textAlign: TextAlign.center)
+        : IndexedStack(
+            alignment: Alignment.center,
+            children: [
+              for (final text in {label, ...alternatives})
+                Text(text, textAlign: TextAlign.center),
+            ],
+          );
     final Widget content;
     if (progress case final int percent) {
       final fill = percent / 100;
@@ -285,7 +332,7 @@ class EinkButton extends StatelessWidget {
             ).createShader(bounds),
             child: Container(
               width: double.infinity,
-              constraints: BoxConstraints(minHeight: height),
+              constraints: BoxConstraints(minHeight: minHeight),
               padding: padding,
               alignment: Alignment.center,
               child: text,
@@ -306,48 +353,20 @@ class EinkButton extends StatelessWidget {
     } else {
       content = text;
     }
-    if (primary) {
-      return FilledButton(onPressed: onPressed, style: style, child: content);
-    }
-    return Semantics(
-      selected: selected,
-      child: OutlinedButton(
-        onPressed: onPressed,
-        style: style,
-        clipBehavior: progress == null ? Clip.none : Clip.antiAlias,
-        child: content,
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final labelStyle = error
-        ? buttonLabelStyle.copyWith(fontWeight: FontWeight.w700)
-        : buttonLabelStyle;
-    final style = Theme.of(context).textTheme.labelLarge!.merge(labelStyle);
-    if (alternatives.isEmpty) return _button(style, minHeight);
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final width = math.max(
-          1.0,
-          constraints.maxWidth - 16 - (icon == null ? 0 : 26),
-        );
-        final painter = TextPainter(
-          textDirection: Directionality.of(context),
-          textScaler: MediaQuery.textScalerOf(context),
-        );
-        final style = DefaultTextStyle.of(context).style.merge(labelStyle);
-        var height = minHeight;
-        for (final text in [label, ...alternatives]) {
-          painter.text = TextSpan(text: text, style: style);
-          painter.layout(maxWidth: width);
-          height = math.max(height, painter.height + 12);
-        }
-        painter.dispose();
-        return _button(style, height.ceilToDouble());
-      },
-    );
+    final button = primary
+        ? FilledButton(onPressed: onPressed, style: style, child: content)
+        : Semantics(
+            selected: selected,
+            child: OutlinedButton(
+              onPressed: onPressed,
+              style: style,
+              clipBehavior: progress == null ? Clip.none : Clip.antiAlias,
+              child: content,
+            ),
+          );
+    return reserveSpaceOnly
+        ? IndexedStack(index: null, children: [button])
+        : button;
   }
 }
 
@@ -376,31 +395,19 @@ class PageMessage extends StatelessWidget {
   );
 }
 
-class ProblemBox extends StatelessWidget {
-  const ProblemBox(this.message, {super.key});
-
-  final String message;
-
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.all(8),
-    child: SizedBox(width: double.infinity, child: EinkError(message)),
-  );
-}
-
 class EinkDialogPanel extends StatelessWidget {
   const EinkDialogPanel({
     super.key,
     required this.title,
     this.message,
     this.children = const [],
-    required this.actions,
+    this.actions,
   });
 
   final String title;
   final String? message;
   final List<Widget> children;
-  final List<Widget> actions;
+  final List<Widget>? actions;
 
   @override
   Widget build(BuildContext context) => CallbackShortcuts(
@@ -443,7 +450,17 @@ class EinkDialogPanel extends StatelessWidget {
                   alignment: WrapAlignment.end,
                   spacing: 6,
                   runSpacing: 6,
-                  children: actions,
+                  children:
+                      actions ??
+                      [
+                        TextButton(
+                          onPressed: () => Navigator.pop(context),
+                          child: Text(
+                            context.strings.close,
+                            style: buttonLabelStyle,
+                          ),
+                        ),
+                      ],
                 ),
               ],
             ),
@@ -453,6 +470,44 @@ class EinkDialogPanel extends StatelessWidget {
     ),
   );
 }
+
+Future<T?> showChoices<T>(
+  BuildContext context, {
+  required String title,
+  required String message,
+  required List<({T value, String label, bool selected})> choices,
+}) => showEinkDialog<T>(
+  context: context,
+  barrierDismissible: false,
+  builder: (context) => EinkDialogPanel(
+    title: title,
+    message: message,
+    children: [
+      Column(
+        spacing: 8,
+        children: [
+          for (var index = 0; index < choices.length; index += 2)
+            IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                spacing: 8,
+                children: [
+                  for (final choice in choices.skip(index).take(2))
+                    Expanded(
+                      child: EinkButton(
+                        choice.label,
+                        selected: choice.selected,
+                        onPressed: () => Navigator.pop(context, choice.value),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    ],
+  ),
+);
 
 Future<bool> confirmAction(
   BuildContext context, {
@@ -601,16 +656,6 @@ class _DownloadStatusViewState extends State<DownloadStatusView> {
     super.initState();
     _download = _current;
     widget.services.downloads.addListener(_changed);
-  }
-
-  @override
-  void didUpdateWidget(DownloadStatusView oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.services.downloads != widget.services.downloads) {
-      oldWidget.services.downloads.removeListener(_changed);
-      widget.services.downloads.addListener(_changed);
-    }
-    _download = _current;
   }
 
   void _changed() {

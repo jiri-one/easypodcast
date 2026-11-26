@@ -48,7 +48,6 @@ void main() {
     final app = await UiHarness.open(
       tester,
       size: const Size(392, 785),
-      locale: const Locale('cs'),
       loggedIn: false,
       playerCover: true,
     );
@@ -69,7 +68,6 @@ void main() {
     final app = await UiHarness.open(
       tester,
       size: palmaSize,
-      locale: const Locale('cs'),
       textScale: palmaTextScale,
       playerCover: true,
     );
@@ -88,7 +86,6 @@ void main() {
     final app = await UiHarness.open(
       tester,
       size: const Size(1000, 700),
-      locale: const Locale('cs'),
       desktopFont: family,
       playerCover: true,
     );

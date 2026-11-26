@@ -113,6 +113,12 @@ abstract interface class ApiClient {
     Duration? timeout,
   });
 
+  Future<List<int>> searchPodcast(
+    int podcastId,
+    String query, {
+    Duration? timeout,
+  });
+
   Future<({Episode episode, String description})> episode(
     int episodeId, {
     Duration? timeout,

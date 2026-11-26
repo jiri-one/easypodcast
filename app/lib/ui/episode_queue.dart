@@ -6,14 +6,15 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/rendering.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../core/library.dart';
 import '../core/models.dart';
 import 'eink_widgets.dart';
-import 'queue_edits.dart';
+import 'theme.dart';
 
 class EpisodeQueue extends StatefulWidget {
   const EpisodeQueue({
     super.key,
-    required this.edits,
+    required this.library,
     required this.episodes,
     required this.header,
     required this.emptyMessage,
@@ -23,7 +24,7 @@ class EpisodeQueue extends StatefulWidget {
 
   static const holdDuration = Duration(milliseconds: 800);
 
-  final QueueEdits edits;
+  final Library library;
   final List<Episode> episodes;
   final Widget header;
   final String emptyMessage;
@@ -61,7 +62,7 @@ class _EpisodeQueueState extends State<EpisodeQueue> {
   final _rowsKey = GlobalKey();
   _QueueDrag? _drag;
   Timer? _edgeScroll;
-  bool _failed = false;
+  String? _error;
 
   RenderSliverList? get _rows =>
       _rowsKey.currentContext?.findRenderObject() as RenderSliverList?;
@@ -75,8 +76,7 @@ class _EpisodeQueueState extends State<EpisodeQueue> {
   @override
   void didUpdateWidget(EpisodeQueue oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (_drag != null &&
-        (oldWidget.edits != widget.edits || !_sameOrder(oldWidget.episodes))) {
+    if (_drag != null && !_sameOrder(oldWidget.episodes)) {
       _stopEdgeScroll();
       _drag = null;
     }
@@ -91,7 +91,7 @@ class _EpisodeQueueState extends State<EpisodeQueue> {
 
   void _hold(Offset position, {required bool menuOnRelease}) {
     final rows = _rows;
-    if (widget.edits.saving || _drag != null || rows == null) return;
+    if (widget.library.queueSaving || _drag != null || rows == null) return;
     for (var row = rows.firstChild; row != null; row = rows.childAfter(row)) {
       if (!row.size.contains(row.globalToLocal(position))) continue;
       final drag = _QueueDrag(
@@ -159,7 +159,7 @@ class _EpisodeQueueState extends State<EpisodeQueue> {
 
   void _move(Offset position) {
     final drag = _drag;
-    if (drag == null || widget.edits.saving) return;
+    if (drag == null || widget.library.queueSaving) return;
     drag.position = position;
     if ((position - drag.origin).distance > kTouchSlop) drag.moved = true;
     if (!drag.moved) return;
@@ -215,7 +215,8 @@ class _EpisodeQueueState extends State<EpisodeQueue> {
     final drag = _drag;
     if (drag == null) return;
     _cancel();
-    if (widget.edits.saving || !_sameOrder(widget.edits.episodes)) {
+    if (widget.library.queueSaving ||
+        !_sameOrder(widget.library.projectedQueue)) {
       return;
     }
     final episode = widget.episodes[drag.from];
@@ -223,11 +224,11 @@ class _EpisodeQueueState extends State<EpisodeQueue> {
       if (drag.menuOnRelease && !drag.moved) widget.onMenu(episode);
       return;
     }
-    setState(() => _failed = false);
+    setState(() => _error = null);
     try {
-      await widget.edits.move(episode, drag.to);
-    } on Object {
-      if (mounted) setState(() => _failed = true);
+      await widget.library.moveInQueue(episode.id, drag.to);
+    } on Object catch (error) {
+      if (mounted) setState(() => _error = actionError(context, error));
     }
   }
 
@@ -243,7 +244,7 @@ class _EpisodeQueueState extends State<EpisodeQueue> {
       for (final (index, episode) in episodes.indexed) episode.id: index,
     };
     final strings = context.strings;
-    final saving = widget.edits.saving;
+    final saving = widget.library.queueSaving;
     return Listener(
       onPointerCancel: (_) => _cancel(),
       child: GestureDetector(
@@ -279,8 +280,8 @@ class _EpisodeQueueState extends State<EpisodeQueue> {
             controller: _scroll,
             slivers: [
               SliverToBoxAdapter(child: widget.header),
-              if (_failed)
-                SliverToBoxAdapter(child: ProblemBox(strings.actionFailed)),
+              if (_error case final error?)
+                SliverToBoxAdapter(child: EinkError(error, inset: true)),
               if (episodes.isEmpty)
                 SliverToBoxAdapter(child: PageMessage(widget.emptyMessage))
               else

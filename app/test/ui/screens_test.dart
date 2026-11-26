@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:easypodcast/core/downloads.dart';
 import 'package:easypodcast/ui/account_pages.dart';
-import 'package:easypodcast/ui/demo/demo_sync.dart';
 import 'package:easypodcast/ui/eink_widgets.dart';
 import 'package:easypodcast/ui/episode_page.dart';
 import 'package:easypodcast/ui/library_views.dart';
@@ -13,6 +12,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
+import 'fixtures/demo_sync.dart';
 import 'ui_test_support.dart';
 
 void main() {
@@ -151,7 +151,7 @@ void main() {
       expect(player.sleepAtEndOfEpisode, isTrue);
       expect(player.sleepRemaining, isNull);
       final nextId = app.services.library.queue.first.id;
-      await player.seekTo(player.duration!);
+      app.engine.complete(player.duration!);
       await tester.pumpAndSettle();
       expect(app.services.library.stateOf(101).isPlayed, isTrue);
       expect(player.current, isNull);
@@ -419,9 +419,4 @@ void _checkTextLayout(String screen) {
 }
 
 Future<UiHarness> _phone(WidgetTester tester, {bool loggedIn = true}) =>
-    UiHarness.open(
-      tester,
-      size: const Size(392, 785),
-      locale: const Locale('cs'),
-      loggedIn: loggedIn,
-    );
+    UiHarness.open(tester, size: const Size(392, 785), loggedIn: loggedIn);

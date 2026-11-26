@@ -20,10 +20,6 @@ const _errorBorder = BorderSide(width: 2);
 const _buttonShape = RoundedRectangleBorder(
   borderRadius: BorderRadius.all(Radius.circular(8)),
 );
-const _panelShape = RoundedRectangleBorder(
-  side: BorderSide(),
-  borderRadius: BorderRadius.all(Radius.circular(8)),
-);
 const _buttons = ButtonStyle(
   animationDuration: Duration.zero,
   minimumSize: WidgetStatePropertyAll(Size(48, 48)),
@@ -131,7 +127,6 @@ ThemeData einkTheme({String? fontFamily}) {
       textStyle: TextStyle(color: Colors.white, fontSize: einkBodyFontSize),
     ),
     filledButtonTheme: FilledButtonThemeData(style: filledButton),
-    elevatedButtonTheme: ElevatedButtonThemeData(style: filledButton),
     outlinedButtonTheme: OutlinedButtonThemeData(
       style: choiceButtonStyle(selected: false),
     ),
@@ -144,47 +139,18 @@ ThemeData einkTheme({String? fontFamily}) {
     segmentedButtonTheme: SegmentedButtonThemeData(
       style: _choiceStyle((states) => states.contains(WidgetState.selected)),
     ),
-    listTileTheme: const ListTileThemeData(
-      textColor: Colors.black,
-      iconColor: Colors.black,
-      selectedTileColor: Colors.black,
-      selectedColor: Colors.white,
-    ),
-    appBarTheme: const AppBarThemeData(
-      backgroundColor: Colors.white,
-      foregroundColor: Colors.black,
-      elevation: 0,
-      scrolledUnderElevation: 0,
-      shadowColor: Colors.transparent,
-      surfaceTintColor: Colors.transparent,
-      shape: Border(bottom: BorderSide()),
-      systemOverlayStyle: einkSystemOverlayStyle,
-    ),
-    cardTheme: const CardThemeData(
-      color: Colors.white,
-      elevation: 0,
-      shadowColor: Colors.transparent,
-      surfaceTintColor: Colors.transparent,
-      shape: _panelShape,
-    ),
-    dialogTheme: DialogThemeData(
+    dialogTheme: const DialogThemeData(
       backgroundColor: Colors.white,
       elevation: 0,
       shadowColor: Colors.transparent,
       surfaceTintColor: Colors.transparent,
       barrierColor: Colors.transparent,
-      shape: _panelShape.copyWith(side: _errorBorder),
-      constraints: const BoxConstraints(maxWidth: 540),
-      insetPadding: const EdgeInsets.all(16),
-    ),
-    bottomSheetTheme: const BottomSheetThemeData(
-      backgroundColor: Colors.white,
-      elevation: 0,
-      modalElevation: 0,
-      shadowColor: Colors.transparent,
-      surfaceTintColor: Colors.transparent,
-      modalBarrierColor: Colors.transparent,
-      shape: _panelShape,
+      shape: RoundedRectangleBorder(
+        side: _errorBorder,
+        borderRadius: BorderRadius.all(Radius.circular(8)),
+      ),
+      constraints: BoxConstraints(maxWidth: 540),
+      insetPadding: EdgeInsets.all(16),
     ),
     inputDecorationTheme: InputDecorationThemeData(
       border: _inputBorder,
@@ -203,29 +169,7 @@ ThemeData einkTheme({String? fontFamily}) {
       floatingLabelBehavior: FloatingLabelBehavior.never,
       hintFadeDuration: Duration.zero,
     ),
-    pageTransitionsTheme: PageTransitionsTheme(
-      builders: {
-        for (final platform in TargetPlatform.values)
-          platform: const _InstantTransition(),
-      },
-    ),
   );
-}
-
-class _InstantTransition extends PageTransitionsBuilder {
-  const _InstantTransition();
-
-  @override
-  Duration get transitionDuration => Duration.zero;
-
-  @override
-  Widget buildTransitions<T>(
-    PageRoute<T> route,
-    BuildContext context,
-    Animation<double> animation,
-    Animation<double> secondaryAnimation,
-    Widget child,
-  ) => child;
 }
 
 Future<T?> showEinkDialog<T>({
@@ -245,11 +189,13 @@ class EinkError extends StatelessWidget {
     super.key,
     this.liveRegion = true,
     this.action,
+    this.inset = false,
   });
 
   final String message;
   final bool liveRegion;
   final Widget? action;
+  final bool inset;
 
   @override
   Widget build(BuildContext context) {
@@ -257,7 +203,7 @@ class EinkError extends StatelessWidget {
       message,
       style: const TextStyle(color: Colors.black, fontWeight: FontWeight.w700),
     );
-    return DecoratedBox(
+    final box = DecoratedBox(
       decoration: const BoxDecoration(
         color: Colors.white,
         border: Border.fromBorderSide(_errorBorder),
@@ -279,5 +225,11 @@ class EinkError extends StatelessWidget {
         ),
       ),
     );
+    return inset
+        ? Padding(
+            padding: const EdgeInsets.all(8),
+            child: SizedBox(width: double.infinity, child: box),
+          )
+        : box;
   }
 }

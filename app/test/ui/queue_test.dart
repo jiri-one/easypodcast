@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:ui' show SemanticsAction;
 
-import 'package:easypodcast/ui/demo/demo_library.dart';
+import 'package:easypodcast/core/models.dart';
 import 'package:easypodcast/ui/eink_widgets.dart';
 import 'package:easypodcast/ui/episode_queue.dart';
 import 'package:easypodcast/ui/library_views.dart';
@@ -10,6 +10,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
+import 'fixtures/demo_library.dart';
 import 'ui_test_support.dart';
 
 void main() {
@@ -333,7 +334,6 @@ Future<UiHarness> _openQueue(
   final app = await UiHarness.open(
     tester,
     size: desktopFont == null ? const Size(360, 720) : const Size(1000, 700),
-    locale: const Locale('cs'),
     library: library,
     desktopFont: desktopFont,
   );
@@ -359,11 +359,30 @@ Future<TestGesture> _hold(WidgetTester tester, Finder row) async {
 class _RecordingLibrary extends DemoLibrary {
   final moves = <(int, int)>[];
   Future<void>? beforeMove;
+  List<Episode>? _projection;
+
+  @override
+  List<Episode> get projectedQueue => _projection ?? queue;
+
+  @override
+  bool get queueSaving => _projection != null;
 
   @override
   Future<void> moveInQueue(int episodeId, int newIndex) async {
     moves.add((episodeId, newIndex));
-    await beforeMove;
-    await super.moveInQueue(episodeId, newIndex);
+    final pending = beforeMove;
+    if (pending == null) return super.moveInQueue(episodeId, newIndex);
+    final episodes = [...queue];
+    final from = episodes.indexWhere((episode) => episode.id == episodeId);
+    episodes.insert(newIndex, episodes.removeAt(from));
+    _projection = episodes;
+    notifyListeners();
+    try {
+      await pending;
+      await super.moveInQueue(episodeId, newIndex);
+    } finally {
+      _projection = null;
+      notifyListeners();
+    }
   }
 }

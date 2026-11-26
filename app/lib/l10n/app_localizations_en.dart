@@ -39,12 +39,6 @@ class AppLocalizationsEn extends AppLocalizations {
   String get player => 'Player';
 
   @override
-  String get playerRedraw => 'Player time refresh interval';
-
-  @override
-  String get listRedraw => 'List playback progress refresh interval';
-
-  @override
   String get seekPlayback => 'Playback position';
 
   @override
@@ -156,6 +150,15 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get podcastEmpty => 'This podcast has no episodes yet.';
+
+  @override
+  String get searchThisPodcast => 'Search this podcast';
+
+  @override
+  String get clearSearch => 'Clear search';
+
+  @override
+  String get noMatchingEpisodes => 'No episodes match your search.';
 
   @override
   String get episodeMissing => 'This episode is no longer available.';
@@ -699,11 +702,6 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String storageUsed(String used) {
     return '$used used';
-  }
-
-  @override
-  String storageUsedAndFree(String used, String free) {
-    return '$used used, $free free';
   }
 
   @override

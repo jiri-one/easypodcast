@@ -38,10 +38,6 @@ class Settings extends ChangeNotifier {
       _prefs.getBool('keepQueueDownloaded') ?? false;
   set keepQueueDownloaded(bool value) => _set('keepQueueDownloaded', value);
 
-  /// E-ink screens ghost and drain the battery when the position redraws every second.
-  int get positionRedrawSeconds => _prefs.getInt('positionRedrawSeconds') ?? 10;
-  set positionRedrawSeconds(int value) => _set('positionRedrawSeconds', value);
-
   void _set(String key, Object value) {
     switch (value) {
       case String v:

@@ -1,15 +1,16 @@
 import 'dart:async';
 
 import 'package:easypodcast/core/downloads.dart';
-import 'package:easypodcast/ui/demo/demo_downloads.dart';
-import 'package:easypodcast/ui/demo/demo_library.dart';
-import 'package:easypodcast/ui/demo/demo_sync.dart';
+import 'package:easypodcast/core/models.dart';
 import 'package:easypodcast/ui/eink_widgets.dart';
 import 'package:easypodcast/ui/episode_page.dart';
 import 'package:easypodcast/ui/library_views.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
+import 'fixtures/demo_downloads.dart';
+import 'fixtures/demo_library.dart';
+import 'fixtures/demo_sync.dart';
 import 'ui_test_support.dart';
 
 final _dialog = find.byType(EinkDialogPanel);
@@ -411,22 +412,31 @@ void main() {
 }
 
 Future<UiHarness> _phone(WidgetTester tester, {DemoLibrary? library}) =>
-    UiHarness.open(
-      tester,
-      size: const Size(360, 720),
-      locale: const Locale('cs'),
-      library: library,
-    );
+    UiHarness.open(tester, library: library);
 
 class _FailingQueueLibrary extends DemoLibrary {
   final save = Completer<void>();
   int attempts = 0;
+  Episode? _adding;
+
+  @override
+  bool get queueSaving => _adding != null;
+
+  @override
+  List<Episode> get projectedQueue => [...queue, ?_adding];
 
   @override
   Future<void> enqueue(int episodeId, {bool next = false}) async {
     attempts++;
-    await save.future;
-    await super.enqueue(episodeId, next: next);
+    _adding = episode(episodeId);
+    notifyListeners();
+    try {
+      await save.future;
+      await super.enqueue(episodeId, next: next);
+    } finally {
+      _adding = null;
+      notifyListeners();
+    }
   }
 }
 

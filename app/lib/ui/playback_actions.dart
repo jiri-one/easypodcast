@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/foundation.dart';
 
 import '../core/models.dart';
@@ -18,28 +16,11 @@ class PlaybackActions extends ChangeNotifier {
   bool failedPlaying = false;
   bool seekUnavailable = false;
   int? failedEpisodeId;
-  int? checkingId;
-  Timer? _checkingTimer;
-  DateTime? _pausedAt;
-  int? _playingId;
-  int? _sleepMinutes;
-  DateTime? _sleepDeadline;
-
   Listenable get interaction => _interaction;
-  bool get sleepUntilEnd => services.player.sleepAtEndOfEpisode;
-  int? get sleepMinutes => _sleepMinutes;
-
-  DateTime? get sleepDeadline {
-    if (services.player.sleepRemaining == null) return null;
-    return _sleepDeadline ??= DateTime.now().add(
-      services.player.sleepRemaining!,
-    );
-  }
 
   Episode? get target {
     final current = services.player.current;
-    if (current != null &&
-        services.library.stateOf(current.id).status == EpisodeStatus.none) {
+    if (current != null && !services.library.stateOf(current.id).isFinished) {
       return current;
     }
     return services.player.lastPlaybackError?.episode ??
@@ -58,24 +39,11 @@ class PlaybackActions extends ChangeNotifier {
     final player = services.player;
     final same =
         player.current?.id == item.id &&
-        services.library.stateOf(item.id).status == EpisodeStatus.none;
+        !services.library.stateOf(item.id).isFinished;
     if (same && player.isPlaying) return _run(player.pause, episodeId: item.id);
     if (loading(item.id)) return Future.value();
-    final pausedAt = _pausedAt;
-    final check =
-        !same ||
-        pausedAt == null ||
-        DateTime.now().difference(pausedAt) >= const Duration(seconds: 30);
-
     return _run(
-      () async {
-        if (same) {
-          await player.resume();
-        } else {
-          await player.play(item.id);
-        }
-      },
-      checking: check ? item.id : null,
+      same ? player.resume : () => player.play(item.id),
       episodeId: item.id,
       playing: true,
     );
@@ -90,9 +58,9 @@ class PlaybackActions extends ChangeNotifier {
   bool canSeek(int? episodeId) =>
       episodeId != null &&
       services.player.current?.id == episodeId &&
-      services.library.stateOf(episodeId).status == EpisodeStatus.none &&
+      !services.library.stateOf(episodeId).isFinished &&
       services.player.lastPlaybackError == null &&
-      checkingId == null &&
+      services.player.checkingPosition == null &&
       !services.player.isBuffering;
 
   void showSeekUnavailable() {
@@ -101,7 +69,13 @@ class PlaybackActions extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> skip(Duration delta) {
+  Future<void> skipBack() =>
+      _skip(Duration(seconds: -services.settings.skipBackSeconds));
+
+  Future<void> skipForward() =>
+      _skip(Duration(seconds: services.settings.skipForwardSeconds));
+
+  Future<void> _skip(Duration delta) {
     final id = services.player.current?.id;
     if (!canSeek(id)) {
       showSeekUnavailable();
@@ -131,8 +105,6 @@ class PlaybackActions extends ChangeNotifier {
             minutes == null ? null : Duration(minutes: minutes),
           );
         }
-        _sleepMinutes = minutes;
-        _sleepDeadline = null;
       });
 
   void refreshTime() {
@@ -140,26 +112,12 @@ class PlaybackActions extends ChangeNotifier {
   }
 
   void _playerChanged() {
-    final player = services.player;
-    final current = player.current?.id;
-    if (player.isPlaying) {
-      _playingId = current;
-      _pausedAt = null;
-    } else if (_playingId != null) {
-      _pausedAt = current == _playingId ? DateTime.now() : null;
-      _playingId = null;
-    }
-    if (_sleepMinutes != null && player.sleepRemaining == null) {
-      _sleepMinutes = null;
-      _sleepDeadline = null;
-    }
-    if (canSeek(current)) seekUnavailable = false;
+    if (canSeek(services.player.current?.id)) seekUnavailable = false;
     notifyListeners();
   }
 
   Future<void> _run(
     Future<void> Function() operation, {
-    int? checking,
     int? episodeId,
     bool playing = false,
   }) async {
@@ -170,14 +128,7 @@ class PlaybackActions extends ChangeNotifier {
     failedPlaying = false;
     seekUnavailable = false;
     failedEpisodeId = null;
-    if (checking != null) {
-      checkingId = checking;
-      _checkingTimer = Timer(const Duration(seconds: 2), () {
-        checkingId = null;
-        notifyListeners();
-      });
-    }
-    if (checking != null || hadNotice) notifyListeners();
+    if (hadNotice) notifyListeners();
     try {
       await operation();
     } on Exception {
@@ -186,8 +137,6 @@ class PlaybackActions extends ChangeNotifier {
       failedEpisodeId = episodeId;
     } finally {
       _busy = false;
-      _checkingTimer?.cancel();
-      checkingId = null;
       if (canSeek(services.player.current?.id)) seekUnavailable = false;
       if (!_disposed) {
         refreshTime();
@@ -200,7 +149,6 @@ class PlaybackActions extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     services.player.removeListener(_playerChanged);
-    _checkingTimer?.cancel();
     _interaction.dispose();
     super.dispose();
   }

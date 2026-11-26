@@ -11,24 +11,13 @@ void main() {
     expect(theme.colorScheme.shadow, Colors.transparent);
     expect(theme.colorScheme.surfaceTint, Colors.transparent);
     expect(theme.splashFactory, NoSplash.splashFactory);
-    expect(theme.appBarTheme.systemOverlayStyle?.statusBarColor, Colors.white);
-    expect(
-      theme.appBarTheme.systemOverlayStyle?.systemNavigationBarColor,
-      Colors.white,
-    );
-    expect([
-      theme.appBarTheme.elevation,
-      theme.appBarTheme.scrolledUnderElevation,
-      theme.cardTheme.elevation,
-      theme.dialogTheme.elevation,
-      theme.bottomSheetTheme.elevation,
-      theme.bottomSheetTheme.modalElevation,
-    ], everyElement(0));
+    expect(einkSystemOverlayStyle.statusBarColor, Colors.white);
+    expect(einkSystemOverlayStyle.systemNavigationBarColor, Colors.white);
+    expect(theme.dialogTheme.elevation, 0);
 
     const pressed = {WidgetState.pressed};
     for (final button in [
       theme.filledButtonTheme.style!,
-      theme.elevatedButtonTheme.style!,
       theme.outlinedButtonTheme.style!,
       theme.textButtonTheme.style!,
       theme.iconButtonTheme.style!,
@@ -42,7 +31,7 @@ void main() {
     }
   });
 
-  test('selected choices are inverted and routes switch instantly', () {
+  test('selected choices are inverted', () {
     final theme = einkTheme();
     final choices = theme.segmentedButtonTheme.style!;
     expect(
@@ -55,15 +44,5 @@ void main() {
     );
     expect(choices.foregroundColor?.resolve({}), Colors.black);
     expect(choices.backgroundColor?.resolve({}), Colors.white);
-
-    for (final platform in TargetPlatform.values) {
-      final builder = theme.pageTransitionsTheme.builders[platform];
-      expect(builder?.transitionDuration, Duration.zero, reason: platform.name);
-      expect(
-        builder?.reverseTransitionDuration,
-        Duration.zero,
-        reason: platform.name,
-      );
-    }
   });
 }

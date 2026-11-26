@@ -2,15 +2,19 @@ import 'dart:async';
 
 import 'package:easypodcast/core/services.dart';
 import 'package:easypodcast/ui/app_root.dart';
-import 'package:easypodcast/ui/demo/demo_services.dart';
 import 'package:easypodcast/ui/podcast_home.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
-Future<AppServices> _demoServices() async {
-  final services = await createDemoServices();
+import 'fixtures/demo_services.dart';
+import 'fixtures/fake_playback_engine.dart';
+
+Future<AppServices> _demoServices(WidgetTester tester) async {
+  final services = await createDemoServices(
+    engine: FakePlaybackEngine(tester.binding.clock.now),
+  );
   addTearDown(() {
     services.player.dispose();
     services.downloads.dispose();
@@ -27,7 +31,7 @@ void main() {
     (Locale('de', 'DE'), 'cs', 'Rozposlouchané', 'Zpět'),
   ]) {
     testWidgets('uses $language for the system locale $locale', (tester) async {
-      final services = await _demoServices();
+      final services = await _demoServices(tester);
       tester.platformDispatcher.localesTestValue = [locale];
       addTearDown(tester.platformDispatcher.clearLocalesTestValue);
 
@@ -45,7 +49,7 @@ void main() {
   testWidgets('honors 180% text on a 250 × 500 logical px screen', (
     tester,
   ) async {
-    final services = await _demoServices();
+    final services = await _demoServices(tester);
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(250, 500);
     tester.platformDispatcher.localesTestValue = const [Locale('cs')];
@@ -72,7 +76,7 @@ void main() {
   testWidgets('uses GTK typography when Linux content first appears', (
     tester,
   ) async {
-    final services = await _demoServices();
+    final services = await _demoServices(tester);
     debugDefaultTargetPlatformOverride = TargetPlatform.linux;
     addTearDown(() => debugDefaultTargetPlatformOverride = null);
     const channel = MethodChannel('easypodcast/desktop');
@@ -103,7 +107,7 @@ void main() {
         ),
       ),
     );
-    await tester.pump();
+    await tester.pumpAndSettle();
     final buttonLabel = tester.element(find.text('Demo'));
     expect(
       DefaultTextStyle.of(buttonLabel).style.fontFamily,
@@ -114,7 +118,7 @@ void main() {
   testWidgets('demo fixtures support simulated playback and queue changes', (
     tester,
   ) async {
-    final services = await _demoServices();
+    final services = await _demoServices(tester);
     final library = services.library;
     expect(library.podcasts, hasLength(8));
     for (final podcast in library.podcasts) {
@@ -125,7 +129,9 @@ void main() {
     expect(library.queue, hasLength(3));
     expect(library.inProgress, hasLength(3));
     expect(
-      (await services.api.fetchState())!.value.episodes.where((e) => e.isDismissed),
+      (await services.api.fetchState())!.value.episodes.where(
+        (e) => e.isDismissed,
+      ),
       hasLength(1),
     );
 

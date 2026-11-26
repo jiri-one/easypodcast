@@ -4,12 +4,12 @@ import 'package:material_ui/material_ui.dart';
 
 import '../core/models.dart';
 import '../core/player.dart';
+import '../core/sync.dart';
 import 'cover_image.dart';
 import 'eink_widgets.dart';
 import 'episode_text.dart';
 import 'playback_actions.dart';
 import 'playback_position.dart';
-import 'sync_feedback.dart';
 import 'theme.dart';
 
 class MiniPlayer extends StatelessWidget {
@@ -24,7 +24,8 @@ class MiniPlayer extends StatelessWidget {
     if (episode == null) return PlaybackProblem(playback: playback);
     final strings = context.strings;
     final playing = playback.playing(episode.id);
-    final checking = !playing && playback.checkingId != null;
+    final checking =
+        !playing && playback.services.player.checkingPosition != null;
     final playPause = FilledButton(
       onPressed: () => playback.toggle(),
       style: const ButtonStyle(
@@ -106,8 +107,8 @@ class MiniPlayer extends StatelessWidget {
                   child: PlaybackPositionView(
                     playback: playback,
                     episode: episode,
-                    redrawSeconds:
-                        playback.services.settings.positionRedrawSeconds,
+                    key: ValueKey(episode.id),
+                    sparse: true,
                     builder: (context, elapsed, duration) => SizedBox(
                       height: 3,
                       child: Stack(
@@ -159,7 +160,7 @@ class PlaybackProblem extends StatelessWidget {
     final strings = context.strings;
     final offline =
         id != null &&
-        SyncFeedback.of(context).offline &&
+        services.sync.status.value.phase == SyncPhase.offline &&
         services.downloads.localFileOf(id) == null;
     final reason = switch (error?.reason) {
       PlaybackErrorReason.loadFailed =>
@@ -174,16 +175,12 @@ class PlaybackProblem extends StatelessWidget {
             ? strings.playbackOffline
             : strings.playbackFailed,
     };
-    if (error == null) return ProblemBox(reason);
-    return Padding(
-      padding: const EdgeInsets.all(8),
-      child: DefaultTextStyle.merge(
-        style: detailStyle,
-        child: EinkError(
-          '${error.episode.title}\n$reason',
-          action: EinkButton(strings.retry, onPressed: playback.retry),
-        ),
-      ),
+    return EinkError(
+      error == null ? reason : '${error.episode.title}\n$reason',
+      inset: true,
+      action: error == null
+          ? null
+          : EinkButton(strings.retry, onPressed: playback.retry),
     );
   }
 }
@@ -194,13 +191,11 @@ class PlayerPage extends StatelessWidget {
     required this.playback,
     required this.onEpisode,
     required this.sleepAvailable,
-    required this.redrawSeconds,
   });
 
   final PlaybackActions playback;
   final ValueChanged<Episode> onEpisode;
   final bool sleepAvailable;
-  final int redrawSeconds;
 
   @override
   Widget build(BuildContext context) {
@@ -224,172 +219,130 @@ class PlayerPage extends StatelessWidget {
     final covers = _coverUrls(episode, podcast);
     final playing = playback.playing(episode.id);
     final playText = playLabel(context, playback, episode);
-    final sleepEnd = playback.sleepDeadline;
-    final sleepOn = playback.sleepUntilEnd || sleepEnd != null;
-    final sleepValue = playback.sleepUntilEnd
+    final player = services.player;
+    final sleepEnd = player.sleepDeadline;
+    final sleepOn = player.sleepAtEndOfEpisode || sleepEnd != null;
+    final sleepValue = player.sleepAtEndOfEpisode
         ? strings.sleepEndValue
         : sleepEnd != null
         ? strings.sleepUntil(clockText(strings, sleepEnd))
         : strings.sleepOff;
 
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-      child: CustomMultiChildLayout(
-        delegate: _PlayerLayout(),
-        children: [
-          if (covers.isNotEmpty)
-            LayoutId(
-              id: _PlayerPart.cover,
-              child: _PlayerCover(urls: covers),
-            ),
-          LayoutId(
-            id: _PlayerPart.controls,
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                spacing: 6,
-                children: [
-                  TextButton(
-                    onPressed: () => onEpisode(episode),
-                    style: const ButtonStyle(
-                      alignment: AlignmentDirectional.centerStart,
-                      padding: WidgetStatePropertyAll(EdgeInsets.zero),
-                    ),
-                    child: Text(
-                      episode.title,
-                      style: headingStyle.merge(underlineStyle),
-                    ),
-                  ),
-                  if (services.player.lastPlaybackError != null ||
-                      playback.failed)
-                    PlaybackProblem(playback: playback),
-                  PlaybackTimeline(
-                    key: ValueKey(episode.id),
-                    playback: playback,
-                    episode: episode,
-                    redrawSeconds: redrawSeconds,
-                  ),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _SkipControl(
-                          seconds: -settings.skipBackSeconds,
-                          onPressed: () => playback.skip(
-                            Duration(seconds: -settings.skipBackSeconds),
-                          ),
-                        ),
-                      ),
-                      SizedBox.square(
-                        dimension: 76,
-                        child: FilledButton(
-                          onPressed: () => playback.toggle(),
-                          style: const ButtonStyle(
-                            shape: WidgetStatePropertyAll(CircleBorder()),
-                            padding: WidgetStatePropertyAll(EdgeInsets.zero),
-                          ),
-                          child: Icon(
-                            playing ? Icons.pause : Icons.play_arrow,
-                            size: 38,
-                            semanticLabel: playText,
-                          ),
-                        ),
-                      ),
-                      Expanded(
-                        child: _SkipControl(
-                          seconds: settings.skipForwardSeconds,
-                          onPressed: () => playback.skip(
-                            Duration(seconds: settings.skipForwardSeconds),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  if (playback.seekUnavailable)
-                    Semantics(
-                      liveRegion: true,
-                      child: Text(strings.seekUnavailable, style: detailStyle),
-                    ),
-                  Text(
-                    playText,
-                    textAlign: TextAlign.center,
-                    style: buttonLabelStyle,
-                  ),
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    spacing: 8,
-                    children: [
-                      Expanded(
-                        child: _PlayerOption(
-                          title: strings.speed,
-                          value: speedText(strings, services.player.speed),
-                          onPressed: () => showSpeedChoices(context, playback),
-                        ),
-                      ),
-                      if (sleepAvailable)
-                        Expanded(
-                          child: _PlayerOption(
-                            title: strings.sleep,
-                            value: sleepValue,
-                            selected: sleepOn,
-                            onPressed: () =>
-                                _showSleepChoices(context, playback),
-                          ),
-                        ),
-                    ],
-                  ),
-                  if (next != null)
-                    TextButton(
-                      onPressed: () => onEpisode(next),
-                      style: const ButtonStyle(
-                        alignment: AlignmentDirectional.centerStart,
-                        padding: WidgetStatePropertyAll(EdgeInsets.zero),
-                      ),
-                      child: Text(
-                        strings.nextInQueue(next.title),
-                        style: buttonLabelStyle.merge(underlineStyle),
-                      ),
-                    ),
-                ],
+    final controls = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      spacing: 6,
+      children: [
+        TextButton(
+          onPressed: () => onEpisode(episode),
+          style: const ButtonStyle(
+            alignment: AlignmentDirectional.centerStart,
+            padding: WidgetStatePropertyAll(EdgeInsets.zero),
+          ),
+          child: Text(episode.title, style: headingStyle.merge(underlineStyle)),
+        ),
+        if (services.player.lastPlaybackError != null || playback.failed)
+          PlaybackProblem(playback: playback),
+        PlaybackTimeline(
+          key: ValueKey(episode.id),
+          playback: playback,
+          episode: episode,
+        ),
+        Row(
+          children: [
+            Expanded(
+              child: _SkipControl(
+                seconds: -settings.skipBackSeconds,
+                onPressed: playback.skipBack,
               ),
             ),
+            SizedBox.square(
+              dimension: 76,
+              child: FilledButton(
+                onPressed: () => playback.toggle(),
+                style: const ButtonStyle(
+                  shape: WidgetStatePropertyAll(CircleBorder()),
+                  padding: WidgetStatePropertyAll(EdgeInsets.zero),
+                ),
+                child: Icon(
+                  playing ? Icons.pause : Icons.play_arrow,
+                  size: 38,
+                  semanticLabel: playText,
+                ),
+              ),
+            ),
+            Expanded(
+              child: _SkipControl(
+                seconds: settings.skipForwardSeconds,
+                onPressed: playback.skipForward,
+              ),
+            ),
+          ],
+        ),
+        if (playback.seekUnavailable)
+          Semantics(
+            liveRegion: true,
+            child: Text(strings.seekUnavailable, style: detailStyle),
           ),
-        ],
+        Text(playText, textAlign: TextAlign.center, style: buttonLabelStyle),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          spacing: 8,
+          children: [
+            Expanded(
+              child: _PlayerOption(
+                title: strings.speed,
+                value: speedText(strings, services.player.speed),
+                onPressed: () => showSpeedChoices(context, playback),
+              ),
+            ),
+            if (sleepAvailable)
+              Expanded(
+                child: _PlayerOption(
+                  title: strings.sleep,
+                  value: sleepValue,
+                  selected: sleepOn,
+                  onPressed: () => _showSleepChoices(context, playback),
+                ),
+              ),
+          ],
+        ),
+        if (next != null)
+          TextButton(
+            onPressed: () => onEpisode(next),
+            style: const ButtonStyle(
+              alignment: AlignmentDirectional.centerStart,
+              padding: WidgetStatePropertyAll(EdgeInsets.zero),
+            ),
+            child: Text(
+              strings.nextInQueue(next.title),
+              style: buttonLabelStyle.merge(underlineStyle),
+            ),
+          ),
+      ],
+    );
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+      child: LayoutBuilder(
+        builder: (context, bounds) => Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (covers.isNotEmpty)
+              Flexible(
+                child: Align(
+                  alignment: Alignment.topCenter,
+                  heightFactor: 1,
+                  child: _PlayerCover(urls: covers, bottomGap: 8),
+                ),
+              ),
+            ConstrainedBox(
+              constraints: BoxConstraints(maxHeight: bounds.maxHeight),
+              child: SingleChildScrollView(child: controls),
+            ),
+          ],
+        ),
       ),
     );
   }
-}
-
-enum _PlayerPart { cover, controls }
-
-class _PlayerLayout extends MultiChildLayoutDelegate {
-  @override
-  void performLayout(Size size) {
-    final controls = layoutChild(
-      _PlayerPart.controls,
-      BoxConstraints.tightFor(width: size.width)
-          .copyWith(maxHeight: size.height),
-    );
-    var top = 0.0;
-    if (hasChild(_PlayerPart.cover)) {
-      final side = math.min(
-        size.width,
-        math.max(0.0, size.height - controls.height - 8),
-      );
-      final cover = layoutChild(
-        _PlayerPart.cover,
-        BoxConstraints.loose(Size.square(side)),
-      );
-      positionChild(
-        _PlayerPart.cover,
-        Offset((size.width - cover.width) / 2, 0),
-      );
-      if (cover.height > 0) top = cover.height + 8;
-    }
-    positionChild(_PlayerPart.controls, Offset(0, top));
-  }
-
-  @override
-  bool shouldRelayout(_PlayerLayout oldDelegate) => false;
 }
 
 List<String> _coverUrls(Episode episode, Podcast? podcast) => [
@@ -401,9 +354,10 @@ List<String> _coverUrls(Episode episode, Podcast? podcast) => [
 ];
 
 class _PlayerCover extends StatelessWidget {
-  const _PlayerCover({required this.urls});
+  const _PlayerCover({required this.urls, this.bottomGap = 0});
 
   final List<String> urls;
+  final double bottomGap;
 
   static const _grayscale = ColorFilter.matrix([
     0.2126,
@@ -431,7 +385,7 @@ class _PlayerCover extends StatelessWidget {
   @override
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, bounds) {
-      final side = math.min(bounds.maxWidth, bounds.maxHeight);
+      final side = math.min(bounds.maxWidth, bounds.maxHeight - bottomGap);
       if (side < 1) return const SizedBox.shrink();
       final pixels = math.max(
         1,
@@ -448,12 +402,15 @@ class _PlayerCover extends StatelessWidget {
         height: side,
         fit: BoxFit.cover,
         excludeFromSemantics: true,
-        frameBuilder: (context, child, frame, synchronous) => DecoratedBox(
-          position: DecorationPosition.foreground,
-          decoration: const BoxDecoration(
-            border: Border.fromBorderSide(BorderSide()),
+        frameBuilder: (context, child, frame, synchronous) => Padding(
+          padding: EdgeInsets.only(bottom: bottomGap),
+          child: DecoratedBox(
+            position: DecorationPosition.foreground,
+            decoration: const BoxDecoration(
+              border: Border.fromBorderSide(BorderSide()),
+            ),
+            child: ColorFiltered(colorFilter: _grayscale, child: child),
           ),
-          child: ColorFiltered(colorFilter: _grayscale, child: child),
         ),
         errorBuilder: (context, error, stack) => index + 1 < urls.length
             ? cover(index + 1)
@@ -502,15 +459,16 @@ String playLabel(
   bool showPosition = false,
 }) {
   final strings = context.strings;
-  if (playback.checkingId == episode.id) return strings.checkingPosition;
+  if (playback.services.player.checkingPosition == episode.id) {
+    return strings.checkingPosition;
+  }
   if (playback.playing(episode.id)) return strings.pause;
   if (playback.loading(episode.id)) return strings.loadingPlayback;
   if (showPosition) {
     final state = playback.services.library.stateOf(episode.id);
-    if (state.status == EpisodeStatus.none && state.positionMs > 0) {
-      return strings.playFrom(
-        positionText(Duration(milliseconds: state.positionMs)),
-      );
+    final position = state.resumePosition;
+    if (position > Duration.zero) {
+      return strings.playFrom(positionText(position));
     }
   }
   return strings.play;
@@ -555,12 +513,10 @@ class DesktopPlayer extends StatelessWidget {
     super.key,
     required this.playback,
     required this.onEpisode,
-    required this.redrawSeconds,
   });
 
   final PlaybackActions playback;
   final ValueChanged<Episode> onEpisode;
-  final int redrawSeconds;
 
   @override
   Widget build(BuildContext context) {
@@ -581,9 +537,7 @@ class DesktopPlayer extends StatelessWidget {
       EinkButton(
         strings.skipBackValue(settings.skipBackSeconds),
         minHeight: 56,
-        onPressed: episode == null
-            ? null
-            : () => playback.skip(Duration(seconds: -settings.skipBackSeconds)),
+        onPressed: episode == null ? null : playback.skipBack,
       ),
       EinkButton(
         episode == null ? strings.play : playLabel(context, playback, episode),
@@ -595,10 +549,7 @@ class DesktopPlayer extends StatelessWidget {
       EinkButton(
         strings.skipForwardValue(settings.skipForwardSeconds),
         minHeight: 56,
-        onPressed: episode == null
-            ? null
-            : () =>
-                  playback.skip(Duration(seconds: settings.skipForwardSeconds)),
+        onPressed: episode == null ? null : playback.skipForward,
       ),
       EinkButton(
         strings.desktopSpeed(
@@ -671,7 +622,6 @@ class DesktopPlayer extends StatelessWidget {
                   key: ValueKey(episode.id),
                   playback: playback,
                   episode: episode,
-                  redrawSeconds: redrawSeconds,
                 ),
               if (playback.seekUnavailable)
                 Semantics(
@@ -722,31 +672,18 @@ Future<void> showSpeedChoices(
   final strings = context.strings;
   const values = [0.8, 1.0, 1.1, 1.2, 1.3, 1.5, 1.7, 2.0];
   playback.refreshTime();
-  final result = await showEinkDialog<double>(
-    context: context,
-    barrierDismissible: false,
-    builder: (dialogContext) => EinkDialogPanel(
-      title: strings.speed,
-      message: strings.speedHelp,
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(dialogContext),
-          child: Text(strings.close, style: buttonLabelStyle),
+  final result = await showChoices(
+    context,
+    title: strings.speed,
+    message: strings.speedHelp,
+    choices: [
+      for (final value in values)
+        (
+          value: value,
+          label: speedText(strings, value),
+          selected: playback.services.player.speed == value,
         ),
-      ],
-      children: [
-        _ChoiceGrid(
-          choices: [
-            for (final value in values)
-              EinkButton(
-                speedText(strings, value),
-                selected: playback.services.player.speed == value,
-                onPressed: () => Navigator.pop(dialogContext, value),
-              ),
-          ],
-        ),
-      ],
-    ),
+    ],
   );
   if (result != null) await playback.speed(result);
 }
@@ -768,48 +705,35 @@ Future<void> _showSleepChoices(
   PlaybackActions playback,
 ) async {
   final strings = context.strings;
-  final deadline = playback.sleepDeadline;
+  final player = playback.services.player;
+  final deadline = player.sleepDeadline;
   final endTime = deadline == null ? null : clockText(strings, deadline);
-  final message = playback.sleepUntilEnd
+  final message = player.sleepAtEndOfEpisode
       ? strings.sleepEndHelp
       : (endTime == null
             ? strings.sleepOffHelp
             : strings.sleepUntilHelp(endTime));
   playback.refreshTime();
-  final result = await showEinkDialog<_SleepChoice>(
-    context: context,
-    barrierDismissible: false,
-    builder: (dialogContext) => EinkDialogPanel(
-      title: strings.sleep,
-      message: message,
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(dialogContext),
-          child: Text(strings.close, style: buttonLabelStyle),
+  final result = await showChoices(
+    context,
+    title: strings.sleep,
+    message: message,
+    choices: [
+      for (final choice in _SleepChoice.values)
+        (
+          value: choice,
+          label: switch (choice) {
+            _SleepChoice.off => strings.sleepOff,
+            _SleepChoice.end => strings.sleepEndOfEpisode,
+            _ => strings.minutes(choice.minutes!),
+          },
+          selected: switch (choice) {
+            _SleepChoice.off => !player.sleepAtEndOfEpisode && deadline == null,
+            _SleepChoice.end => player.sleepAtEndOfEpisode,
+            _ => player.sleepDuration?.inMinutes == choice.minutes,
+          },
         ),
-      ],
-      children: [
-        _ChoiceGrid(
-          choices: [
-            for (final choice in _SleepChoice.values)
-              EinkButton(
-                switch (choice) {
-                  _SleepChoice.off => strings.sleepOff,
-                  _SleepChoice.end => strings.sleepEndOfEpisode,
-                  _ => strings.minutes(choice.minutes!),
-                },
-                selected: switch (choice) {
-                  _SleepChoice.off =>
-                    !playback.sleepUntilEnd && deadline == null,
-                  _SleepChoice.end => playback.sleepUntilEnd,
-                  _ => playback.sleepMinutes == choice.minutes,
-                },
-                onPressed: () => Navigator.pop(dialogContext, choice),
-              ),
-          ],
-        ),
-      ],
-    ),
+    ],
   );
   if (result != null) {
     await playback.setSleep(
@@ -817,28 +741,4 @@ Future<void> _showSleepChoices(
       endOfEpisode: result == _SleepChoice.end,
     );
   }
-}
-
-class _ChoiceGrid extends StatelessWidget {
-  const _ChoiceGrid({required this.choices});
-
-  final List<Widget> choices;
-
-  @override
-  Widget build(BuildContext context) => Column(
-    spacing: 8,
-    children: [
-      for (var i = 0; i < choices.length; i += 2)
-        IntrinsicHeight(
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            spacing: 8,
-            children: [
-              Expanded(child: choices[i]),
-              Expanded(child: choices[i + 1]),
-            ],
-          ),
-        ),
-    ],
-  );
 }

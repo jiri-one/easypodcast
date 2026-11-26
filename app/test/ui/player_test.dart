@@ -1,18 +1,13 @@
-import 'package:easypodcast/core/player.dart';
-import 'package:easypodcast/core/services.dart';
-import 'package:easypodcast/ui/demo/demo_library.dart';
-import 'package:easypodcast/ui/demo/demo_player.dart';
-import 'package:easypodcast/ui/demo/demo_sync.dart';
 import 'package:easypodcast/ui/eink_widgets.dart';
 import 'package:easypodcast/ui/episode_page.dart';
 import 'package:easypodcast/ui/episode_text.dart';
-import 'package:easypodcast/ui/library_views.dart';
 import 'package:easypodcast/ui/playback_position.dart';
 import 'package:easypodcast/ui/player_views.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
+import 'fixtures/demo_library.dart';
+import 'fixtures/demo_sync.dart';
 import 'ui_test_support.dart';
 
 void main() {
@@ -24,12 +19,7 @@ void main() {
     'dragging previews a seek and releases it once, while a tap does nothing',
     (tester) async {
       final library = _PositionLibrary();
-      final app = await UiHarness.open(
-        tester,
-        size: const Size(360, 720),
-        locale: const Locale('cs'),
-        library: library,
-      );
+      final app = await UiHarness.open(tester, library: library);
       final player = app.services.player;
       final clock = find.byKey(PlaybackTimeline.previewKey);
       try {
@@ -82,70 +72,8 @@ void main() {
     },
   );
 
-  for (final seconds in [10, 60]) {
-    testWidgets(
-      'the $seconds-second phone refresh interval is saved and applied',
-      (tester) async {
-        final app = await UiHarness.open(
-          tester,
-          size: const Size(360, 720),
-          locale: const Locale('cs'),
-        );
-        final l = app.strings;
-        try {
-          await app.section(LibrarySection.settings);
-          final row = find.widgetWithText(EinkRow, l.playerRedraw);
-          await tester.scrollUntilVisible(
-            row,
-            140,
-            scrollable: find.descendant(
-              of: find.byKey(const PageStorageKey('settings-list')),
-              matching: find.byType(Scrollable),
-            ),
-          );
-          final control = find.descendant(
-            of: row,
-            matching: find.byType(SegmentedButton<int>),
-          );
-          expect(tester.widget<SegmentedButton<int>>(control).selected, {1});
-          await app.tap(
-            find.descendant(
-              of: control,
-              matching: find.text(
-                seconds == 60 ? l.minutes(1) : l.seconds(seconds),
-              ),
-            ),
-          );
-          final prefs = await SharedPreferences.getInstance();
-          expect(prefs.getInt('playerRedrawSeconds'), seconds);
-          await app.back();
-
-          await _start(app);
-          expect(find.text('32:00'), findsOneWidget);
-          await tester.pump(Duration(seconds: seconds - 1));
-          expect(find.text('32:00'), findsOneWidget);
-          await tester.pump(const Duration(seconds: 2));
-          final sampled =
-              const Duration(minutes: 32) + Duration(seconds: seconds);
-          expect(
-            find.text(positionText(sampled, padMinutes: true)),
-            findsOneWidget,
-          );
-        } finally {
-          await app.finish();
-        }
-      },
-    );
-  }
-
-  testWidgets('the mini player uses the library redraw interval', (
-    tester,
-  ) async {
-    final app = await UiHarness.open(
-      tester,
-      size: const Size(392, 785),
-      locale: const Locale('cs'),
-    );
+  testWidgets('the mini player redraws every ten seconds', (tester) async {
+    final app = await UiHarness.open(tester, size: const Size(392, 785));
     double progress() => tester
         .widget<FractionallySizedBox>(
           find.byKey(const ValueKey('mini-progress')),
@@ -170,7 +98,6 @@ void main() {
     final app = await UiHarness.open(
       tester,
       size: const Size(392, 785),
-      locale: const Locale('cs'),
       playerCover: true,
     );
     try {
@@ -196,7 +123,6 @@ void main() {
     final app = await UiHarness.open(
       tester,
       size: const Size(1000, 700),
-      locale: const Locale('cs'),
       desktopFont: font,
       playerCover: true,
     );
@@ -224,11 +150,7 @@ void main() {
   testWidgets(
     'a cold timeline and skip button explain when seeking is unavailable',
     (tester) async {
-      final app = await UiHarness.open(
-        tester,
-        size: const Size(392, 785),
-        locale: const Locale('cs'),
-      );
+      final app = await UiHarness.open(tester, size: const Size(392, 785));
       final l = app.strings;
       final player = app.services.player;
       try {
@@ -257,11 +179,10 @@ void main() {
   testWidgets('rebuffering keeps the mini player title and pause button', (
     tester,
   ) async {
-    final (app, player) = await _withProbedPlayer(tester);
+    final app = await UiHarness.open(tester);
     try {
       await app.mini(app.strings.play);
-      player.buffering = true;
-      player.refresh();
+      app.engine.buffer();
       await tester.pumpAndSettle();
       final mini = find.byType(MiniPlayer);
       expect(
@@ -281,86 +202,53 @@ void main() {
   testWidgets('playback failures name the episode and retry through resume', (
     tester,
   ) async {
-    final (app, player) = await _withProbedPlayer(tester);
+    final app = await UiHarness.open(tester);
     final l = app.strings;
+    final player = app.services.player;
+    final engine = app.engine;
     final failed = app.services.library.episode(201)!;
+    final failure = StateError('Playback failed');
+    Finder problem(String message) => find.text('${failed.title}\n$message');
     try {
-      for (final (reason, message) in [
-        (PlaybackErrorReason.loadFailed, l.playbackLoadFailed),
-        (PlaybackErrorReason.streamFailed, l.playbackStreamFailed),
-        (PlaybackErrorReason.seekFailed, l.playbackSeekFailed),
-        (PlaybackErrorReason.audioFocusUnavailable, l.playbackFocusUnavailable),
-      ]) {
-        player.error = PlaybackError(failed, reason);
-        player.refresh();
-        await tester.pumpAndSettle();
-        expect(find.text('${failed.title}\n$message'), findsOneWidget);
-      }
+      engine.loadError = failure;
+      await expectLater(player.play(failed.id), throwsStateError);
+      await tester.pumpAndSettle();
+      expect(problem(l.playbackLoadFailed), findsOneWidget);
+
+      engine.loadError = null;
       await app.mini(failed.title);
-      expect(
-        find.text('${failed.title}\n${l.playbackFocusUnavailable}'),
-        findsOneWidget,
-      );
+      final loads = engine.loadCalls;
       await app.tapText(l.retry);
-      expect(player.retries, 1);
+      expect(engine.loadCalls, loads + 1);
+      expect(player.isPlaying, isTrue);
       expect(find.text(l.retry), findsNothing);
+
+      engine.failStream();
+      await tester.pumpAndSettle();
+      expect(problem(l.playbackStreamFailed), findsOneWidget);
+
+      await player.resume();
+      engine.seekError = failure;
+      await player.seekTo(const Duration(seconds: 30));
+      await tester.pumpAndSettle();
+      expect(problem(l.playbackSeekFailed), findsOneWidget);
+
+      engine.seekError = null;
+      engine.focusAvailable = false;
+      await player.resume();
+      await tester.pumpAndSettle();
+      expect(problem(l.playbackFocusUnavailable), findsOneWidget);
 
       await app.back();
       (app.services.sync as DemoSyncService).setOffline();
-      player.error = PlaybackError(failed, PlaybackErrorReason.loadFailed);
-      player.refresh();
+      engine.loadError = failure;
+      await expectLater(player.play(failed.id), throwsStateError);
       await tester.pumpAndSettle();
-      expect(
-        find.text('${failed.title}\n${l.playbackOffline}'),
-        findsOneWidget,
-      );
+      expect(problem(l.playbackOffline), findsOneWidget);
     } finally {
       await app.finish();
     }
   });
-}
-
-Future<(UiHarness, _PlayerProbe)> _withProbedPlayer(WidgetTester tester) async {
-  late _PlayerProbe player;
-  final app = await UiHarness.open(
-    tester,
-    size: const Size(360, 720),
-    locale: const Locale('cs'),
-    configure: (demo) => AppServices(
-      api: demo.api,
-      sync: demo.sync,
-      library: demo.library,
-      downloads: demo.downloads,
-      settings: demo.settings,
-      player: player = _PlayerProbe(demo),
-    ),
-  );
-  return (app, player);
-}
-
-class _PlayerProbe extends DemoPlayerController {
-  _PlayerProbe(AppServices services)
-    : super(services.library, services.settings, services.sync);
-
-  PlaybackError? error;
-  bool buffering = false;
-  int retries = 0;
-
-  @override
-  PlaybackError? get lastPlaybackError => error;
-
-  @override
-  bool get isBuffering => buffering;
-
-  void refresh() => notifyListeners();
-
-  @override
-  Future<void> resume() async {
-    retries++;
-    error = null;
-    notifyListeners();
-    await super.resume();
-  }
 }
 
 Future<void> _start(UiHarness app) async {

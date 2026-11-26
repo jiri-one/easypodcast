@@ -2,32 +2,24 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:path_provider/path_provider.dart';
 
 import '../core/downloads.dart';
+import '../core/library.dart';
 import '../core/models.dart';
 import 'eink_widgets.dart';
 import 'episode_text.dart';
 import 'library_views.dart';
 import 'playback_actions.dart';
-import 'queue_edits.dart';
-
-typedef _Download = (DownloadStatus status, String? path);
-typedef _Storage = ({Map<int, int?> sizes, int? free});
 
 class DownloadsPage extends StatefulWidget {
   const DownloadsPage({
     super.key,
     required this.playback,
-    required this.queueEdits,
-    required this.requestedIds,
     required this.onOpen,
     required this.onMenu,
   });
 
   final PlaybackActions playback;
-  final QueueEdits queueEdits;
-  final Set<int> requestedIds;
   final ValueChanged<Episode> onOpen;
   final ValueChanged<Episode> onMenu;
 
@@ -36,128 +28,65 @@ class DownloadsPage extends StatefulWidget {
 }
 
 class _DownloadsPageState extends State<DownloadsPage> {
-  late Set<int> _knownIds;
-  Map<int, _Download> _visible = const {};
-  late Future<_Storage> _storage;
+  late var _ids = _downloads.episodeIds;
+  late var _files = _finishedFiles();
+  late var _sizes = _readSizes(_files);
+
+  DownloadService get _downloads => widget.playback.services.downloads;
+  Library get _library => widget.playback.services.library;
 
   @override
   void initState() {
     super.initState();
-    _knownIds = _knownEpisodes();
-    _visible = _inventory();
-    _storage = _readStorage(_visible);
-    widget.playback.services.library.addListener(_refreshKnown);
-    widget.playback.services.downloads.addListener(_refresh);
+    _downloads.addListener(_refresh);
   }
 
   @override
   void dispose() {
-    widget.playback.services.library.removeListener(_refreshKnown);
-    widget.playback.services.downloads.removeListener(_refresh);
+    _downloads.removeListener(_refresh);
     super.dispose();
   }
 
-  Set<int> _knownEpisodes() {
-    final library = widget.playback.services.library;
-    return {
-      ...widget.requestedIds,
-      for (final episode in library.queue) episode.id,
-      for (final episode in library.inProgress) episode.id,
-      for (final podcast in library.podcasts)
-        for (final episode in library.episodesOf(podcast.id)) episode.id,
-    };
-  }
-
-  Map<int, _Download> _inventory() {
-    final downloads = widget.playback.services.downloads;
-    final finished = downloads.downloadedEpisodeIds;
-    final items = <int, _Download>{};
-    for (final id in _knownIds) {
-      final info = downloads.statusOf(id);
-      if (info.status != DownloadStatus.none &&
-          info.status != DownloadStatus.done) {
-        items[id] = (info.status, null);
-      }
-    }
-    for (final id in finished) {
-      items[id] = (DownloadStatus.done, downloads.localFileOf(id));
-    }
-    return items;
-  }
-
-  void _refreshKnown() {
-    _knownIds.addAll(_knownEpisodes());
-    _refresh();
-  }
+  Map<int, String?> _finishedFiles() => {
+    for (final id in _downloads.downloadedEpisodeIds)
+      id: _downloads.localFileOf(id),
+  };
 
   void _refresh() {
-    final next = _inventory();
-    if (mapEquals(next, _visible)) return;
-    final files = _files(next);
-    final changed = !mapEquals(files, _files(_visible));
+    final ids = _downloads.episodeIds;
+    final files = _finishedFiles();
+    final changed = !mapEquals(files, _files);
+    if (!changed && listEquals(ids, _ids)) return;
     setState(() {
-      _visible = next;
-      if (changed) _storage = _readStorage(next);
+      _ids = ids;
+      if (changed) {
+        _files = files;
+        _sizes = _readSizes(files);
+      }
     });
   }
 
-  Map<int, String?> _files(Map<int, _Download> entries) => {
-    for (final entry in entries.entries)
-      if (entry.value.$1 == DownloadStatus.done) entry.key: entry.value.$2,
+  Future<Map<int, int?>> _readSizes(Map<int, String?> files) async => {
+    for (final MapEntry(key: id, value: path) in files.entries)
+      id: await _fileSize(path) ?? _library.episode(id)?.enclosureLength,
   };
 
-  Future<_Storage> _readStorage(Map<int, _Download> entries) async {
-    final library = widget.playback.services.library;
-    final sizes = <int, int?>{};
-    final free = _freeSpace();
-    for (final entry in _files(entries).entries) {
-      final path = entry.value;
-      int? actual;
-      if (path != null) {
-        try {
-          actual = await File(path).length();
-        } on FileSystemException {
-          actual = null;
-        }
-      }
-      sizes[entry.key] = actual ?? library.episode(entry.key)?.enclosureLength;
-    }
-    return (sizes: sizes, free: await free);
-  }
-
-  Future<int?> _freeSpace() async {
-    if (!Platform.isAndroid) return null;
+  Future<int?> _fileSize(String? path) async {
+    if (path == null) return null;
     try {
-      final directory = await getApplicationDocumentsDirectory();
-      final result = await Process.run('/system/bin/df', [
-        '-k',
-        directory.path,
-      ]);
-      if (result.exitCode != 0) return null;
-      final lines = (result.stdout as String).trim().split('\n');
-      if (lines.length < 2) return null;
-      final fields = lines.last.trim().split(RegExp(r'\s+'));
-      final available = fields.length < 4 ? null : int.tryParse(fields[3]);
-      return available == null ? null : available * 1024;
-    } on Exception {
+      return await File(path).length();
+    } on FileSystemException {
       return null;
     }
   }
 
-  Widget _storageLine(BuildContext context, _Storage storage) {
+  Widget _storageLine(BuildContext context, Iterable<int?> sizes) {
     final strings = context.strings;
-    final sizes = storage.sizes.values;
-    final free = storage.free;
-    final String text;
-    if (sizes.contains(null)) {
-      text = strings.storageUnknown;
-    } else {
-      final bytes = sizes.fold(0, (sum, bytes) => sum + (bytes ?? 0));
-      final used = bytesText(strings, bytes);
-      text = free == null
-          ? strings.storageUsed(used)
-          : strings.storageUsedAndFree(used, bytesText(strings, free));
-    }
+    final text = sizes.contains(null)
+        ? strings.storageUnknown
+        : strings.storageUsed(
+            bytesText(strings, sizes.fold(0, (sum, bytes) => sum + bytes!)),
+          );
     return DecoratedBox(
       decoration: const BoxDecoration(border: Border(bottom: BorderSide())),
       child: Padding(
@@ -169,28 +98,24 @@ class _DownloadsPageState extends State<DownloadsPage> {
 
   @override
   Widget build(BuildContext context) {
-    final library = widget.playback.services.library;
-    final episodes = [for (final id in _visible.keys) ?library.episode(id)];
-    return FutureBuilder<_Storage>(
-      future: _storage,
-      initialData: (
-        sizes: {
-          for (final id in _files(_visible).keys)
-            id: library.episode(id)?.enclosureLength,
-        },
-        free: null,
-      ),
+    final episodes = [for (final id in _ids) ?_library.episode(id)];
+    return FutureBuilder<Map<int, int?>>(
+      future: _sizes,
       builder: (context, snapshot) {
-        final storage = snapshot.data;
+        final sizes = snapshot.connectionState == ConnectionState.done
+            ? snapshot.requireData
+            : {
+                for (final id in _files.keys)
+                  id: _library.episode(id)?.enclosureLength,
+              };
         return EpisodeList(
           kind: EpisodeListKind.downloads,
           episodes: episodes,
           playback: widget.playback,
-          queueEdits: widget.queueEdits,
           onOpen: widget.onOpen,
           onMenu: widget.onMenu,
-          fileSizes: storage?.sizes ?? const {},
-          actions: [if (storage != null) _storageLine(context, storage)],
+          fileSizes: sizes,
+          actions: [_storageLine(context, sizes.values)],
         );
       },
     );

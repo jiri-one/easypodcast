@@ -1,4 +1,4 @@
-import '../../core/models.dart';
+import 'package:easypodcast/core/models.dart';
 
 typedef DemoContent = ({
   Map<int, Podcast> podcasts,

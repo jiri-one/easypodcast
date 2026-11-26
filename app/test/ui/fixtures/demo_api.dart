@@ -1,7 +1,6 @@
-import 'dart:convert';
+import 'package:easypodcast/core/api.dart';
+import 'package:easypodcast/core/models.dart';
 
-import '../../core/api.dart';
-import '../../core/models.dart';
 import 'demo_library.dart';
 
 class DemoApiClient implements ApiClient {
@@ -53,6 +52,13 @@ class DemoApiClient implements ApiClient {
     if (etag == ifNoneMatch) return null;
     return Fetched(_library.episodesOf(podcastId), etag);
   }
+
+  @override
+  Future<List<int>> searchPodcast(
+    int podcastId,
+    String query, {
+    Duration? timeout,
+  }) async => const [];
 
   @override
   Future<({Episode episode, String description})> episode(
@@ -114,56 +120,10 @@ class DemoApiClient implements ApiClient {
   Future<void> refresh({Duration? timeout}) async => _library.refreshFeeds();
 
   @override
-  Future<String> exportOpml({Duration? timeout}) async {
-    const escape = HtmlEscape(HtmlEscapeMode.attribute);
-    final outlines = [
-      for (final podcast in _library.podcasts)
-        '<outline type="rss" text="${escape.convert(podcast.title)}" '
-            'xmlUrl="${escape.convert(podcast.feedUrl)}"/>',
-    ].join('\n');
-    return '<?xml version="1.0" encoding="UTF-8"?>\n'
-        '<opml version="2.0"><body>\n$outlines\n</body></opml>';
-  }
-
-  static final _opmlRoot = RegExp(r'<opml(?:\s|>)');
-  static final _opmlUrl = RegExp(r'''\bxmlUrl\s*=\s*(?:"([^"]*)"|'([^']*)')''');
-  static final _xmlEntity = RegExp(r'&(amp|quot|apos|lt|gt);');
-  static const _xmlCharacters = {
-    'amp': '&',
-    'quot': '"',
-    'apos': "'",
-    'lt': '<',
-    'gt': '>',
-  };
+  Future<String> exportOpml({Duration? timeout}) async =>
+      '<opml version="2.0"><body/></opml>';
 
   @override
-  Future<OpmlImportResult> importOpml(String opml, {Duration? timeout}) async {
-    if (!_opmlRoot.hasMatch(opml)) throw ApiException(422, 'Invalid OPML');
-    final urls = {
-      for (final match in _opmlUrl.allMatches(opml))
-        (match[1] ?? match[2]!).replaceAllMapped(
-          _xmlEntity,
-          (entity) => _xmlCharacters[entity[1]]!,
-        ),
-    };
-    final knownUrls = _library.allPodcasts
-        .map((podcast) => podcast.feedUrl)
-        .toSet();
-    var added = 0;
-    var existing = 0;
-    final failed = <({String feedUrl, String error})>[];
-    for (final url in urls) {
-      try {
-        final podcast = await subscribe(url);
-        if (knownUrls.add(podcast.feedUrl)) {
-          added++;
-        } else {
-          existing++;
-        }
-      } on ApiException catch (error) {
-        failed.add((feedUrl: url, error: error.message));
-      }
-    }
-    return OpmlImportResult(added: added, existing: existing, failed: failed);
-  }
+  Future<OpmlImportResult> importOpml(String opml, {Duration? timeout}) async =>
+      const OpmlImportResult(added: 1, existing: 0, failed: []);
 }

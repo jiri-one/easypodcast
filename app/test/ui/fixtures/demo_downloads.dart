@@ -1,8 +1,8 @@
 import 'dart:async';
 
-import '../../core/downloads.dart';
-import '../../core/library.dart';
-import '../../core/settings.dart';
+import 'package:easypodcast/core/downloads.dart';
+import 'package:easypodcast/core/library.dart';
+import 'package:easypodcast/core/settings.dart';
 
 class DemoDownloadService extends DownloadService {
   DemoDownloadService(this._library, Settings settings) {
@@ -49,6 +49,9 @@ class DemoDownloadService extends DownloadService {
   @override
   List<int> get downloadedEpisodeIds =>
       List.unmodifiable(_completed.toList().reversed);
+
+  @override
+  List<int> get episodeIds => [..._active.keys, ...downloadedEpisodeIds];
 
   @override
   Future<void> download(int episodeId) async {

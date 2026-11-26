@@ -1,8 +1,9 @@
 import 'dart:async';
 
-import '../../core/api.dart';
-import '../../core/library.dart';
-import '../../core/models.dart';
+import 'package:easypodcast/core/api.dart';
+import 'package:easypodcast/core/library.dart';
+import 'package:easypodcast/core/models.dart';
+
 import 'demo_content.dart';
 
 class DemoLibrary extends Library {
@@ -166,11 +167,8 @@ class DemoLibrary extends Library {
   @override
   Future<Duration> prepareForPlayback(int episodeId) async {
     final state = stateOf(episodeId);
-    if (state.status == EpisodeStatus.none) {
-      return Duration(milliseconds: state.positionMs);
-    }
-    await markNew(episodeId);
-    return Duration.zero;
+    if (state.isFinished) await markNew(episodeId);
+    return state.resumePosition;
   }
 
   @override
@@ -203,21 +201,10 @@ class DemoLibrary extends Library {
   }
 
   @override
-  Future<void> dismissOlder(int episodeId) async {
-    final chosen = _episodes[episodeId];
-    if (chosen == null) return;
-    final cutoff = chosen.publishedAt;
-    final queued = _queue.episodeIds.toSet();
-    applyChanges([
-      for (final episode in episodesOf(chosen.podcastId))
-        if ((episode.id == episodeId ||
-                (cutoff != null &&
-                    episode.publishedAt?.isAfter(cutoff) == false)) &&
-            stateOf(episode.id).isNew &&
-            !queued.contains(episode.id))
-          _newState(episode.id, EpisodeStatus.dismissed),
-    ]);
-  }
+  Future<void> dismissOlder(int episodeId) async => applyChanges([
+    for (final episode in dismissOlderCandidates(episodeId))
+      _newState(episode.id, EpisodeStatus.dismissed),
+  ]);
 
   @override
   Future<void> markPlayed(int episodeId) async =>

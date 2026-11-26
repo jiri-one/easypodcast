@@ -298,6 +298,13 @@ class FakeApiClient implements HttpApiClient {
   }
 
   @override
+  Future<List<int>> searchPodcast(
+    int podcastId,
+    String query, {
+    Duration? timeout,
+  }) async => const [];
+
+  @override
   Future<({Episode episode, String description})> episode(
     int episodeId, {
     Duration? timeout,
