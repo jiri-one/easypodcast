@@ -109,7 +109,6 @@ abstract interface class ApiClient {
   Future<void> setNewEpisodesVisibility(
     int podcastId,
     bool show, {
-    String? serverId,
     Duration? timeout,
   });
 

@@ -24,7 +24,7 @@ See [server/README.md](server/README.md) for the full configuration, command, AP
 - **Library views**:
   - **In progress**: unfinished episodes past one minute, most recently listened first, with remaining time.
   - **Queue**: manually ordered list with long-press drag reordering and menu actions (move up, move down, move to top); played and dismissed episodes are hidden automatically, and auto-advance to the next queued episode can be toggled in Settings.
-  - **New episodes**: new episodes from the last 30 days grouped by day, with manual refresh.
+  - **New episodes**: new episodes from the last 30 days grouped by day, with manual refresh. A switch on a podcast's About page leaves that podcast out on every device.
   - **Podcasts**: sorted by played count or alphabetically, with feed status, add-by-URL, and unsubscribe/resubscribe.
   - **Downloads**: offline files and total storage used.
 - **Episode actions**: mark played or new, dismiss (hides from active lists and deletes downloads without counting as played), bulk "Dismiss older too" for new unqueued episodes, and plain-text episode descriptions with clickable links.

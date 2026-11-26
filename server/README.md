@@ -67,8 +67,7 @@ that need another import attempt.
 
 `GET /api/podcasts` includes `show_in_new_episodes` for each podcast. It defaults to `true`.
 `PUT /api/podcasts/{id}/new-episodes` takes `{"show": false}` and returns 204, or 404 for
-an unknown podcast. Changing the value changes the podcast list ETag. An optional
-`server_id` guards the write against a restored server and returns 409 on a mismatch.
+an unknown podcast. Changing the value changes the podcast list ETag.
 
 `GET /api/podcasts/{id}/search?q=tomas+roud` takes the usual bearer token and searches
 one podcast. Every whitespace-separated term must appear in the title or plain-text

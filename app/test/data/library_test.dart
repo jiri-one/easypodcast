@@ -1,3 +1,4 @@
+import 'package:easypodcast/core/api.dart';
 import 'package:easypodcast/core/models.dart';
 import 'package:easypodcast/data/local_store.dart';
 import 'package:easypodcast/data/sqflite_library.dart';
@@ -756,5 +757,38 @@ void main() {
     await lib().unsubscribe(7);
     expect(lib().podcasts.map((p) => p.id), isNot(contains(7)));
     expect(lib().podcast(7)!.subscribed, isFalse);
+  });
+
+  test('New episodes leaves out a podcast hidden on the server', () async {
+    server.addPodcast(2, 'Night Trains');
+    final kept = server.addEpisodes(2, 1);
+    final pc = await Device.open(server);
+    addTearDown(pc.close);
+    await pc.loginAndStart('pc');
+    await device.sync.syncNow();
+    await lib().recordPosition(episodes[0], const Duration(minutes: 2));
+
+    await lib().setNewEpisodesVisibility(1, false);
+    expect(lib().podcast(1)!.showInNewEpisodes, isFalse);
+    expect(lib().newEpisodes(since: oldestTime).map((e) => e.id), kept);
+    expect(lib().episodesOf(1), hasLength(5));
+    expect(lib().inProgress.map((e) => e.id), [episodes[0]]);
+
+    await pc.sync.syncNow();
+    expect(pc.library.newEpisodes(since: oldestTime).map((e) => e.id), kept);
+    final reopened = await SqfliteLibrary.open(
+      LocalStore(device.db),
+      device.api,
+    );
+    addTearDown(reopened.dispose);
+    expect(reopened.newEpisodes(since: oldestTime).map((e) => e.id), kept);
+
+    device.api.online = false;
+    await expectLater(
+      lib().setNewEpisodesVisibility(1, true),
+      throwsA(isA<OfflineException>()),
+    );
+    expect(lib().podcast(1)!.showInNewEpisodes, isFalse);
+    expect(lib().newEpisodes(since: oldestTime).map((e) => e.id), kept);
   });
 }

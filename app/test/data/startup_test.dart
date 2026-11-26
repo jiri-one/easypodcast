@@ -84,6 +84,10 @@ void main() {
           'episode_id': 7,
           'text': 'Saved notes',
         });
+        await legacy.insert('meta', {
+          'key': MetaKey.podcastsEtag,
+          'value': '"saved"',
+        });
       } finally {
         await legacy.close();
       }
@@ -95,6 +99,7 @@ void main() {
       expect(await store.description(7), (text: 'Saved notes', version: null));
       final snapshot = await store.load();
       expect(snapshot.podcasts.single.showInNewEpisodes, isTrue);
+      expect(store.meta(MetaKey.podcastsEtag), isNull);
       final episode = snapshot.episodes.single;
       expect(
         (

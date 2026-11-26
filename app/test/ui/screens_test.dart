@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:easypodcast/core/api.dart';
 import 'package:easypodcast/core/downloads.dart';
 import 'package:easypodcast/ui/account_pages.dart';
 import 'package:easypodcast/ui/eink_widgets.dart';
@@ -13,6 +14,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
+import 'fixtures/demo_library.dart';
 import 'fixtures/demo_sync.dart';
 import 'ui_test_support.dart';
 
@@ -270,6 +272,32 @@ void main() {
     },
   );
 
+  testWidgets('a failed About podcast toggle keeps its value and says so', (
+    tester,
+  ) async {
+    final app = await UiHarness.open(
+      tester,
+      size: const Size(392, 785),
+      library: _OfflineToggleLibrary(),
+    );
+    final l = app.strings;
+    try {
+      await app.section(LibrarySection.podcasts);
+      await app.scrollToRow(
+        app.services.library.podcast(2)!.title,
+        find.byType(PodcastList),
+      );
+      await app.tap(find.bySemanticsLabel(l.aboutPodcast));
+      final row = find.widgetWithText(EinkRow, l.showInNewEpisodes);
+      await app.scrollTo(row, find.byType(AboutPodcastPage));
+      await app.tap(row);
+      expect(tester.widget<EinkRow>(row).toggled, isTrue);
+      expect(find.text(l.actionFailed), findsOneWidget);
+    } finally {
+      await app.finish();
+    }
+  });
+
   testWidgets(
     'bulk dismissal counts eligible episodes and preserves the queue',
     (tester) async {
@@ -470,3 +498,9 @@ void _checkTextLayout(String screen) {
 
 Future<UiHarness> _phone(WidgetTester tester, {bool loggedIn = true}) =>
     UiHarness.open(tester, size: const Size(392, 785), loggedIn: loggedIn);
+
+class _OfflineToggleLibrary extends DemoLibrary {
+  @override
+  Future<void> setNewEpisodesVisibility(int podcastId, bool show) async =>
+      throw OfflineException();
+}

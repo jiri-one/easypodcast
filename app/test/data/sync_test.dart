@@ -1069,38 +1069,6 @@ void main() {
   });
 
   test(
-    'a podcast reply in flight cannot undo an acknowledged toggle',
-    () async {
-      final phone = await device('phone');
-      final added = server.addEpisodes(1, 1).single;
-      final fetched = Completer<void>();
-      final release = Completer<void>();
-      phone.api.beforePodcastsReply = () {
-        phone.api.beforePodcastsReply = null;
-        fetched.complete();
-        return release.future;
-      };
-      final pulling = phone.sync.syncNow();
-      final seen = <bool>[];
-      try {
-        await fetched.future.timeout(const Duration(seconds: 2));
-        await phone.library.setNewEpisodesVisibility(1, false);
-        await phone.sync.sendPending();
-        expect(phone.library.pendingCount, 0);
-        phone.library.addListener(
-          () => seen.add(phone.library.podcast(1)!.showInNewEpisodes),
-        );
-      } finally {
-        release.complete();
-        await pulling;
-      }
-      expect(seen, isNotEmpty);
-      expect(seen, everyElement(false));
-      expect(phone.library.episode(added), isNotNull);
-    },
-  );
-
-  test(
     'an uncached queue entry found during an edit refreshes its episode list',
     () async {
       final a = await device('phone');

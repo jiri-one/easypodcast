@@ -140,17 +140,12 @@ func TestHTTPAPI(t *testing.T) {
 	visibilityPath := podcastPath + "/new-episodes"
 	call("PUT", "/api/podcasts/999999/new-episodes", `{"show":false}`, "", "", 404)
 	call("PUT", visibilityPath, `{"show":null}`, "", "", 400)
-	call("PUT", visibilityPath, fmt.Sprintf(`{"show":false,"server_id":%q}`, tokens.ServerID), "", "", 204)
+	call("PUT", visibilityPath, `{"show":false}`, "", "", 204)
 	updatedList := call("GET", "/api/podcasts", "", podcastsTag, "", 200)
 	if updated := response[[]podcast](t, updatedList); len(updated) != 1 || updated[0].ShowInNewEpisodes ||
 		updated[0].EpisodesVersion != p.EpisodesVersion || updatedList.Header().Get("ETag") == podcastsTag {
 		t.Fatalf("preference did not update the podcast list: %+v", updated)
 	}
-	conflict := call("PUT", visibilityPath, `{"show":true,"server_id":"old-id"}`, "", "", 409)
-	if response[map[string]string](t, conflict)["server_id"] != tokens.ServerID {
-		t.Fatal("preference conflict did not return the current server ID")
-	}
-	call("GET", "/api/podcasts", "", updatedList.Header().Get("ETag"), "", 304)
 	episodePath := podcastPath + "/episodes"
 	list = call("GET", episodePath, "", "", "", 200)
 	originalTag := list.Header().Get("ETag")

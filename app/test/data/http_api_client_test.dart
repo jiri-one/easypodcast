@@ -77,6 +77,18 @@ void main() {
     },
   );
 
+  test('the New episodes preference is parsed and sent as a PUT', () async {
+    final hidden = {...podcastJson, 'show_in_new_episodes': false};
+    expect(Podcast.fromJson(hidden).showInNewEpisodes, isFalse);
+
+    handler = (_) async => http.Response('', 204);
+    await api.setNewEpisodesVisibility(3, false);
+    final request = requests.single;
+    expect(request.method, 'PUT');
+    expect(request.url.path, '/api/podcasts/3/new-episodes');
+    expect(jsonDecode(request.body), {'show': false});
+  });
+
   test('304 returns null and If-None-Match is sent', () async {
     handler = (_) async => http.Response('', 304);
     expect(await api.podcasts(ifNoneMatch: '"t1"'), isNull);

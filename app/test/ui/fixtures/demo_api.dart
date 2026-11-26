@@ -44,7 +44,6 @@ class DemoApiClient implements ApiClient {
   Future<void> setNewEpisodesVisibility(
     int podcastId,
     bool show, {
-    String? serverId,
     Duration? timeout,
   }) => _library.setNewEpisodesVisibility(podcastId, show);
 

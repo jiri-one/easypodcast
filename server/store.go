@@ -174,24 +174,12 @@ func (s store) unsubscribe(ctx context.Context, id int64) error {
 	return err
 }
 
-func (s store) setNewEpisodesVisibility(ctx context.Context, id int64, show bool, expectedServerID *string) (string, error) {
-	var serverID string
-	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
-		revision, err := scanStateRevision(tx.QueryRow(ctx, stateRevisionSQL+" FOR SHARE"))
-		if err != nil {
-			return err
-		}
-		serverID = revision.ServerID
-		if expectedServerID != nil && *expectedServerID != serverID {
-			return errServerIDChanged
-		}
-		tag, err := tx.Exec(ctx, "UPDATE podcasts SET show_in_new_episodes = $2 WHERE id = $1", id, show)
-		if err == nil && tag.RowsAffected() == 0 {
-			return pgx.ErrNoRows
-		}
-		return err
-	})
-	return serverID, err
+func (s store) setNewEpisodesVisibility(ctx context.Context, id int64, show bool) error {
+	tag, err := s.db.Exec(ctx, "UPDATE podcasts SET show_in_new_episodes = $2 WHERE id = $1", id, show)
+	if err == nil && tag.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return err
 }
 
 const episodeColumns = `id, podcast_id, guid, title, published_at, duration_s, enclosure_url,

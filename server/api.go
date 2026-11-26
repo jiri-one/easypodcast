@@ -310,8 +310,7 @@ func (a *api) setNewEpisodesVisibility(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input struct {
-		Show     *bool   `json:"show"`
-		ServerID *string `json:"server_id"`
+		Show *bool `json:"show"`
 	}
 	if !decodeJSON(w, r, &input) {
 		return
@@ -320,15 +319,11 @@ func (a *api) setNewEpisodesVisibility(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadRequest, "show must be a boolean")
 		return
 	}
-	serverID, err := a.store.setNewEpisodesVisibility(r.Context(), id, *input.Show, input.ServerID)
-	switch {
-	case errors.Is(err, errServerIDChanged):
-		jsonReply(w, r, http.StatusConflict, map[string]string{"error": err.Error(), "server_id": serverID})
-	case err != nil:
+	if err := a.store.setNewEpisodesVisibility(r.Context(), id, *input.Show); err != nil {
 		storeError(w, r, err)
-	default:
-		w.WriteHeader(http.StatusNoContent)
+		return
 	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (a *api) episodes(w http.ResponseWriter, r *http.Request) {

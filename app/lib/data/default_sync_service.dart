@@ -88,7 +88,6 @@ class DefaultSyncService extends SyncService with WidgetsBindingObserver {
   bool _loggingOut = false;
   Future<void>? _identityReset;
   int _session = 0;
-  int _podcastListGeneration = 0;
   final _send = _SyncOperation();
   final _catalogue = _SyncOperation();
   _SyncOperation? _lastFailure;
@@ -373,13 +372,10 @@ class DefaultSyncService extends SyncService with WidgetsBindingObserver {
       final (:states, :queue) = _library.pendingChanges(
         includeRejected: includeRejected,
       );
+      if (states.isEmpty && queue == null) return;
       final remaining = timeout == null ? null : timeout - watch.elapsed;
       if (remaining != null && remaining <= Duration.zero) return;
       final serverId = _store.meta(MetaKey.serverId);
-      if (states.isEmpty && queue == null) {
-        if (!await _pushNewEpisodesChange(session, serverId, remaining)) return;
-        continue;
-      }
       final StatePushResult result;
       try {
         result = await _api.pushState(
@@ -389,7 +385,12 @@ class DefaultSyncService extends SyncService with WidgetsBindingObserver {
           timeout: remaining,
         );
       } on ApiException catch (error) {
-        if (!await _handleServerConflict(session, serverId, error)) rethrow;
+        if (error.statusCode != 409 ||
+            error.serverId == null ||
+            error.serverId == serverId) {
+          rethrow;
+        }
+        await _rememberServer(session, error.serverId!);
         return;
       }
       if (!await _rememberServer(session, result.serverId!) ||
@@ -411,50 +412,6 @@ class DefaultSyncService extends SyncService with WidgetsBindingObserver {
       }
       includeRejected = false;
     }
-  }
-
-  Future<bool> _pushNewEpisodesChange(
-    int session,
-    String? serverId,
-    Duration? timeout,
-  ) async {
-    final change = _library.pendingNewEpisodesChange;
-    if (change == null) return false;
-    var applied = true;
-    try {
-      await _api.setNewEpisodesVisibility(
-        change.key,
-        change.value,
-        serverId: serverId,
-        timeout: timeout,
-      );
-    } on ApiException catch (error) {
-      if (await _handleServerConflict(session, serverId, error)) return false;
-      if (error.statusCode != 404) rethrow;
-      applied = false;
-    }
-    if (!_inSession(session)) return false;
-    _podcastListGeneration++;
-    await _library.completeNewEpisodesChange(
-      change.key,
-      change.value,
-      applied: applied,
-    );
-    if (_inSession(session)) _pullWanted = true;
-    return true;
-  }
-
-  Future<bool> _handleServerConflict(
-    int session,
-    String? serverId,
-    ApiException error,
-  ) async {
-    final current = error.serverId;
-    if (error.statusCode != 409 || current == null || current == serverId) {
-      return false;
-    }
-    await _rememberServer(session, current);
-    return true;
   }
 
   @override
@@ -510,15 +467,13 @@ class DefaultSyncService extends SyncService with WidgetsBindingObserver {
     bool isCurrent() => _inSession(session) && !_loggingOut;
     await _pullState(session);
     if (!isCurrent()) return;
-    // A catalogue reply in flight can predate a confirmed preference change.
-    final generation = _podcastListGeneration;
     final fetched = await _api.podcasts(
       ifNoneMatch: _store.meta(MetaKey.podcastsEtag),
     );
-    if (!isCurrent() || generation != _podcastListGeneration) return;
+    if (!isCurrent()) return;
     if (fetched != null) {
       await _library.replacePodcasts(fetched.value);
-      if (!isCurrent() || generation != _podcastListGeneration) return;
+      if (!isCurrent()) return;
       await _store.setMeta(MetaKey.podcastsEtag, fetched.etag);
     }
     Exception? listError;

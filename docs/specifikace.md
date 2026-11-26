@@ -87,7 +87,8 @@ Aplikace se do telefonů instalují mimo Google Play, takže Android Auto vyžad
 - Ruční akce „označit jako přehrané“ (třeba po poslechu jinde) a „vrátit mezi nové“ (od začátku).
 - Nové díly napříč odběry (O7). Ve výchozím stavu se zobrazují díly ze všech odběrů a volbou
   „Zobrazovat v Nových dílech“ na stránce „O podcastu“ lze jednotlivý podcast ze seznamu skrýt.
-  Změna se po připojení synchronizuje přes server mezi zařízeními.
+  Volba je uložená na serveru u odběru, takže platí na všech zařízeních, a stejně jako odběr se
+  mění jen online.
 
 ### 4.2 Přehrávání
 
