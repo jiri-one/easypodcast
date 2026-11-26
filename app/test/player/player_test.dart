@@ -14,7 +14,6 @@ import 'package:easypodcast/core/settings.dart';
 import 'package:easypodcast/core/sync.dart';
 import 'package:easypodcast/platform/android_platform.dart';
 import 'package:easypodcast/player/player.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -92,7 +91,6 @@ void main() {
     );
     addTearDown(() {
       player.dispose();
-      sync.status.dispose();
       library.dispose();
       downloads.dispose();
       settings.dispose();
@@ -308,11 +306,12 @@ void main() {
     await player.play(_first.id);
 
     engine.position = const Duration(seconds: 42);
+    calls.clear();
     engine.playing = false;
     engine.events.add(null);
     await tester.pump();
 
-    expect(calls.sublist(calls.length - 2), ['record:1:42000', 'playing:null']);
+    expect(calls, ['record:1:42000', 'send:5000', 'playing:null']);
     expect(player.isPlaying, isFalse);
   });
 
@@ -664,43 +663,30 @@ void main() {
     },
   );
 
-  for (final outcome in ['succeeds', 'fails', 'times out']) {
-    testWidgets('Android releases the pause wake lock when the send $outcome', (
-      tester,
-    ) async {
+  testWidgets(
+    'Android pause sends the saved position without holding up Play',
+    (tester) async {
       openPlayer();
       await player.play(1);
       engine.position = const Duration(seconds: 42);
-      library.onPendingSend = () => sync.status.value = const SyncStatus(
-        phase: SyncPhase.idle,
-        syncing: true,
-        pending: 1,
-      );
-      await handler.pause();
+      final sent = sync.sending = Completer<void>();
+      final pausing = handler.pause();
+      await tester.pump();
       expect(library.stateOf(1).positionMs, 42000);
       expect(handler.playbackState.value.playing, isFalse);
-      expect(platformCalls, isEmpty);
-      await tester.pump(const Duration(seconds: 4));
-      expect(platformCalls, isEmpty);
-
-      switch (outcome) {
-        case 'succeeds':
-          sync.status.value = const SyncStatus(
-            phase: SyncPhase.idle,
-            syncing: true,
-          );
-        case 'fails':
-          sync.status.value = const SyncStatus(
-            phase: SyncPhase.offline,
-            pending: 1,
-          );
-        default:
-          await tester.pump(const Duration(seconds: 1));
-      }
+      final resuming = handler.play();
       await tester.pump();
-      expect(platformCalls, ['pauseReportFinished']);
-    });
-  }
+      expect(player.isPlaying, isTrue);
+      expect(
+        calls,
+        containsAllInOrder(['record:1:42000', 'send:5000', 'play']),
+      );
+      expect(sync.fullSyncs, 0);
+      sent.complete();
+      await pausing;
+      await resuming;
+    },
+  );
 
   testWidgets(
     'cold Android Auto Play waits for a fresh library and updates browse lists',
@@ -912,11 +898,7 @@ void main() {
     openPlayer(android: false);
     await player.play(1);
     engine.position = const Duration(seconds: 45);
-    library.onPendingSend = () => sync.status.value = const SyncStatus(
-      phase: SyncPhase.idle,
-      syncing: true,
-      pending: 1,
-    );
+    final sent = sync.sending = Completer<void>();
     calls.clear();
     var closed = false;
     final closing = player.didRequestAppExit().then((response) {
@@ -924,35 +906,13 @@ void main() {
       return response;
     });
     await tester.pump();
-    expect(calls, ['record:1:45000', 'playing:null']);
+    expect(calls, ['record:1:45000', 'playing:null', 'send:2000']);
     await tester.pump(const Duration(seconds: 1));
     expect(closed, isFalse);
-    sync.status.value = const SyncStatus(phase: SyncPhase.idle);
+    sent.complete();
     expect(await closing, AppExitResponse.exit);
     expect(sync.fullSyncs, 0);
   });
-
-  testWidgets(
-    'Linux exit bounds a stuck send and skips waiting when already sent',
-    (tester) async {
-      openPlayer(android: false);
-      sync.status.value = const SyncStatus(
-        phase: SyncPhase.idle,
-        syncing: true,
-        pending: 1,
-      );
-      final closing = player.didRequestAppExit();
-      await tester.pump();
-      await tester.pump(const Duration(seconds: 2));
-      expect(await closing, AppExitResponse.exit);
-      sync.status.value = const SyncStatus(
-        phase: SyncPhase.idle,
-        syncing: true,
-      );
-      expect(await player.didRequestAppExit(), AppExitResponse.exit);
-      expect(sync.fullSyncs, 0);
-    },
-  );
 
   testWidgets('Linux keeps MPRIS after stop and publishes the playback rate', (
     tester,
@@ -1034,6 +994,29 @@ void main() {
         expect(local.api.podcastsCalls, podcastsCalls);
       },
     );
+
+    test('closing bounds a stuck pause send and skips an empty send', () async {
+      await activePlayer.play(ids.first);
+      decoder.position = const Duration(minutes: 10);
+      local.api.syncCalls.clear();
+      final sent = Completer<void>();
+      local.api.beforePush = () => sent.future;
+      try {
+        await activePlayer.pause();
+        expect(
+          await activePlayer.didRequestAppExit().timeout(
+            const Duration(seconds: 3),
+          ),
+          AppExitResponse.exit,
+        );
+        expect(local.library.pendingCount, 1);
+      } finally {
+        sent.complete();
+        await local.sync.whenIdle();
+      }
+      expect(await activePlayer.didRequestAppExit(), AppExitResponse.exit);
+      expect(local.api.syncCalls, ['push']);
+    });
 
     for (final action in ['background', 'stop', 'switch']) {
       test(
@@ -1444,7 +1427,6 @@ class _Library extends Library {
   final reportedDurations = <Duration?>[];
   final _states = <int, EpisodeState>{};
   final queued = [_first, _second];
-  VoidCallback? onPendingSend;
   int _revision = 0;
 
   static const _podcast = Podcast(
@@ -1515,7 +1497,9 @@ class _Library extends Library {
   }) async {
     calls.add('record:$id:${position.inMilliseconds}');
     reportedDurations.add(duration);
-    if (stateOf(id).status == EpisodeStatus.none) {
+    final previous = stateOf(id);
+    if (!previous.isFinished &&
+        (position.inMilliseconds - previous.positionMs).abs() > 1000) {
       change(id, position: position);
     }
   }
@@ -1528,9 +1512,6 @@ class _Library extends Library {
   }
 
   @override
-  void requestPendingSend() => onPendingSend?.call();
-
-  @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
@@ -1539,12 +1520,14 @@ class _Sync implements SyncService {
   final List<String> calls;
   FutureOr<void> Function(int)? onRefresh;
   Future<void> Function()? onSync;
+  Completer<void>? sending;
   int fullSyncs = 0;
 
   @override
-  final ValueNotifier<SyncStatus> status = ValueNotifier(
-    const SyncStatus(phase: SyncPhase.idle),
-  );
+  Future<void> sendPending({Duration? timeout}) async {
+    calls.add('send:${timeout?.inMilliseconds}');
+    await sending?.future;
+  }
 
   @override
   Future<void> freshStateBeforePlay(int id) async {

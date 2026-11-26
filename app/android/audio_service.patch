@@ -23,7 +23,7 @@
 +        releaseWakeLock();
          deactivateMediaSession();
          stopSelf();
-@@ -703,23 +711,40 @@
+@@ -703,23 +711,36 @@
      }
 
 +    boolean ensurePlaybackForeground() {
@@ -60,10 +60,6 @@
 +        if (config.androidStopForegroundOnPause) exitForegroundState();
 +    }
 +
-+    void pauseReportFinished() {
-+        if (!playing) releaseWakeLock();
-+    }
-+
 +    void stopPlaybackForeground() {
 +        if (playbackForeground) exitForegroundState();
 +        releaseWakeLock();
@@ -75,7 +71,7 @@
 +        playbackForeground = false;
      }
 
-@@ -735,4 +760,5 @@
+@@ -735,4 +756,5 @@
 
      private void releaseWakeLock() {
 +        handler.removeCallbacks(releasePausedWakeLock);
@@ -83,7 +79,7 @@
              wakeLock.release();
 --- a/com/ryanheise/audioservice/AudioServicePlugin.java
 +++ b/com/ryanheise/audioservice/AudioServicePlugin.java
-@@ -107,4 +107,28 @@
+@@ -107,4 +107,24 @@
                  initialRoute = "/";
              }
 +            final Context appContext = context.getApplicationContext();
@@ -96,10 +92,6 @@
 +                            break;
 +                        case "stopForeground":
 +                            if (service != null) service.stopPlaybackForeground();
-+                            result.success(null);
-+                            break;
-+                        case "pauseReportFinished":
-+                            if (service != null) service.pauseReportFinished();
 +                            result.success(null);
 +                            break;
 +                        case "availableBytes":

@@ -33,12 +33,7 @@ class EpisodeAudioHandler extends BaseAudioHandler {
     String Function()? languageCode,
   }) : _languageCode = languageCode ?? _deviceLanguage {
     _player._mediaChanges.stream.listen(
-      (change) {
-        _publish(change.force);
-        if (change.pauseReport case final pausedAt? when _android) {
-          background(_finishPauseReport(pausedAt));
-        }
-      },
+      _publish,
       onDone: () {
         if (!_android) return;
         _library.removeListener(_notifyChildrenChanged);
@@ -170,13 +165,6 @@ class EpisodeAudioHandler extends BaseAudioHandler {
     if (listEquals(ids, _downloadedIds)) return;
     _downloadedIds = List.of(ids);
     _notifyChildrenChanged();
-  }
-
-  Future<void> _finishPauseReport(DateTime pausedAt) async {
-    await _player._waitForPendingSend(const Duration(seconds: 5));
-    if (!_player._disposed && identical(_player._pausedAt, pausedAt)) {
-      await androidPlatform.invokeMethod<void>('pauseReportFinished');
-    }
   }
 
   @override
