@@ -263,6 +263,23 @@ void main() {
     ]);
   });
 
+  test(
+    'cold resume includes sub-minute progress on unsubscribed podcasts',
+    () async {
+      await lib().recordPosition(episodes[0], const Duration(minutes: 2));
+      await tick();
+      await lib().recordPosition(episodes[1], const Duration(seconds: 15));
+      await lib().unsubscribe(1);
+      expect(lib().podcasts, isEmpty);
+      expect(lib().recentUnfinishedEpisode?.id, episodes[1]);
+
+      await tick();
+      await lib().recordPosition(episodes[2], Duration.zero);
+      await lib().markPlayed(episodes[1]);
+      expect(lib().recentUnfinishedEpisode?.id, episodes[0]);
+    },
+  );
+
   test('new episodes are newest first and respect the limit', () async {
     expect(lib().newEpisodes().map((e) => e.id), episodes.reversed);
     expect(lib().newEpisodes(limit: 2).map((e) => e.id), [

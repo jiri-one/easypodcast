@@ -7,23 +7,33 @@ Future<void> _openAndroidAudio(
   Settings settings,
 ) async {
   await AudioService.init(
-    builder: () => _EpisodeAudioHandler(player, library, downloads, settings),
+    builder: () => EpisodeAudioHandler(
+      player,
+      library,
+      downloads,
+      settings,
+      android: true,
+    ),
     config: const AudioServiceConfig(
       androidNotificationChannelId: 'one.jiri.easypodcast.audio',
       androidNotificationChannelName: 'EasyPodcast',
+      androidNotificationIcon: 'drawable/ic_stat_easypodcast',
       androidStopForegroundOnPause: false,
     ),
   );
 }
 
-class _EpisodeAudioHandler extends BaseAudioHandler {
-  _EpisodeAudioHandler(
+class EpisodeAudioHandler extends BaseAudioHandler {
+  EpisodeAudioHandler(
     this._player,
     this._library,
     this._downloads,
-    this._settings,
-  ) {
+    this._settings, {
+    required this._android,
+    String Function()? languageCode,
+  }) : _languageCode = languageCode ?? _deviceLanguage {
     _player._mediaChanges.stream.listen(_publish);
+    if (!_android) _player.position.addListener(() => _publish(true));
     _publish(true);
   }
 
@@ -31,6 +41,14 @@ class _EpisodeAudioHandler extends BaseAudioHandler {
   final Library _library;
   final DownloadService _downloads;
   final Settings _settings;
+  final bool _android;
+  final String Function() _languageCode;
+  int? _preparedEpisodeId;
+
+  static String _deviceLanguage() =>
+      WidgetsBinding.instance.platformDispatcher.locale.languageCode;
+
+  bool get _czech => _languageCode() == 'cs';
 
   static const _inProgress = 'in-progress';
   static const _queue = 'queue';
@@ -38,11 +56,23 @@ class _EpisodeAudioHandler extends BaseAudioHandler {
   static const _podcasts = 'podcasts';
   static const _episodePrefix = 'episode:';
   static const _podcastPrefix = 'podcast:';
-  static const _rootItems = [
-    MediaItem(id: _inProgress, title: 'Rozposlouchané', playable: false),
-    MediaItem(id: _queue, title: 'Fronta', playable: false),
-    MediaItem(id: _downloaded, title: 'Stažené', playable: false),
-    MediaItem(id: _podcasts, title: 'Podcasty', playable: false),
+  List<MediaItem> get _rootItems => [
+    MediaItem(
+      id: _inProgress,
+      title: _czech ? 'Rozposlouchané' : 'In progress',
+      playable: false,
+    ),
+    MediaItem(id: _queue, title: _czech ? 'Fronta' : 'Queue', playable: false),
+    MediaItem(
+      id: _downloaded,
+      title: _czech ? 'Stažené' : 'Downloads',
+      playable: false,
+    ),
+    MediaItem(
+      id: _podcasts,
+      title: _czech ? 'Podcasty' : 'Podcasts',
+      playable: false,
+    ),
   ];
 
   MediaItem _item(Episode episode, {Duration? duration}) {
@@ -51,7 +81,7 @@ class _EpisodeAudioHandler extends BaseAudioHandler {
       id: '$_episodePrefix${episode.id}',
       title: episode.title,
       album: podcast?.title,
-      artist: Platform.isLinux ? podcast?.author : null,
+      artist: _android ? null : podcast?.author,
       duration:
           duration ??
           (episode.durationS == null
@@ -79,7 +109,11 @@ class _EpisodeAudioHandler extends BaseAudioHandler {
       case AudioService.browsableRootId:
         return _rootItems;
       case AudioService.recentRootId:
-        return _library.inProgress.take(1).map(_item).toList();
+        final head = _library.queueHeadId;
+        final recent =
+            _library.recentUnfinishedEpisode ??
+            (head == null ? null : await _library.resolveQueueEpisode(head));
+        return recent == null ? [] : [_item(recent)];
       case _inProgress:
         return _library.inProgress.map(_item).toList();
       case _queue:
@@ -94,7 +128,13 @@ class _EpisodeAudioHandler extends BaseAudioHandler {
         return _library.podcasts.map(_podcastItem).toList();
     }
     final id = _parseId(parentMediaId, _podcastPrefix);
-    return id == null ? [] : _library.episodesOf(id).map(_item).toList();
+    return id == null
+        ? []
+        : _library
+              .episodesOf(id)
+              .where((episode) => _player._isUnfinished(episode.id))
+              .map(_item)
+              .toList();
   }
 
   @override
@@ -115,18 +155,63 @@ class _EpisodeAudioHandler extends BaseAudioHandler {
     String mediaId, [
     Map<String, dynamic>? extras,
   ]) async {
+    _preparedEpisodeId = null;
     final id = _parseId(mediaId, _episodePrefix);
-    if (id != null) await _player.play(id);
+    if (id != null) await _playRequest(() => _player.play(id));
   }
 
   @override
-  Future<void> play() => _player.resume();
+  Future<void> prepareFromMediaId(
+    String mediaId, [
+    Map<String, dynamic>? extras,
+  ]) async {
+    _preparedEpisodeId = _parseId(mediaId, _episodePrefix);
+  }
+
+  @override
+  Future<void> playFromSearch(
+    String query, [
+    Map<String, dynamic>? extras,
+  ]) async {
+    _preparedEpisodeId = null;
+    final title = _searchKey(query);
+    if (title.isEmpty) {
+      await play();
+      return;
+    }
+    final podcast = _library.podcasts
+        .where((podcast) => _searchKey(podcast.title) == title)
+        .firstOrNull;
+    if (podcast != null) {
+      await _playRequest(() => _player.playFromPodcast(podcast.id));
+    }
+  }
+
+  String _searchKey(String title) =>
+      title.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
+
+  @override
+  Future<void> play() {
+    final id = _preparedEpisodeId;
+    _preparedEpisodeId = null;
+    return _playRequest(() => _player.resume(preferredEpisodeId: id));
+  }
+
+  Future<void> _playRequest(Future<void> Function() start) async {
+    try {
+      await start();
+    } on Object {
+      if (_player.lastPlaybackError == null) rethrow;
+    }
+  }
 
   @override
   Future<void> pause() => _player.pause();
 
   @override
-  Future<void> seek(Duration position) => _player.seekTo(position);
+  Future<void> seek(Duration position) async {
+    if (!_android) await _player.seekTo(position);
+  }
 
   @override
   Future<void> skipToPrevious() => rewind();
@@ -153,15 +238,18 @@ class _EpisodeAudioHandler extends BaseAudioHandler {
 
   void _publish(bool force) {
     final episode = _player.current;
-    final playing = _player.isPlaying;
+    final playing = _player._mediaPlaying;
     final loaded = _player._loaded;
     final engine = _player._engine;
+    final error = _player.lastPlaybackError;
     final processing = episode == null
         ? AudioProcessingState.idle
+        : error != null
+        ? AudioProcessingState.error
         : !loaded
         ? AudioProcessingState.loading
         : switch (engine.processingState) {
-            ProcessingState.idle => AudioProcessingState.idle,
+            ProcessingState.idle => AudioProcessingState.ready,
             ProcessingState.loading => AudioProcessingState.loading,
             ProcessingState.buffering => AudioProcessingState.buffering,
             ProcessingState.ready => AudioProcessingState.ready,
@@ -190,19 +278,43 @@ class _EpisodeAudioHandler extends BaseAudioHandler {
         controls: episode == null
             ? []
             : [
-                MediaControl.skipToPrevious.copyWith(label: 'Skip back'),
-                playing ? MediaControl.pause : MediaControl.play,
-                MediaControl.skipToNext.copyWith(label: 'Skip forward'),
-                MediaControl.stop,
+                MediaControl.skipToPrevious.copyWith(
+                  label: _czech ? 'Skok zpět' : 'Skip back',
+                ),
+                playing
+                    ? MediaControl.pause.copyWith(
+                        label: _czech ? 'Pauza' : 'Pause',
+                      )
+                    : MediaControl.play.copyWith(
+                        label: _czech ? 'Přehrát' : 'Play',
+                      ),
+                MediaControl.skipToNext.copyWith(
+                  label: _czech ? 'Skok vpřed' : 'Skip forward',
+                ),
+                MediaControl.stop.copyWith(label: _czech ? 'Zastavit' : 'Stop'),
               ],
         androidCompactActionIndices: episode == null ? [] : [0, 1, 2],
-        systemActions: loaded ? const {MediaAction.seek} : const {},
+        systemActions: loaded && !_android
+            ? const {MediaAction.seek}
+            : const {},
         processingState: processing,
         playing: playing,
+        errorMessage: error == null ? null : _errorMessage(error.reason),
         updatePosition: position,
         bufferedPosition: loaded ? engine.bufferedPosition : Duration.zero,
         speed: _player.speed,
       ),
     );
   }
+
+  String _errorMessage(PlaybackErrorReason reason) => switch (reason) {
+    PlaybackErrorReason.loadFailed =>
+      _czech ? 'Díl se nepodařilo otevřít.' : 'Could not open the episode.',
+    PlaybackErrorReason.streamFailed =>
+      _czech ? 'Přehrávání se přerušilo.' : 'Playback was interrupted.',
+    PlaybackErrorReason.seekFailed =>
+      _czech ? 'Přeskočení se nezdařilo.' : 'Could not seek.',
+    PlaybackErrorReason.audioFocusUnavailable =>
+      _czech ? 'Zvuk teď není dostupný.' : 'Audio is unavailable.',
+  };
 }

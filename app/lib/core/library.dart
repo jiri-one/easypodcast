@@ -19,6 +19,26 @@ abstract class Library extends ChangeNotifier {
   /// In-progress episodes, most recently listened first.
   List<Episode> get inProgress;
 
+  Episode? get recentUnfinishedEpisode {
+    final candidates = [
+      ...inProgress,
+      ...queue,
+      for (final podcast in podcasts) ...episodesOf(podcast.id),
+    ];
+    Episode? recent;
+    DateTime? latest;
+    for (final episode in candidates) {
+      final state = stateOf(episode.id);
+      if (state.status == EpisodeStatus.none &&
+          state.positionMs > 0 &&
+          (latest == null || state.updatedAt.isAfter(latest))) {
+        recent = episode;
+        latest = state.updatedAt;
+      }
+    }
+    return recent;
+  }
+
   /// Episodes still eligible for queue playback, in queue order.
   List<Episode> get queue;
 

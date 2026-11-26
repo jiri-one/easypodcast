@@ -3,7 +3,12 @@ import 'package:flutter/foundation.dart';
 enum DownloadStatus { none, queued, running, done, failed }
 
 class DownloadInfo {
-  const DownloadInfo(this.status, {this.progress = 0, this.filePath});
+  const DownloadInfo(
+    this.status, {
+    this.progress = 0,
+    this.filePath,
+    this.waitingForWifi = false,
+  });
 
   static const none = DownloadInfo(DownloadStatus.none);
 
@@ -12,6 +17,7 @@ class DownloadInfo {
   /// 0 to 1.
   final double progress;
   final String? filePath;
+  final bool waitingForWifi;
 }
 
 abstract class DownloadService extends ChangeNotifier {

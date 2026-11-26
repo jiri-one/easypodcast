@@ -164,6 +164,24 @@ class SqfliteLibrary extends Library {
   @override
   List<Episode> get inProgress => _inProgress ??= _computeInProgress();
 
+  @override
+  Episode? get recentUnfinishedEpisode {
+    Episode? recent;
+    DateTime? latest;
+    for (final state in _states.values) {
+      if (state.status != EpisodeStatus.none ||
+          state.positionMs <= 0 ||
+          (latest != null && !state.updatedAt.isAfter(latest))) {
+        continue;
+      }
+      final episode = _episodes[state.episodeId];
+      if (episode == null) continue;
+      recent = episode;
+      latest = state.updatedAt;
+    }
+    return recent;
+  }
+
   List<Episode> _computeInProgress() {
     final states = [
       for (final s in _states.values)

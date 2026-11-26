@@ -25,6 +25,7 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: '3.50.1'
           cache: true
       - run: flutter pub get
       - run: flutter analyze
@@ -41,11 +42,39 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: '3.50.1'
           cache: true
+      - name: Configure Android signing
+        id: signing
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEY_PROPERTIES: ${{ secrets.ANDROID_KEY_PROPERTIES }}
+        run: |
+          if [[ -n "$ANDROID_KEYSTORE_BASE64" && -n "$ANDROID_KEY_PROPERTIES" ]]; then
+            umask 077
+            printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/easypodcast-ci.jks
+            printf '%s\nstoreFile=easypodcast-ci.jks\n' "$ANDROID_KEY_PROPERTIES" > android/key.properties
+            echo 'artifact=EasyPodcast-android' >> "$GITHUB_OUTPUT"
+          else
+            echo 'artifact=EasyPodcast-android-testing' >> "$GITHUB_OUTPUT"
+          fi
       - run: flutter build apk --release
+      - name: Verify Android signature and notification icon
+        env:
+          ARTIFACT: ${{ steps.signing.outputs.artifact }}
+        run: |
+          apk=build/app/outputs/flutter-apk/app-release.apk
+          signer=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)
+          certs=$("$signer" verify --print-certs "$apk")
+          if [[ "$ARTIFACT" == EasyPodcast-android ]]; then
+            grep -F 'CN=EasyPodcast' <<< "$certs"
+          else
+            grep -F 'CN=Android Debug' <<< "$certs"
+          fi
+          "${signer%/*}/aapt2" dump resources "$apk" | grep -F 'drawable/ic_stat_easypodcast'
       - uses: actions/upload-artifact@v4
         with:
-          name: EasyPodcast-android
+          name: ${{ steps.signing.outputs.artifact }}
           path: app/build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
 
@@ -56,11 +85,17 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: '3.50.1'
           cache: true
       - run: |
           sudo apt-get update
           sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev libmpv-dev
       - run: flutter build linux --release
+      - name: Test native desktop font parsing
+        run: |
+          cmake -S linux -B build/linux/x64/release -DBUILD_TESTING=ON
+          cmake --build build/linux/x64/release --target desktop_font_test
+          ctest --test-dir build/linux/x64/release --output-on-failure
       - run: tar -C build/linux/x64/release/bundle -czf build/EasyPodcast-linux-x64.tar.gz .
       - uses: actions/upload-artifact@v4
         with:

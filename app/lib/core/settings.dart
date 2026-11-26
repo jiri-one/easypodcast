@@ -34,6 +34,10 @@ class Settings extends ChangeNotifier {
   bool get downloadOnWifiOnly => _prefs.getBool('downloadOnWifiOnly') ?? true;
   set downloadOnWifiOnly(bool value) => _set('downloadOnWifiOnly', value);
 
+  bool get keepQueueDownloaded =>
+      _prefs.getBool('keepQueueDownloaded') ?? false;
+  set keepQueueDownloaded(bool value) => _set('keepQueueDownloaded', value);
+
   /// E-ink screens ghost and drain the battery when the position redraws every second.
   int get positionRedrawSeconds => _prefs.getInt('positionRedrawSeconds') ?? 10;
   set positionRedrawSeconds(int value) => _set('positionRedrawSeconds', value);

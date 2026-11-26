@@ -2,6 +2,20 @@ import 'package:flutter/foundation.dart';
 
 import 'models.dart';
 
+enum PlaybackErrorReason {
+  loadFailed,
+  streamFailed,
+  seekFailed,
+  audioFocusUnavailable,
+}
+
+class PlaybackError {
+  const PlaybackError(this.episode, this.reason);
+
+  final Episode episode;
+  final PlaybackErrorReason reason;
+}
+
 /// Notifies on episode, play/pause, speed and sleep timer changes only. The position has its
 /// own listenable so that an e-ink screen redraws it only where and when the UI wants.
 abstract class PlayerController extends ChangeNotifier {
@@ -20,6 +34,12 @@ abstract class PlayerController extends ChangeNotifier {
 
   /// Null when no sleep timer runs.
   Duration? get sleepRemaining;
+
+  bool get sleepAtEndOfEpisode => false;
+
+  Future<void> setSleepAtEndOfEpisode(bool on) async {}
+
+  PlaybackError? get lastPlaybackError => null;
 
   Future<void> play(int episodeId);
 

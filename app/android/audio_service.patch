@@ -1,0 +1,85 @@
+--- a/com/ryanheise/audioservice/AudioService.java
++++ b/com/ryanheise/audioservice/AudioService.java
+@@ -268,4 +268,5 @@
+     private AudioServiceConfig config;
+     private PowerManager.WakeLock wakeLock;
++    private boolean playbackForeground;
+     private MediaSessionCompat mediaSession;
+     private MediaSessionCallback mediaSessionCallback;
+@@ -354,4 +355,10 @@
+
+     public void stop() {
++        if (playbackForeground) {
++            ServiceCompat.stopForeground(this, STOP_FOREGROUND_REMOVE);
++            playbackForeground = false;
++            notificationCreated = false;
++        }
++        releaseWakeLock();
+         deactivateMediaSession();
+         stopSelf();
+@@ -703,23 +710,28 @@
+     }
+
++    boolean ensurePlaybackForeground() {
++        if (playbackForeground) return true;
++        try {
++            ContextCompat.startForegroundService(this, new Intent(this, AudioService.class));
++            activateMediaSession();
++            mediaSession.setSessionActivity(contentIntent);
++            internalStartForeground();
++            playbackForeground = true;
++            return true;
++        } catch (IllegalStateException e) {
++            return false;
++        }
++    }
++
+     private void enterPlayingState() {
+-        ContextCompat.startForegroundService(this, new Intent(AudioService.this, AudioService.class));
+-        if (!mediaSession.isActive())
+-            mediaSession.setActive(true);
+-
+-        acquireWakeLock();
+-        mediaSession.setSessionActivity(contentIntent);
+-        internalStartForeground();
++        if (ensurePlaybackForeground()) acquireWakeLock();
+     }
+
+     private void exitPlayingState() {
++        releaseWakeLock();
+         if (config.androidStopForegroundOnPause) {
+-            exitForegroundState();
+-        }
+-    }
+-
+-    private void exitForegroundState() {
+-        ServiceCompat.stopForeground(this, STOP_FOREGROUND_DETACH);
+-        releaseWakeLock();
++            ServiceCompat.stopForeground(this, STOP_FOREGROUND_DETACH);
++            playbackForeground = false;
++        }
+     }
+
+--- a/com/ryanheise/audioservice/AudioServicePlugin.java
++++ b/com/ryanheise/audioservice/AudioServicePlugin.java
+@@ -107,4 +107,20 @@
+                 initialRoute = "/";
+             }
++            final Context appContext = context.getApplicationContext();
++            new MethodChannel(flutterEngine.getDartExecutor(), "one.jiri.easypodcast/platform")
++                    .setMethodCallHandler((call, result) -> {
++                        switch (call.method) {
++                        case "startForeground":
++                            final AudioService service = AudioService.instance;
++                            result.success(service != null && service.ensurePlaybackForeground());
++                            break;
++                        case "availableBytes":
++                            result.success(new android.os.StatFs(appContext.getFilesDir().getPath())
++                                    .getAvailableBytes());
++                            break;
++                        default:
++                            result.notImplemented();
++                        }
++                    });
+             flutterEngine.getNavigationChannel().setInitialRoute(initialRoute);
+             flutterEngine.getDartExecutor().executeDartEntrypoint(DartExecutor.DartEntrypoint.createDefault());
