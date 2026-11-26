@@ -13,6 +13,8 @@ export EASYPODCAST_DATABASE_URL='postgres://easypodcast@localhost/easypodcast?ss
 ./easypodcast serve
 ```
 
+## Configuration
+
 | Variable | Default |
 | --- | --- |
 | `EASYPODCAST_DATABASE_URL` | Required PostgreSQL connection string |
@@ -21,6 +23,8 @@ export EASYPODCAST_DATABASE_URL='postgres://easypodcast@localhost/easypodcast?ss
 | `EASYPODCAST_USER_AGENT` | `EasyPodcast/<version> (+https://github.com/jiri-one/easypodcast)` |
 | `EASYPODCAST_TRUSTED_PROXIES` | Empty (comma-separated IPv4 or IPv6 addresses or CIDRs) |
 | `EASYPODCAST_ALLOW_PRIVATE_FEEDS` | `false` (set to `true` for local test feeds) |
+
+## Commands
 
 - `serve` applies the migrations and starts HTTP and feed refresh. It refuses to start if the database records an unknown migration. Use HTTPS at your reverse proxy for remote access.
 - `healthcheck` sends `GET /health` to `127.0.0.1` on the port from `EASYPODCAST_LISTEN`. It exits silently with 0 on HTTP 200 and exits with 1 otherwise. The endpoint requires a reachable database with all the migrations known to the binary. The request times out after 3 seconds. The scratch image runs `/easypodcast healthcheck`.
@@ -32,6 +36,8 @@ export EASYPODCAST_DATABASE_URL='postgres://easypodcast@localhost/easypodcast?ss
 - `import-opml <file>` imports subscriptions and prints counts.
 - `import-pinepods --pinepods-dsn <dsn> --pinepods-user <name>` reads PinePods 0.9.2 PostgreSQL, refreshes the subscriptions, and imports episode state and the queue. Use a read-only database login and a password file for the source. The command reports counts and can be run again before switching to EasyPodcast.
 
+## Reverse proxy and rate limiting
+
 The login rate limit uses the direct peer's IP by default. For a trusted peer it reads
 `X-Forwarded-For` from right to left, skipping trusted proxies and using the first address
 outside the trusted set. An absent header, a malformed address in the trusted chain, or a
@@ -42,8 +48,9 @@ forwarded header and trust the tunnel peer when Caddy receives connections from 
 Login allows five failures per minute per IPv4 address or IPv6 /64. Across all clients, it
 allows 20 failures per minute and 200 per 24 hours. A limited login returns 429 with
 `Retry-After`. The global limit blocks new logins. Existing device tokens continue to work.
-Restarting the server clears the counters. For the systemd user service, run
-`systemctl --user restart easypodcast`.
+Restarting the server clears the counters.
+
+## Feed refresh and limits
 
 Feed fetches require public addresses, including after DNS resolution and redirects. A feed
 may contain up to 10,000 items and 64 MiB of decompressed data. The fetch and parse budget is
@@ -55,6 +62,8 @@ episodes. A refresh that would
 exceed these limits records an error and preserves the stored episodes and their states.
 HTTP OPML imports use four workers and have 80 seconds to finish. The result lists feeds
 that need another import attempt.
+
+## Search and sync behavior
 
 `GET /api/podcasts/{id}/search?q=tomas+roud` takes the usual bearer token and searches
 one podcast. Every whitespace-separated term must appear in the title or plain-text
@@ -79,6 +88,8 @@ A state push skips episode states or a queue dated more than 24 hours ahead of t
 clock. The 200 response lists those episode IDs and `"queue"` for a skipped queue in `future`.
 The client keeps them pending and repairs their timestamps before retrying when possible.
 
+## PinePods import
+
 The PinePods import matches by GUID, then by enclosure URL. Episodes missing from the feed are
 created as `removed_from_feed` using the PinePods title, enclosure URL, GUID, publication date
 and feed duration. Their listening states contribute to played counts. If a feed is unavailable,
@@ -90,6 +101,8 @@ a time zone are interpreted as
 UTC. A completion without its own date uses the listen date or one millisecond after the Unix
 epoch when both dates are missing.
 
+## Local API check
+
 For a local API check, send the login JSON from a file with mode `0600`. It contains
 `username`, `password`, and `device_name`. The following example uses `jq`.
 
@@ -98,6 +111,8 @@ token=$(curl -fsS http://localhost:8080/api/login \
   -H 'Content-Type: application/json' --data-binary @login.json | jq -er .token)
 curl -fsS http://localhost:8080/api/state -H "Authorization: Bearer $token"
 ```
+
+## Tests
 
 Run `go vet ./...` and `go test -race ./...`. Set `EASYPODCAST_TEST_DATABASE_URL` to a dedicated
 test database. The test login needs permission to create a disposable role and database
