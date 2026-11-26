@@ -1,5 +1,12 @@
 # EasyPodcast: architecture and contracts
 
+Version 0.2 (after the specification review). Changes against 0.1: `duration_ms` in EpisodeState;
+which time a state carries; the queue is written only by manual edits and hides played and
+dismissed episodes; the server check also before resuming a paused episode; no position reports
+after an end, dismiss or mark; bulk dismiss only for new episodes; states of episodes the client
+does not have yet are kept; retries also on server errors and in the background; server device
+commands, trusted proxy and a repeatable PinePods import.
+
 This is the contract for the first build. Several agents work in parallel against it, so treat it
 as binding: if you need to change it, say so in your report instead of silently diverging. The
 product specification (in Czech) is `docs/specifikace.md`; this file turns it into interfaces.
@@ -49,7 +56,9 @@ Identical in the server, the API and the client.
   (nullable), `enclosure_length` (nullable int), `link` (nullable), `image_url` (nullable),
   `removed_from_feed` (bool). The description is fetched separately.
 - **EpisodeState**: `episode_id`, `position_ms` (int ≥ 0), `status` (`""`, `"played"` or
-  `"dismissed"`), `updated_at` (time set by the device that made the change).
+  `"dismissed"`), `duration_ms` (nullable int: the duration measured by the player of the device
+  that made the change, so other devices can show the remaining time), `updated_at` (the time the
+  change happened, by the clock of the device that made it).
 - **Queue**: `episode_ids` (ordered list of int), `updated_at` (time set by a device).
 
 Times are RFC 3339 strings in UTC with milliseconds, for example `2026-11-26T14:03:07.120Z`.
@@ -60,14 +69,18 @@ Derived values, the same everywhere:
   `updated_at`, newest first.
 - **New** (nový): no state, or `status == ""` and `position_ms < 60000`.
 - **Played** and **dismissed**: the status says so. Only `played` counts into `played_count`.
+- **Queue as shown and played**: the stored `episode_ids` without played and dismissed episodes.
 - An episode without a state behaves as `{position_ms: 0, status: ""}` with the oldest possible
   `updated_at`.
 
 ## Synchronisation rules
 
 1. The server owns podcasts and episodes; ids come from the server. The client never parses feeds.
-2. Every change made on a device produces a complete EpisodeState (or a complete Queue) with
-   `updated_at` = the device clock now.
+2. Every change made on a device produces a complete EpisodeState (or a complete Queue) whose
+   `updated_at` is the moment the change happened on that device (listening sample, pause, seek,
+   end, dismiss, mark). A pending change keeps its time when it is sent again. A state adopted from
+   the server keeps the server's record and time and is never sent back. A new state of an episode
+   always gets a later time than the device's previous state of it (add 1 ms on a tie).
 3. The server stores an incoming EpisodeState or Queue only if its `updated_at` is strictly later
    than the stored one. It answers with the stored record either way.
 4. The server rejects (HTTP 400) a request with any `updated_at` more than 24 hours ahead of its own
@@ -76,26 +89,44 @@ Derived values, the same everywhere:
 5. The client sends its pending changes (the latest state per episode, the latest queue) as soon as
    it can: on every pause including automatic ones (headphones unplugged, call, audio focus loss),
    on seek and skip, on completion, on any status or queue change, every 30 s while playing, and
-   when the app goes to the background or closes. Without network it keeps them and retries with
-   backoff (5 s doubling to 5 min) and whenever the app comes to the foreground.
+   when the app goes to the background or closes. When sending fails (no network, timeout, 5xx)
+   it keeps them and retries with backoff (5 s doubling to 5 min) for as long as the process
+   lives, also in the background, and whenever the app starts or comes to the foreground. Before
+   pulling, the client always sends what is pending.
 6. The client fetches `GET /api/state` at start, when it comes to the foreground, after a successful
    send that followed an offline period, and every 15 minutes while in the foreground. It applies
    remote records with the same rule as the server (newer `updated_at` wins), except for the
    episode that is playing right now, whose position is never changed from outside.
-7. Before playback of an episode starts, the client asks `GET /api/episodes/{id}/state` with a 2 s
-   timeout and applies a newer remote state first. Offline it starts from the local state.
+7. Before playback of an episode starts, and before resuming or seeking an episode that has been
+   paused for more than 30 s (from the app, the notification, the lock screen, a headset,
+   Bluetooth or Android Auto), the client asks `GET /api/episodes/{id}/state` with a 2 s limit and
+   applies a newer remote state first. If the remote state is played or dismissed, an automatic
+   start (queue advance) skips the episode, and a start by the listener plays it from 0 as rule 9
+   says. Without an answer in time it plays from the local state; its listening is then newer and
+   wins, an accepted limitation.
 8. Episode lists: the client compares `episodes_version` from `GET /api/podcasts` with its local
    copy and refetches `GET /api/podcasts/{id}/episodes` only for changed podcasts.
 9. Transitions (all produce a new state with the device time):
-   - playback reaches the end: `status = "played"`, `position_ms = 0`, the episode leaves the queue,
-     and the next queue item starts;
-   - dismiss: `status = "dismissed"`, `position_ms = 0`, the episode leaves the queue and its
-     download is deleted;
-   - mark as played: `status = "played"`, `position_ms = 0`, leaves the queue;
+   - playback reaches the end: `status = "played"`, `position_ms = 0`, and the next queue item
+     starts (when the setting is on);
+   - dismiss (not offered for played episodes): `status = "dismissed"`, `position_ms = 0`, every
+     device deletes its download once it learns of it;
+   - bulk dismiss "this and older": the same for every new episode of the podcast published up to
+     the chosen one; in-progress, played and queued episodes are left alone;
+   - mark as played: `status = "played"`, `position_ms = 0`;
    - return to new: `status = ""`, `position_ms = 0`;
    - starting a played or dismissed episode: `status = ""`, playback from 0.
+   After an end, a dismiss or a mark the player sends no further position for that episode until
+   it is started again; `Library.recordPosition` ignores episodes that are played or dismissed.
+   None of these transitions writes the queue; the queue simply stops showing the episode.
 10. "The end" means the player reports completion, or the position is within 30 s of the actual
     duration reported by the player (never the feed duration).
+11. The queue is written only by manual edits (add, remove, move). Before such an edit the client
+    refreshes the queue from the server when it can (2 s limit), so it edits the current list.
+    Played and dismissed episodes drop out of the stored list at the next manual edit. Enqueueing
+    a played or dismissed episode first returns it to new.
+12. A state or a queue entry for an episode the client does not have yet is kept, never dropped;
+    the client refreshes the podcasts and the changed episode lists to get the episode.
 
 ## HTTP API v1
 
@@ -134,7 +165,11 @@ id under `unknown`; the client then drops the pending change. A body over 1 MiB 
   `EASYPODCAST_USER_AGENT` (default `EasyPodcast/<version> (+https://github.com/jiri-one/easypodcast)`).
 - Commands of the single binary `easypodcast`: `serve` (runs migrations first), `migrate`,
   `user set-password <name>` (asks twice without echo, creates the user if missing; nothing is
-  generated), `import-opml <file>`, `import-pinepods` (see WP-S, part 2).
+  generated), `devices list`, `devices revoke <id>`, `import-opml <file>`, `import-pinepods`
+  (see WP-S, part 2).
+- Behind the reverse proxy every request comes from the proxy: the login limit uses the client
+  address from `X-Forwarded-For` only when the direct peer is in `EASYPODCAST_TRUSTED_PROXIES`
+  (comma-separated CIDRs, empty by default).
 - PostgreSQL in a shared server: the role owns only its own database. Migrations must not need a
   superuser, extensions, `CREATE DATABASE` or the `postgres` database. Embedded SQL migrations
   with a `schema_migrations` table.
@@ -226,9 +261,12 @@ runApp(EasyPodcastApp(services: AppServices(               // lib/ui/app_root.da
 ## Work packages
 
 - **WP-S, server** (Codex): everything under `server/` and the server CI. Part 2, after the core
-  works: `easypodcast import-pinepods`, a one-off import from a PinePods 0.9.2 PostgreSQL database
+  works: `easypodcast import-pinepods`, an import from a PinePods 0.9.2 PostgreSQL database
   (subscriptions, episodes matched by GUID or enclosure URL, positions with their times, completed
-  episodes as `played` with their times, the queue).
+  episodes as `played` with their times, the queue). It can run again before the switch from
+  PinePods: states go through the same newer-wins rule, the queue is imported only while ours is
+  empty, and PinePods episodes no longer in the feed are created with `removed_from_feed` so that
+  their history and the played counts survive.
 - **WP-D, data and sync** (Gemini): `app/lib/data/`: the API client, the local database (sqflite;
   `sqflite_common_ffi` on Linux), the `Library` and `SyncService` implementations, with unit tests
   of the rules above against a fake server.
