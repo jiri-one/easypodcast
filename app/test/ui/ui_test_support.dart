@@ -140,6 +140,8 @@ class UiHarness {
     await services.player.stop();
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
+    // EasyPodcastApp sets this global; later tests start without it.
+    EditableText.debugDeterministicCursor = false;
   }
 
   Future<void> tap(Finder finder, {Finder? within}) async {

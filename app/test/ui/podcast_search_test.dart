@@ -118,6 +118,20 @@ void main() {
     }
   });
 
+  testWidgets('the search field shows a steady cursor', (tester) async {
+    final (app, _) = await _openPodcast(tester);
+    try {
+      await app.row(app.strings.searchThisPodcast);
+      expect(
+        tester.widget<EditableText>(find.byType(EditableText)).showCursor,
+        isTrue,
+      );
+      expect(EditableText.debugDeterministicCursor, isTrue);
+    } finally {
+      await app.finish();
+    }
+  });
+
   testWidgets('debounces server search and appends matches in list order', (
     tester,
   ) async {
