@@ -14,12 +14,17 @@ class EasyPodcastApp extends StatelessWidget {
   final AppServices services;
 
   @override
-  Widget build(BuildContext context) => ServicesScope(
-    services: services,
-    child: !kIsWeb && defaultTargetPlatform == TargetPlatform.linux
-        ? const _LinuxApp()
-        : const _App(),
-  );
+  Widget build(BuildContext context) {
+    // Flutter's only switch for a steady cursor; a blinking one would redraw
+    // the e-ink screen twice a second.
+    EditableText.debugDeterministicCursor = true;
+    return ServicesScope(
+      services: services,
+      child: !kIsWeb && defaultTargetPlatform == TargetPlatform.linux
+          ? const _LinuxApp()
+          : const _App(),
+    );
+  }
 }
 
 class ServicesScope extends InheritedWidget {

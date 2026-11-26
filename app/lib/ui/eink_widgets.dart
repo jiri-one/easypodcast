@@ -604,7 +604,6 @@ class LabeledField extends StatelessWidget {
                 (onSubmitted == null || lines > 1
                     ? null
                     : TextInputAction.done),
-            showCursor: false,
             obscureText: obscure,
             autocorrect: false,
             enableSuggestions: false,

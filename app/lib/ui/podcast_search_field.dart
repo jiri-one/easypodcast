@@ -87,7 +87,6 @@ class PodcastSearchField extends StatelessWidget {
           focusNode: search.focus,
           onChanged: onChanged,
           textInputAction: TextInputAction.search,
-          showCursor: false,
           autocorrect: false,
           enableSuggestions: false,
           decoration: InputDecoration(
