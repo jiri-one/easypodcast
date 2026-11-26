@@ -177,8 +177,7 @@ class _PlaybackTimelineState extends State<PlaybackTimeline> {
     episode: widget.episode,
     builder: (context, elapsed, duration) {
       final known = duration != null && duration > Duration.zero;
-      bool canSeek() => widget.playback.canSeek(widget.episode.id);
-      final seekEnabled = known && canSeek();
+      final canSeek = known && widget.playback.canSeek(widget.episode.id);
       final displayed = _preview ?? elapsed;
       final remaining = known
           ? (displayed >= duration ? Duration.zero : duration - displayed)
@@ -193,19 +192,19 @@ class _PlaybackTimelineState extends State<PlaybackTimeline> {
           LayoutBuilder(
             builder: (context, bounds) => Semantics(
               slider: true,
-              enabled: seekEnabled,
+              enabled: canSeek,
               label: context.strings.seekPlayback,
               value: positionText(displayed, padMinutes: true),
-              decreasedValue: seekEnabled
+              decreasedValue: canSeek
                   ? positionText(earlier, padMinutes: true)
                   : null,
-              increasedValue: seekEnabled
+              increasedValue: canSeek
                   ? positionText(later, padMinutes: true)
                   : null,
-              onDecrease: seekEnabled
+              onDecrease: canSeek
                   ? () => widget.playback.seekTo(widget.episode.id, earlier)
                   : null,
-              onIncrease: seekEnabled
+              onIncrease: canSeek
                   ? () => widget.playback.seekTo(widget.episode.id, later)
                   : null,
               child: Listener(
@@ -224,7 +223,7 @@ class _PlaybackTimelineState extends State<PlaybackTimeline> {
                                 ..onlyAcceptDragOnThreshold = true,
                           (recognizer) {
                             void move(Offset position) {
-                              if (known && canSeek()) {
+                              if (canSeek) {
                                 _drag(position.dx, bounds.maxWidth, duration);
                               }
                             }
@@ -236,9 +235,10 @@ class _PlaybackTimelineState extends State<PlaybackTimeline> {
                             recognizer.onUpdate = (details) =>
                                 move(details.localPosition);
                             recognizer.onEnd = (_) {
-                              if (known && canSeek()) {
+                              if (canSeek) {
                                 unawaited(_seek());
                               } else {
+                                _cancel();
                                 widget.playback.showSeekUnavailable();
                               }
                             };

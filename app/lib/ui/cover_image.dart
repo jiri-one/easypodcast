@@ -47,22 +47,18 @@ class CoverImage extends ImageProvider<CoverImage> {
   const CoverImage(this.url);
 
   static const _maxCacheBytes = 64 * 1024 * 1024;
-  static final _prefetches = <String, Future<Uint8List?>>{};
+  static final _downloads = <String, Future<Uint8List>>{};
   static Future<void> _cacheWrites = Future.value();
 
   final String url;
 
-  static Future<void> prefetch(String? url) async {
-    final valid = validCoverUrl(url);
-    if (valid == null) return;
+  static Future<void> prefetch(String url) async {
+    final cover = CoverImage(url);
     try {
-      await _prefetches.putIfAbsent(
-        valid,
-        () => CoverImage(valid)._prefetch().whenComplete(() {
-          _prefetches.remove(valid);
-        }),
-      );
-    } on Exception {
+      final file = await cover._cacheFile();
+      if (file == null || await file.exists()) return;
+      await cover._cache(file, await cover._sharedDownload());
+    } on Object {
       // Artwork is optional.
     }
   }
@@ -94,23 +90,19 @@ class CoverImage extends ImageProvider<CoverImage> {
         // The cache can be cleared while an image is loading.
       }
     }
-    if (_prefetches[url] case final pending?) {
-      final bytes = await pending;
-      if (bytes != null) return _decode(bytes, decode);
-    }
-    final bytes = await _download();
+    final bytes = await _sharedDownload();
     final image = await _decode(bytes, decode);
     await _cache(file, bytes);
     return image;
   }
 
-  Future<Uint8List?> _prefetch() async {
-    final file = await _cacheFile();
-    if (file == null || await file.exists()) return null;
-    final bytes = await _download();
-    await _cache(file, bytes);
-    return bytes;
-  }
+  // A prefetch and a display that overlap share one request.
+  Future<Uint8List> _sharedDownload() => _downloads.putIfAbsent(
+    url,
+    () => _download().whenComplete(() {
+      _downloads.remove(url);
+    }),
+  );
 
   Future<void> _cache(File? file, Uint8List bytes) async {
     if (file != null && bytes.length <= _maxCacheBytes) {

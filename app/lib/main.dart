@@ -63,16 +63,15 @@ void prefetchEpisodeCovers(
     downloaded = finished;
   }
 
-  int? playingId;
-  void playbackChanged() {
-    final episode = player.isPlaying ? player.current : null;
-    if (episode?.id == playingId) return;
-    playingId = episode?.id;
+  int? currentId;
+  void currentChanged() {
+    final episode = player.current;
+    if (episode?.id == currentId) return;
+    currentId = episode?.id;
     prefetch(episode);
   }
 
   downloads.addListener(downloadsChanged);
-  player.addListener(playbackChanged);
+  player.addListener(currentChanged);
   downloadsChanged();
-  playbackChanged();
 }

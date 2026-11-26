@@ -151,9 +151,6 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
   int? get checkingPosition => _checkingPosition;
 
   @override
-  bool get isCheckingPosition => _positionCheckTimer != null;
-
-  @override
   ValueListenable<Duration> get position => _position;
 
   @override

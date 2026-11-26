@@ -167,7 +167,6 @@ void main() {
 
       final resuming = player.resume();
       await tester.pump();
-      expect(player.isCheckingPosition, isTrue);
       await tester.pump(const Duration(milliseconds: 999));
       expect(published, isEmpty);
       if (slow) {
@@ -179,7 +178,6 @@ void main() {
       await resuming;
       await tester.pump(const Duration(milliseconds: 1));
       expect(player.isPlaying, isTrue);
-      expect(player.isCheckingPosition, isFalse);
       expect(published.whereType<int>(), slow ? [_second.id] : isEmpty);
       expect(published.last, isNull);
     });

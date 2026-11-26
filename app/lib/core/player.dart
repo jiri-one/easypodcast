@@ -28,8 +28,6 @@ abstract class PlayerController extends ChangeNotifier {
   /// Brief checks leave this null to avoid flashing the label.
   int? get checkingPosition => null;
 
-  bool get isCheckingPosition => checkingPosition != null;
-
   ValueListenable<Duration> get position;
 
   /// From the player once known, else from the feed.

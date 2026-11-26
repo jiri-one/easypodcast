@@ -66,21 +66,20 @@ void main() {
     },
   );
 
-  test('playback starts fetch only the episode cover', () async {
+  test('each start of an episode fetches only its own cover, once', () async {
     listen();
     final player = services.player;
     await player.play(_episodeId);
-    expect(fetched, [_episodeCover]);
-
     engine.buffer();
     await player.setSpeed(1.5);
     await player.pause();
+    await player.resume();
     expect(fetched, [_episodeCover]);
 
-    await player.resume();
-    expect(fetched, [_episodeCover, _episodeCover]);
     await player.play(_sharedCoverId);
     await player.play(_noCoverId);
+    expect(fetched, [_episodeCover]);
+    await player.play(_episodeId);
     expect(fetched, [_episodeCover, _episodeCover]);
   });
 }

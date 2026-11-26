@@ -295,6 +295,30 @@ void main() {
     },
   );
 
+  testWidgets('a drag that ends while buffering leaves no preview behind', (
+    tester,
+  ) async {
+    final app = await UiHarness.open(tester, size: const Size(392, 785));
+    final position = find.byKey(PlaybackTimeline.positionKey);
+    try {
+      await app.mini(app.strings.play);
+      await app.mini(app.episode(101));
+      final track = tester.getRect(find.byKey(PlaybackTimeline.trackKey));
+      final drag = await tester.startGesture(track.center);
+      await drag.moveBy(const Offset(70, 0));
+      await tester.pump();
+      expect(tester.widget<Text>(position).data, isNot('32:00'));
+      app.engine.buffer();
+      await tester.pump();
+      await drag.up();
+      await tester.pump();
+      expect(find.text(app.strings.seekUnavailable), findsOneWidget);
+      expect(tester.widget<Text>(position).data, '32:00');
+    } finally {
+      await app.finish();
+    }
+  });
+
   testWidgets('rebuffering keeps the mini player title and pause button', (
     tester,
   ) async {

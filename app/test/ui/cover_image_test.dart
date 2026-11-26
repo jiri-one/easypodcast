@@ -13,44 +13,67 @@ import 'package:path/path.dart' as path;
 void main() {
   final binding = TestWidgetsFlutterBinding.ensureInitialized();
 
-  test(
-    'prefetch stores raw bytes once and skips cached or invalid URLs',
-    () async {
+  test('prefetch stores the raw bytes and skips a cached cover', () async {
+    final cache = await _coverCache(binding);
+    const url = 'https://podcast.example/episode.png';
+    const bytes = [1, 2, 3];
+    var requests = 0;
+    await http.runWithClient(
+      () async {
+        await CoverImage.prefetch(url);
+        final file = await cache.list().single as File;
+        expect(await file.readAsBytes(), bytes);
+        await file.setLastModified(DateTime.utc(2025));
+        final modified = await file.lastModified();
+        await CoverImage.prefetch(url);
+        expect(await file.lastModified(), modified);
+      },
+      () => MockClient((_) async {
+        requests++;
+        return http.Response.bytes(bytes, 200);
+      }),
+    );
+    expect(requests, 1);
+  });
+
+  test('prefetch ignores an address that the HTTP client rejects', () async {
+    await _coverCache(binding);
+    await http.runWithClient(
+      () => CoverImage.prefetch('https:///cover.png'),
+      () => MockClient((_) => throw ArgumentError('No host specified')),
+    );
+  });
+
+  for (final prefetchFirst in [true, false]) {
+    test('a prefetch and a display that overlap share one request, '
+        '${prefetchFirst ? 'prefetch' : 'display'} first', () async {
       final cache = await _coverCache(binding);
-      const url = 'https://podcast.example/episode.png';
-      const bytes = [1, 2, 3];
-      final requests = <Uri>[];
+      final bytes = await _coverBytes();
+      final cover = CoverImage('https://podcast.example/$prefetchFirst.png');
+      addTearDown(cover.evict);
+      final requested = Completer<void>();
+      final answer = Completer<http.Response>();
+      var requests = 0;
       await http.runWithClient(
         () async {
-          await Future.wait([
-            CoverImage.prefetch(url),
-            CoverImage.prefetch(' $url '),
-          ]);
-          final file = await cache.list().single as File;
-          expect(await file.readAsBytes(), bytes);
-          await file.setLastModified(DateTime.utc(2025));
-          final modified = await file.lastModified();
-
-          for (final candidate in [
-            url,
-            null,
-            '',
-            'cover.png',
-            'file:///cover.png',
-          ]) {
-            await CoverImage.prefetch(candidate);
-          }
-          expect(await file.lastModified(), modified);
+          Future<void> prefetch() => CoverImage.prefetch(cover.url);
+          final first = prefetchFirst ? prefetch() : _imageSize(cover);
+          await requested.future;
+          final second = prefetchFirst ? _imageSize(cover) : prefetch();
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+          expect(requests, 1);
+          answer.complete(http.Response.bytes(bytes, 200));
+          await Future.wait([first, second]);
+          expect(await _imageSize(cover), const ui.Size.square(192));
         },
-        () => MockClient((request) async {
-          requests.add(request.url);
-          return http.Response.bytes(bytes, 200);
+        () => MockClient((_) {
+          if (++requests == 1) requested.complete();
+          return answer.future;
         }),
       );
-      expect(requests, [Uri.parse(url)]);
       expect(await cache.list().length, 1);
-    },
-  );
+    });
+  }
 
   test('a prefetched cover can be displayed offline', () async {
     await _coverCache(binding);
