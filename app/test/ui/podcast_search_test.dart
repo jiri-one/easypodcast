@@ -267,10 +267,6 @@ void main() {
         await app.back();
         expect(tester.widget<TextField>(field).controller!.text, query);
         expect(_episodeIds(tester), matched);
-        await app.scrollTo(
-          _titledRow(app.episode(201)),
-          find.byType(EpisodeList),
-        );
         await app.tap(
           _titledRow(app.episode(201)),
           within: find.byType(EpisodeList),

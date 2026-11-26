@@ -57,11 +57,9 @@ List<Episode> matchLibraryEpisodes(
 }
 
 int _comparePublication(Episode a, Episode b) {
-  final first = a.publishedAt;
-  final second = b.publishedAt;
-  if (first == null && second != null) return 1;
-  if (first != null && second == null) return -1;
-  final byDate = first == null ? 0 : second!.compareTo(first);
+  final byDate = (b.publishedAt ?? oldestTime).compareTo(
+    a.publishedAt ?? oldestTime,
+  );
   return byDate == 0 ? b.id.compareTo(a.id) : byDate;
 }
 

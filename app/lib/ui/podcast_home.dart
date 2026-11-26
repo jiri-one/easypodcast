@@ -77,8 +77,6 @@ class _LibraryHomeState extends State<_LibraryHome> {
   ]);
   final _pages = <_Page>[];
   final _scrollPositions = PageStorageBucket();
-  final _searchScroll = ScrollController();
-  PageStorageBucket _searchScrollPositions = PageStorageBucket();
   int? _searchPodcastId;
   final _searchTitles = <String, String>{};
 
@@ -106,7 +104,6 @@ class _LibraryHomeState extends State<_LibraryHome> {
   void dispose() {
     _podcastSearch.dispose();
     _globalSearch.dispose();
-    _searchScroll.dispose();
     _playback.dispose();
     _refresh.dispose();
     super.dispose();
@@ -210,14 +207,14 @@ class _LibraryHomeState extends State<_LibraryHome> {
     _section = _searchOrigin;
     _pages.clear();
     _searchTitles.clear();
-    _searchScrollPositions = PageStorageBucket();
     _globalSearch.reset();
   }
 
-  void _changeGlobalSearch(String input) {
-    if (_searchScroll.hasClients) _searchScroll.jumpTo(0);
-    _globalSearch.change(input, widget.services.api.searchAll);
-  }
+  // Title matches come first, so a full page leaves no room for the server's
+  // description matches.
+  Future<List<int>> _searchAll(String query) => _globalEpisodes().length < 100
+      ? widget.services.api.searchAll(query)
+      : Future.value(const []);
 
   List<Episode> _globalEpisodes() {
     final library = widget.services.library;
@@ -266,13 +263,7 @@ class _LibraryHomeState extends State<_LibraryHome> {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
     final key = event.logicalKey;
     if (key == LogicalKeyboardKey.escape && !_atHome) {
-      if (_podcastSearch.focus.hasFocus) {
-        setState(_closePodcastSearch);
-      } else if (_globalSearch.focus.hasFocus) {
-        setState(_closeGlobalSearch);
-      } else {
-        _back();
-      }
+      _back();
       return KeyEventResult.handled;
     }
     final keyboard = HardwareKeyboard.instance;
@@ -603,8 +594,12 @@ class _LibraryHomeState extends State<_LibraryHome> {
         : library.podcast(episode.podcastId)?.title ?? episode.title;
   }
 
+  int? get _selectedEpisodeId {
+    final last = _pages.lastOrNull;
+    return last?.screen == _Screen.episode ? last?.id : null;
+  }
+
   Widget _sectionBody(BuildContext context, {bool desktop = false}) {
-    final selected = _pages.lastOrNull;
     final kind = switch (_section) {
       LibrarySection.inProgress => EpisodeListKind.inProgress,
       LibrarySection.queue => EpisodeListKind.queue,
@@ -619,7 +614,7 @@ class _LibraryHomeState extends State<_LibraryHome> {
         onOpen: _openEpisode,
         onMenu: _openEpisodeMenu,
         desktop: desktop,
-        selectedId: selected?.screen == _Screen.episode ? selected?.id : null,
+        selectedId: _selectedEpisodeId,
         actions: [
           if (_section == LibrarySection.newEpisodes)
             RefreshRow(refresh: _refresh, lastLoaded: _refresh.lastLoaded),
@@ -655,7 +650,6 @@ class _LibraryHomeState extends State<_LibraryHome> {
     final words = _globalSearch.words;
     final library = widget.services.library;
     final episodes = _globalEpisodes();
-    final selected = _pages.lastOrNull;
     final podcasts = [
       if (words.isNotEmpty)
         for (final podcast in library.podcasts)
@@ -667,64 +661,44 @@ class _LibraryHomeState extends State<_LibraryHome> {
         PodcastSearchField(
           search: _globalSearch,
           hint: strings.searchHint,
-          onChanged: _changeGlobalSearch,
+          onChanged: (input) => _globalSearch.change(input, _searchAll),
           onClose: () => setState(_closeGlobalSearch),
         ),
         if (words.isNotEmpty)
           Expanded(
-            child: PageStorage(
-              bucket: _searchScrollPositions,
-              child: EpisodeList(
-                kind: EpisodeListKind.search,
-                controller: _searchScroll,
-                episodes: episodes,
-                playback: _playback,
-                onOpen: _openEpisode,
-                onMenu: _openEpisodeMenu,
-                desktop: desktop,
-                selectedId: selected?.screen == _Screen.episode
-                    ? selected?.id
-                    : null,
-                emptyMessage: _globalSearch.loading
-                    ? strings.syncLoading
-                    : strings.noMatchingEpisodes,
-                headerSlivers: [
-                  if (podcasts.isNotEmpty) ...[
-                    _searchHeading(strings.podcasts),
-                    PodcastList.rows(
-                      podcasts,
-                      onOpen: _openPodcast,
-                      desktop: desktop,
-                    ),
-                  ],
-                  _searchHeading(strings.episodes),
+            // A new query starts at the top; Back from a result keeps its place.
+            child: EpisodeList(
+              key: PageStorageKey(('search', words.join(' '))),
+              kind: EpisodeListKind.search,
+              episodes: episodes,
+              playback: _playback,
+              onOpen: _openEpisode,
+              onMenu: _openEpisodeMenu,
+              desktop: desktop,
+              selectedId: _selectedEpisodeId,
+              emptyMessage: _globalSearch.loading ? strings.syncLoading : null,
+              headerSlivers: [
+                if (podcasts.isNotEmpty) ...[
+                  SliverToBoxAdapter(child: listHeading(strings.podcasts)),
+                  PodcastList.rows(
+                    podcasts,
+                    onOpen: _openPodcast,
+                    desktop: desktop,
+                  ),
                 ],
-              ),
+                SliverToBoxAdapter(child: listHeading(strings.episodes)),
+              ],
             ),
           ),
       ],
     );
   }
 
-  Widget _searchHeading(String title) => SliverToBoxAdapter(
-    child: Padding(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-      child: Semantics(
-        header: true,
-        child: Text(
-          title,
-          style: detailStyle.copyWith(fontWeight: FontWeight.w700),
-        ),
-      ),
-    ),
-  );
-
   Widget _podcastBody(BuildContext context, int id, {required bool desktop}) {
     final library = widget.services.library;
     final podcast = library.podcast(id);
     final strings = context.strings;
     if (podcast == null) return PageMessage(strings.podcastMissing);
-    final last = _pages.lastOrNull;
     final searching = _searchPodcastId == id;
     return EpisodeList(
       key: PageStorageKey(('podcast', id)),
@@ -734,7 +708,7 @@ class _LibraryHomeState extends State<_LibraryHome> {
       onOpen: _openEpisode,
       onMenu: _openEpisodeMenu,
       desktop: desktop,
-      selectedId: last?.screen == _Screen.episode ? last?.id : null,
+      selectedId: _selectedEpisodeId,
       emptyMessage: searching && _podcastSearch.words.isNotEmpty
           ? (_podcastSearch.loading
                 ? strings.syncLoading

@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'eink_widgets.dart';
@@ -18,6 +20,7 @@ class EpisodeSearch extends ChangeNotifier {
 
   void change(String input, Future<List<int>> Function(String) request) {
     final words = podcastSearchWords(input);
+    if (listEquals(words, _words)) return;
     final askServer =
         words.length > 1 || (words.isNotEmpty && words.single.runes.length > 1);
     _timer?.cancel();
@@ -75,22 +78,25 @@ class PodcastSearchField extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
-    child: Semantics(
-      label: hint,
-      child: TextField(
-        controller: search.text,
-        focusNode: search.focus,
-        onChanged: onChanged,
-        textInputAction: TextInputAction.search,
-        showCursor: false,
-        autocorrect: false,
-        enableSuggestions: false,
-        decoration: InputDecoration(
-          hintText: hint,
-          suffixIcon: IconButton(
-            icon: const Icon(Icons.clear),
-            tooltip: context.strings.clearSearch,
-            onPressed: onClose,
+    child: CallbackShortcuts(
+      bindings: {const SingleActivator(LogicalKeyboardKey.escape): onClose},
+      child: Semantics(
+        label: hint,
+        child: TextField(
+          controller: search.text,
+          focusNode: search.focus,
+          onChanged: onChanged,
+          textInputAction: TextInputAction.search,
+          showCursor: false,
+          autocorrect: false,
+          enableSuggestions: false,
+          decoration: InputDecoration(
+            hintText: hint,
+            suffixIcon: IconButton(
+              icon: const Icon(Icons.clear),
+              tooltip: context.strings.clearSearch,
+              onPressed: onClose,
+            ),
           ),
         ),
       ),

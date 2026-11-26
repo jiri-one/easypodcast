@@ -317,13 +317,15 @@ func (a *api) episodes(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *api) searchEpisodes(w http.ResponseWriter, r *http.Request) {
-	var podcastID *int64
+	search := a.store.searchAllEpisodes
 	if r.PathValue("id") != "" {
 		id, ok := pathID(w, r)
 		if !ok {
 			return
 		}
-		podcastID = &id
+		search = func(ctx context.Context, words []string) ([]int64, error) {
+			return a.store.searchEpisodes(ctx, id, words)
+		}
 	}
 	query := strings.TrimSpace(normalizeSearchText(r.URL.Query().Get("q")))
 	if utf8.RuneCountInString(query) < 2 {
@@ -334,7 +336,7 @@ func (a *api) searchEpisodes(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadRequest, "q must be valid text")
 		return
 	}
-	ids, err := a.store.searchEpisodes(r.Context(), podcastID, strings.Fields(query))
+	ids, err := search(r.Context(), strings.Fields(query))
 	if err != nil {
 		storeError(w, r, err)
 		return

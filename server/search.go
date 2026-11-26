@@ -60,20 +60,24 @@ func backfillEpisodeSearch(ctx context.Context, tx pgx.Tx) error {
 	return err
 }
 
-func (s store) searchEpisodes(ctx context.Context, podcastID *int64, words []string) ([]int64, error) {
-	from := " FROM episodes WHERE podcast_id IN (SELECT id FROM podcasts WHERE subscribed)"
-	order := " ORDER BY published_at DESC NULLS LAST, id DESC"
-	args := pgx.NamedArgs{"words": words, "limit": 100}
-	if podcastID != nil {
-		if err := s.requirePodcast(ctx, *podcastID); err != nil {
-			return nil, err
-		}
-		from, order = episodeListFrom, episodeListOrder
-		args["podcast"], args["limit"] = *podcastID, 200
+func (s store) searchEpisodes(ctx context.Context, podcastID int64, words []string) ([]int64, error) {
+	if err := s.requirePodcast(ctx, podcastID); err != nil {
+		return nil, err
 	}
-	rows, err := s.db.Query(ctx, "SELECT id"+from+`
-		AND NOT EXISTS (SELECT FROM unnest(@words::text[]) AS term(word) WHERE strpos(search_text, term.word) = 0)`+
-		order+" LIMIT @limit", args)
+	rows, err := s.db.Query(ctx, "SELECT id"+episodeListFrom+`
+		AND NOT EXISTS (SELECT FROM unnest($2::text[]) AS term(word) WHERE strpos(search_text, term.word) = 0)`+
+		episodeListOrder+" LIMIT 200", podcastID, words)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, pgx.RowTo[int64])
+}
+
+func (s store) searchAllEpisodes(ctx context.Context, words []string) ([]int64, error) {
+	rows, err := s.db.Query(ctx, `SELECT id FROM episodes
+		WHERE podcast_id IN (SELECT id FROM podcasts WHERE subscribed)
+		AND NOT EXISTS (SELECT FROM unnest($1::text[]) AS term(word) WHERE strpos(search_text, term.word) = 0)
+		ORDER BY published_at DESC NULLS LAST, id DESC LIMIT 100`, words)
 	if err != nil {
 		return nil, err
 	}

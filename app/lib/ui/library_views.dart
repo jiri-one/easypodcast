@@ -124,6 +124,14 @@ class RefreshRow extends StatelessWidget {
   }
 }
 
+Widget listHeading(String text) => Padding(
+  padding: const EdgeInsets.fromLTRB(12, 8, 12, 2),
+  child: Semantics(
+    header: true,
+    child: Text(text, style: detailStyle.copyWith(fontWeight: FontWeight.w700)),
+  ),
+);
+
 class EpisodeRowKey extends GlobalObjectKey {
   const EpisodeRowKey(super.value);
 }
@@ -138,7 +146,6 @@ class EpisodeList extends StatelessWidget {
     required this.onMenu,
     this.actions = const [],
     this.headerSlivers = const [],
-    this.controller,
     this.desktop = false,
     this.selectedId,
     this.emptyMessage,
@@ -152,7 +159,6 @@ class EpisodeList extends StatelessWidget {
   final ValueChanged<Episode> onMenu;
   final List<Widget> actions;
   final List<Widget> headerSlivers;
-  final ScrollController? controller;
   final bool desktop;
   final int? selectedId;
   final String? emptyMessage;
@@ -185,7 +191,6 @@ class EpisodeList extends StatelessWidget {
     };
     return CustomScrollView(
       key: key ?? PageStorageKey(kind),
-      controller: controller,
       slivers: [
         SliverToBoxAdapter(child: problem),
         for (final action in actions) SliverToBoxAdapter(child: action),
@@ -225,18 +230,7 @@ class EpisodeList extends StatelessWidget {
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 8, 12, 2),
-                    child: Semantics(
-                      header: true,
-                      child: Text(
-                        dayGroup(strings, episode.publishedAt),
-                        style: detailStyle.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                  ),
+                  listHeading(dayGroup(strings, episode.publishedAt)),
                   row,
                 ],
               );
@@ -267,7 +261,7 @@ class EpisodeList extends StatelessWidget {
     final length = duration == null ? null : minuteLength(strings, duration);
     final podcast = library.podcast(episode.podcastId);
     final showPodcast = kind != EpisodeListKind.podcast;
-    final showDate =
+    final boldNew =
         kind == EpisodeListKind.podcast || kind == EpisodeListKind.search;
     final hasRemainingTime =
         !playing &&
@@ -332,7 +326,7 @@ class EpisodeList extends StatelessWidget {
               bold:
                   parts.isNotEmpty &&
                   ((playing && parts.first == status) ||
-                      (showDate && state.isNew)),
+                      (boldNew && state.isNew)),
               remaining: hasRemainingTime && parts.firstOrNull == status,
               downloaded: downloaded,
               inverted: inverted,
