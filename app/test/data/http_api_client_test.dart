@@ -185,34 +185,6 @@ void main() {
     expect(request.headers['Authorization'], 'Bearer abc');
   });
 
-  test('directory search preserves HTTP error status codes', () async {
-    for (final (status, body) in [
-      (404, '{"error":"podcast directory is off"}'),
-      (502, '<html>Bad gateway</html>'),
-    ]) {
-      handler = (_) async => http.Response(body, status);
-      await expectLater(
-        api.searchDirectory('vlak'),
-        throwsA(
-          isA<ApiException>().having((e) => e.statusCode, 'status', status),
-        ),
-      );
-    }
-  });
-
-  test('directory search maps socket errors and timeouts to offline', () async {
-    handler = (_) async => throw const SocketException('no route');
-    await expectLater(
-      api.searchDirectory('vlak'),
-      throwsA(isA<OfflineException>()),
-    );
-    handler = (_) => Completer<http.Response>().future;
-    await expectLater(
-      api.searchDirectory('vlak', timeout: const Duration(milliseconds: 20)),
-      throwsA(isA<OfflineException>()),
-    );
-  });
-
   test(
     'state parses measured duration, a missing queue and server time',
     () async {

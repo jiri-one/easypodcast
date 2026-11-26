@@ -355,7 +355,7 @@ class _AddPodcastPageState extends State<AddPodcastPage> with ActionTapGuard {
         for (final result in _results ?? const <DirectoryPodcast>[])
           EinkRow(
             title: result.title,
-            leading: PodcastThumbnail(result.imageUrl),
+            leading: PodcastThumbnail(result.imageUrl, persist: false),
             topAligned: true,
             details: [
               if (result.author.isNotEmpty)
@@ -371,7 +371,8 @@ class _AddPodcastPageState extends State<AddPodcastPage> with ActionTapGuard {
                 ? null
                 : Icon(
                     Icons.add,
-                    size: MediaQuery.textScalerOf(context).scale(24),
+                    size: 24,
+                    applyTextScaling: true,
                     semanticLabel: strings.addPodcast,
                   ),
             onPressed: () => _addResult(result),

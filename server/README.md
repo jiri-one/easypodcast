@@ -66,7 +66,9 @@ that need another import attempt.
 
 ## Podcast directory
 
-`GET /api/directory?q=nocni+vlak` takes the usual bearer token and sends one request to the directory. The server sets `term`, `media=podcast`, `entity=podcast` and `limit=25` on the configured URL and keeps its other parameters, such as `country`. The response lists up to 25 `{"feed_url", "title", "author", "image_url", "subscribed"}` objects in directory order. `subscribed` is true when the feed URL is a known address of a subscribed podcast. Items without an HTTP(S) feed URL or a title and repeated feed URLs are dropped. A query with fewer than two characters after trimming returns 400, `EASYPODCAST_DIRECTORY_URL=off` returns 404, and a failed request, a non-200 answer, an invalid or oversized (over 1 MiB) body, or no answer within 8 seconds returns 502. The directory receives only the search text and the server's User-Agent. The server neither caches nor logs searches.
+`GET /api/directory?q=nocni+vlak` searches the directory set by `EASYPODCAST_DIRECTORY_URL`;
+`docs/architecture.md` describes the request and the answer. The directory receives only the
+search text and the server's User-Agent. The server neither caches nor logs searches.
 
 ## Search and sync behavior
 

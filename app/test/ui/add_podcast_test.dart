@@ -198,7 +198,7 @@ void main() {
         expect(_rowText(_railway, l.addingPodcast), findsNothing);
         await app.row(_planes.title);
         expect(dialog, findsNothing);
-        await tester.pump(const Duration(milliseconds: 600));
+        await tester.pump(doubleTapGuard);
 
         await app.row(_railway.title);
         await tester.tap(
@@ -346,7 +346,7 @@ void main() {
         );
         expect(_rowText(_railway, label), findsNothing);
         expect(tester.widget<TextField>(_fields.last).enabled, isTrue);
-        await tester.pump(const Duration(milliseconds: 600));
+        await tester.pump(doubleTapGuard);
       }
       expect(library.adds.map((call) => call.feedUrl), [
         _planes.feedUrl,

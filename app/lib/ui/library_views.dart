@@ -460,10 +460,16 @@ class _PodcastHeader extends StatelessWidget {
 }
 
 class PodcastThumbnail extends StatelessWidget {
-  const PodcastThumbnail(this.imageUrl, {super.key, this.side = 52});
+  const PodcastThumbnail(
+    this.imageUrl, {
+    super.key,
+    this.side = 52,
+    this.persist = true,
+  });
 
   final String? imageUrl;
   final double side;
+  final bool persist;
 
   @override
   Widget build(BuildContext context) {
@@ -475,8 +481,10 @@ class PodcastThumbnail extends StatelessWidget {
           : ColorFiltered(
               colorFilter: coverGrayscale,
               child: Image(
-                image: CoverImage(url)
-                    .resized(side, MediaQuery.devicePixelRatioOf(context)),
+                image: CoverImage(
+                  url,
+                  persist: persist,
+                ).resized(side, MediaQuery.devicePixelRatioOf(context)),
                 fit: BoxFit.cover,
                 excludeFromSemantics: true,
                 errorBuilder: (_, _, _) => const SizedBox.shrink(),

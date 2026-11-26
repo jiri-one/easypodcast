@@ -53,13 +53,15 @@ List<String> coverUrls(Episode episode, Podcast? podcast) => {
 }.toList();
 
 class CoverImage extends ImageProvider<CoverImage> {
-  const CoverImage(this.url);
+  const CoverImage(this.url, {this.persist = true});
 
   static const _maxCacheBytes = 64 * 1024 * 1024;
   static final _downloads = <String, Future<Uint8List>>{};
   static Future<void> _cacheWrites = Future.value();
 
   final String url;
+  // Directory thumbnails stay out of the disk cache kept for subscribed podcasts.
+  final bool persist;
 
   static Future<File?> prefetch(String url) async {
     final cover = CoverImage(url);
@@ -121,7 +123,7 @@ class CoverImage extends ImageProvider<CoverImage> {
       OneFrameImageStreamCompleter(key._load(decode));
 
   Future<ImageInfo> _load(ImageDecoderCallback decode) async {
-    final file = await _cacheFile();
+    final file = persist ? await _cacheFile() : null;
     if (file != null) {
       try {
         final image = await _decode(await file.readAsBytes(), decode);

@@ -22,6 +22,9 @@ String actionError(BuildContext context, Object error) =>
     ? context.strings.dismissOlderOffline
     : context.strings.actionFailed;
 
+// Long enough to swallow the second tap of an e-ink double tap.
+const doubleTapGuard = Duration(milliseconds: 600);
+
 mixin ActionTapGuard<T extends StatefulWidget> on State<T> {
   bool _runningAction = false;
   Timer? _tapGuard;
@@ -34,7 +37,7 @@ mixin ActionTapGuard<T extends StatefulWidget> on State<T> {
     } finally {
       _runningAction = false;
       if (mounted) {
-        _tapGuard = Timer(const Duration(milliseconds: 600), () {});
+        _tapGuard = Timer(doubleTapGuard, () {});
       }
     }
   }
@@ -558,8 +561,7 @@ Future<bool> confirmAction(
 }) async {
   final cancel = context.strings.cancel;
   // The second tap of an e-ink double tap would otherwise confirm at once.
-  var armed = false;
-  final arming = Timer(const Duration(milliseconds: 600), () => armed = true);
+  final arming = Timer(doubleTapGuard, () {});
   try {
     return await showEinkDialog<bool>(
           context: context,
@@ -576,7 +578,7 @@ Future<bool> confirmAction(
                 action,
                 primary: true,
                 onPressed: () {
-                  if (armed) Navigator.pop(dialogContext, true);
+                  if (!arming.isActive) Navigator.pop(dialogContext, true);
                 },
               ),
             ],

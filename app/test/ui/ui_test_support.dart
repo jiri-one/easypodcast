@@ -219,8 +219,7 @@ class UiHarness {
   );
 
   Future<void> dialog(String label) async {
-    // Confirmations ignore their action for the first 600 ms.
-    await tester.pump(const Duration(milliseconds: 600));
+    await tester.pump(doubleTapGuard);
     await tap(
       find.descendant(
         of: find.byType(EinkDialogPanel),

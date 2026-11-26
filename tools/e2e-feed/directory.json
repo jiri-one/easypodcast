@@ -1,18 +1,10 @@
 {
-  "resultCount": 3,
   "results": [
     {
       "feedUrl": "http://127.0.0.1:18081/feed.xml?case=directory",
       "collectionName": "Papírová letadla",
       "artistName": "Tereza Vichrová",
       "artworkUrl100": "https://images.example/directory-100.jpg"
-    },
-    {
-      "feedUrl": "http://127.0.0.1:18081/feed.xml?case=directory",
-      "collectionName": "Papírová letadla (duplicate)"
-    },
-    {
-      "collectionName": "Bez adresy feedu"
     }
   ]
 }

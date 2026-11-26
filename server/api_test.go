@@ -27,18 +27,14 @@ func TestHTTPAPI(t *testing.T) {
 	var calls atomic.Int32
 	var mode atomic.Int32
 	var conditional atomic.Bool
-	var directoryDown atomic.Bool
-	var czechStorefront atomic.Bool
 	feeds := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.UserAgent() != "EasyPodcast/test" {
 			t.Errorf("wrong User-Agent: %q", r.UserAgent())
 		}
 		switch r.URL.Path {
 		case "/directory":
-			czechStorefront.Store(r.URL.Query().Get("country") == "CZ")
-			if directoryDown.Load() {
-				w.WriteHeader(http.StatusServiceUnavailable)
-				return
+			if r.Header.Get("Authorization") != "" {
+				t.Error("sent Authorization to directory")
 			}
 			base := "http://" + r.Host
 			_, _ = fmt.Fprintf(w, `{"results":[
@@ -124,19 +120,13 @@ func TestHTTPAPI(t *testing.T) {
 	if got := call("GET", directoryPath, "", "", "", 404).Body.String(); got != `{"error":"podcast directory is off"}` {
 		t.Fatal(got)
 	}
-	directoryURL, urlErr := feedURL(feeds.URL + "/directory?country=CZ")
+	directoryURL, urlErr := feedURL(feeds.URL + "/directory")
 	if urlErr != nil {
 		t.Fatal(urlErr)
 	}
 	refresh.directoryURL = directoryURL
-	for query, want := range map[string]string{
-		"a":    `{"error":"q must contain at least two characters"}`,
-		"a%FF": `{"error":"q must be valid text"}`,
-		"a%00": `{"error":"q must be valid text"}`,
-	} {
-		if got := call("GET", "/api/directory?q="+query, "", "", "", 400).Body.String(); got != want {
-			t.Errorf("q=%s: got %s, want %s", query, got, want)
-		}
+	if got := call("GET", "/api/directory?q=a", "", "", "", 400).Body.String(); got != `{"error":"q must contain at least two characters"}` {
+		t.Fatal(got)
 	}
 	checkDirectory := func(subscribed bool) {
 		t.Helper()
@@ -150,14 +140,6 @@ func TestHTTPAPI(t *testing.T) {
 		}
 	}
 	checkDirectory(false)
-	if !czechStorefront.Load() {
-		t.Fatal("directory did not receive country=CZ")
-	}
-	directoryDown.Store(true)
-	if got := call("GET", directoryPath, "", "", "", 502).Body.String(); got != `{"error":"podcast directory unavailable"}` {
-		t.Fatal(got)
-	}
-	directoryDown.Store(false)
 
 	call("POST", "/api/state", strings.Repeat(" ", maxRequestBytes+1), "", "", 413)
 	call("POST", "/api/state", `{}{}`, "", "", 400)

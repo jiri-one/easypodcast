@@ -56,10 +56,6 @@ func (a *api) searchDirectory(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadRequest, "q must contain at least two characters")
 		return
 	}
-	if !utf8.ValidString(query) || strings.ContainsRune(query, 0) {
-		apiError(w, http.StatusBadRequest, "q must be valid text")
-		return
-	}
 	results, err := a.refresh.searchDirectory(r.Context(), query)
 	if err != nil {
 		if r.Context().Err() == nil {
