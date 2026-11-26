@@ -323,6 +323,7 @@ Future<void> _cacheCover(int largest) async {
 typedef VisitScreen = Future<void> Function(String name);
 
 Future<void> tourPhone(UiHarness app, VisitScreen visit) async {
+  app.services.settings.showSpeedAndSleep = true;
   final l = app.strings;
   final downloads = app.services.downloads as DemoDownloadService;
   const running = DownloadInfo(DownloadStatus.running, progress: 0.43);
@@ -446,6 +447,7 @@ Future<void> tourDesktop(
   VisitScreen visit, {
   bool allScreens = true,
 }) async {
+  app.services.settings.showSpeedAndSleep = true;
   final l = app.strings;
   await app.tap(
     find.descendant(

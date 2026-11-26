@@ -378,6 +378,7 @@ void main() {
     );
     final l = app.strings;
     try {
+      app.services.settings.showSpeedAndSleep = true;
       await app.section(LibrarySection.settings);
       await app.tapText(l.desktopSpeed(speedText(l, 1)));
       final route = find.byWidgetPredicate(

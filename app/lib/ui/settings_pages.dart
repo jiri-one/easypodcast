@@ -74,14 +74,27 @@ class SettingsPage extends StatelessWidget {
           value: settings.autoplayQueue,
           onPressed: () => settings.autoplayQueue = !settings.autoplayQueue,
         ),
-        EinkRow(
-          title: strings.speed,
-          details: [
-            Text(speedText(strings, services.player.speed), style: detailStyle),
-          ],
-          trailing: const Icon(Icons.chevron_right),
-          onPressed: () => showSpeedChoices(context, playback),
+        _ToggleRow(
+          title: strings.showSpeedAndSleep,
+          description: settings.showSpeedAndSleep
+              ? strings.showSpeedAndSleepOn
+              : strings.showSpeedAndSleepOff,
+          value: settings.showSpeedAndSleep,
+          onPressed: () =>
+              settings.showSpeedAndSleep = !settings.showSpeedAndSleep,
         ),
+        if (settings.showSpeedAndSleep)
+          EinkRow(
+            title: strings.speed,
+            details: [
+              Text(
+                speedText(strings, services.player.speed),
+                style: detailStyle,
+              ),
+            ],
+            trailing: const Icon(Icons.chevron_right),
+            onPressed: () => showSpeedChoices(context, playback),
+          ),
         _SecondsRow(
           title: strings.skipBack,
           options: const [10, 15, 30],

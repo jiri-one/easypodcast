@@ -903,6 +903,24 @@ abstract class AppLocalizations {
   /// **'Playback stops when the episode ends.'**
   String get continueQueueOff;
 
+  /// No description provided for @showSpeedAndSleep.
+  ///
+  /// In en, this message translates to:
+  /// **'Speed and sleep timer'**
+  String get showSpeedAndSleep;
+
+  /// No description provided for @showSpeedAndSleepOn.
+  ///
+  /// In en, this message translates to:
+  /// **'Controls are visible.'**
+  String get showSpeedAndSleepOn;
+
+  /// No description provided for @showSpeedAndSleepOff.
+  ///
+  /// In en, this message translates to:
+  /// **'Controls are hidden.'**
+  String get showSpeedAndSleepOff;
+
   /// No description provided for @skipBack.
   ///
   /// In en, this message translates to:

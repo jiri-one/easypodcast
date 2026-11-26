@@ -1,6 +1,7 @@
 import 'package:easypodcast/ui/eink_widgets.dart';
 import 'package:easypodcast/ui/episode_page.dart';
 import 'package:easypodcast/ui/episode_text.dart';
+import 'package:easypodcast/ui/library_views.dart';
 import 'package:easypodcast/ui/playback_position.dart';
 import 'package:easypodcast/ui/player_views.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -118,6 +119,99 @@ void main() {
       await app.finish();
     }
   });
+
+  testWidgets('Settings show and hide the phone speed and sleep controls', (
+    tester,
+  ) async {
+    final app = await UiHarness.open(tester, size: const Size(392, 785));
+    final l = app.strings;
+    final speed = find.text(l.speed);
+    final sleep = find.text(l.sleep);
+    final speedRow = find.widgetWithText(EinkRow, l.speed);
+    try {
+      await app.mini(app.episode(101));
+      expect(speed, findsNothing);
+      expect(sleep, findsNothing);
+      for (final (label, icon) in [
+        (l.skipBackValue(15), Icons.fast_rewind),
+        (l.skipForwardValue(30), Icons.fast_forward),
+      ]) {
+        expect(
+          find.descendant(
+            of: find.widgetWithText(TextButton, label),
+            matching: find.byIcon(icon),
+          ),
+          findsOneWidget,
+        );
+      }
+      await app.back();
+
+      await app.section(LibrarySection.settings);
+      expect(speedRow, findsNothing);
+      expect(find.text(l.showSpeedAndSleepOff), findsOneWidget);
+      await app.row(l.showSpeedAndSleep);
+      expect(speedRow, findsOneWidget);
+      expect(find.text(l.showSpeedAndSleepOn), findsOneWidget);
+      await app.back();
+
+      await app.mini(app.episode(101));
+      expect(speed, findsOneWidget);
+      expect(sleep, findsOneWidget);
+      await app.tap(speed);
+      await app.dialog(speedText(l, 1.2));
+      await app.back();
+
+      await app.section(LibrarySection.settings);
+      await app.row(l.showSpeedAndSleep);
+      expect(speedRow, findsNothing);
+      await app.back();
+      await _start(app);
+      expect(speed, findsNothing);
+      expect(sleep, findsNothing);
+      expect(app.services.settings.speed, 1.2);
+      expect(app.services.player.speed, 1.2);
+    } finally {
+      await app.finish();
+    }
+  });
+
+  for (final width in [1000.0, 1600.0]) {
+    testWidgets('the PC player shows speed only when enabled at ${width}px', (
+      tester,
+    ) async {
+      final app = await UiHarness.open(
+        tester,
+        size: Size(width, 700),
+        desktopFont: font,
+      );
+      final l = app.strings;
+      final speed = find.descendant(
+        of: find.byType(DesktopPlayer),
+        matching: find.text(l.desktopSpeed(speedText(l, 1.0))),
+      );
+      try {
+        expect(speed, findsNothing);
+        for (final (label, icon) in [
+          (l.skipBackValue(15), Icons.fast_rewind),
+          (l.skipForwardValue(30), Icons.fast_forward),
+        ]) {
+          expect(
+            find.descendant(
+              of: find.widgetWithText(EinkButton, label),
+              matching: find.byIcon(icon),
+            ),
+            findsOneWidget,
+          );
+        }
+        await app.section(LibrarySection.settings);
+        await app.row(l.showSpeedAndSleep);
+        expect(speed, findsOneWidget);
+        expect(find.text(l.sleep), findsNothing);
+      } finally {
+        await app.finish();
+      }
+    });
+  }
 
   testWidgets('the PC player bar spans the window and refreshes each second', (
     tester,

@@ -150,6 +150,7 @@ void main() {
     final l = app.strings;
     final player = app.services.player;
     try {
+      app.services.settings.showSpeedAndSleep = true;
       await app.mini(l.play);
       await app.mini(app.episode(101));
       await app.tapText(l.sleep);

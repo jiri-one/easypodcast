@@ -25,6 +25,9 @@ class Settings extends ChangeNotifier {
   double get speed => _prefs.getDouble('speed') ?? 1.0;
   set speed(double value) => _set('speed', value);
 
+  bool get showSpeedAndSleep => _prefs.getBool('showSpeedAndSleep') ?? false;
+  set showSpeedAndSleep(bool value) => _set('showSpeedAndSleep', value);
+
   bool get autoplayQueue => _prefs.getBool('autoplayQueue') ?? true;
   set autoplayQueue(bool value) => _set('autoplayQueue', value);
 

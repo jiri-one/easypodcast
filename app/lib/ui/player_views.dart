@@ -185,6 +185,8 @@ class PlaybackProblem extends StatelessWidget {
   }
 }
 
+const _playControlSize = 76.0;
+
 class PlayerPage extends StatelessWidget {
   const PlayerPage({
     super.key,
@@ -248,29 +250,45 @@ class PlayerPage extends StatelessWidget {
           episode: episode,
         ),
         Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
+              flex: 3,
               child: _SkipControl(
                 seconds: -settings.skipBackSeconds,
                 onPressed: playback.skipBack,
               ),
             ),
-            SizedBox.square(
-              dimension: 76,
-              child: FilledButton(
-                onPressed: () => playback.toggle(),
-                style: const ButtonStyle(
-                  shape: WidgetStatePropertyAll(CircleBorder()),
-                  padding: WidgetStatePropertyAll(EdgeInsets.zero),
-                ),
-                child: Icon(
-                  playing ? Icons.pause : Icons.play_arrow,
-                  size: 38,
-                  semanticLabel: playText,
-                ),
+            Expanded(
+              flex: 4,
+              child: Column(
+                spacing: 6,
+                children: [
+                  SizedBox.square(
+                    dimension: _playControlSize,
+                    child: FilledButton(
+                      onPressed: () => playback.toggle(),
+                      style: const ButtonStyle(
+                        shape: WidgetStatePropertyAll(CircleBorder()),
+                        padding: WidgetStatePropertyAll(EdgeInsets.zero),
+                      ),
+                      child: Icon(
+                        playing ? Icons.pause : Icons.play_arrow,
+                        size: 38,
+                        semanticLabel: playText,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    playText,
+                    textAlign: TextAlign.center,
+                    style: buttonLabelStyle,
+                  ),
+                ],
               ),
             ),
             Expanded(
+              flex: 3,
               child: _SkipControl(
                 seconds: settings.skipForwardSeconds,
                 onPressed: playback.skipForward,
@@ -283,29 +301,29 @@ class PlayerPage extends StatelessWidget {
             liveRegion: true,
             child: Text(strings.seekUnavailable, style: detailStyle),
           ),
-        Text(playText, textAlign: TextAlign.center, style: buttonLabelStyle),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          spacing: 8,
-          children: [
-            Expanded(
-              child: _PlayerOption(
-                title: strings.speed,
-                value: speedText(strings, services.player.speed),
-                onPressed: () => showSpeedChoices(context, playback),
-              ),
-            ),
-            if (sleepAvailable)
+        if (settings.showSpeedAndSleep)
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            spacing: 8,
+            children: [
               Expanded(
                 child: _PlayerOption(
-                  title: strings.sleep,
-                  value: sleepValue,
-                  selected: sleepOn,
-                  onPressed: () => _showSleepChoices(context, playback),
+                  title: strings.speed,
+                  value: speedText(strings, player.speed),
+                  onPressed: () => showSpeedChoices(context, playback),
                 ),
               ),
-          ],
-        ),
+              if (sleepAvailable)
+                Expanded(
+                  child: _PlayerOption(
+                    title: strings.sleep,
+                    value: sleepValue,
+                    selected: sleepOn,
+                    onPressed: () => _showSleepChoices(context, playback),
+                  ),
+                ),
+            ],
+          ),
         if (next != null)
           TextButton(
             onPressed: () => onEpisode(next),
@@ -402,18 +420,33 @@ class _SkipControl extends StatelessWidget {
       style: const ButtonStyle(
         minimumSize: WidgetStatePropertyAll(Size(64, 64)),
         // Narrow e-ink phones need the room for "−15 s" in large text.
-        padding: WidgetStatePropertyAll(
-          EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-        ),
+        padding: WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 4)),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
+        spacing: 6,
         children: [
-          Icon(quickBack ? Icons.replay : Icons.rotate_right, size: 24),
+          SizedBox.square(
+            dimension: _playControlSize,
+            child: Container(
+              margin: const EdgeInsets.all(8),
+              alignment: Alignment.center,
+              decoration: const ShapeDecoration(
+                color: Colors.white,
+                shape: CircleBorder(side: BorderSide(width: 2)),
+              ),
+              child: Icon(
+                quickBack ? Icons.fast_rewind : Icons.fast_forward,
+                color: Colors.black,
+                size: 30,
+              ),
+            ),
+          ),
           Text(
             quickBack
                 ? strings.skipBackValue(-seconds)
                 : strings.skipForwardValue(seconds),
+            textAlign: TextAlign.center,
             style: buttonLabelStyle,
           ),
         ],
@@ -506,6 +539,7 @@ class DesktopPlayer extends StatelessWidget {
     final buttons = [
       EinkButton(
         strings.skipBackValue(settings.skipBackSeconds),
+        icon: Icons.fast_rewind,
         minHeight: 56,
         onPressed: episode == null ? null : playback.skipBack,
       ),
@@ -518,17 +552,20 @@ class DesktopPlayer extends StatelessWidget {
       ),
       EinkButton(
         strings.skipForwardValue(settings.skipForwardSeconds),
+        icon: Icons.fast_forward,
         minHeight: 56,
         onPressed: episode == null ? null : playback.skipForward,
       ),
-      EinkButton(
-        strings.desktopSpeed(
-          speedText(strings, playback.services.player.speed),
-        ),
-        minHeight: 56,
-        onPressed: () => showSpeedChoices(context, playback),
-      ),
     ];
+    final speedButton = settings.showSpeedAndSleep
+        ? EinkButton(
+            strings.desktopSpeed(
+              speedText(strings, playback.services.player.speed),
+            ),
+            minHeight: 56,
+            onPressed: () => showSpeedChoices(context, playback),
+          )
+        : null;
     final heading = Row(
       spacing: 6,
       children: [
@@ -611,6 +648,8 @@ class DesktopPlayer extends StatelessWidget {
                           children: [
                             for (final button in buttons)
                               Expanded(child: button),
+                            if (speedButton != null)
+                              Expanded(child: speedButton),
                           ],
                         ),
                       ],
@@ -619,10 +658,9 @@ class DesktopPlayer extends StatelessWidget {
                   return Row(
                     spacing: 8,
                     children: [
-                      for (final button in buttons.take(3))
-                        Expanded(child: button),
+                      for (final button in buttons) Expanded(child: button),
                       Expanded(flex: 3, child: heading),
-                      Expanded(child: buttons.last),
+                      if (speedButton != null) Expanded(child: speedButton),
                     ],
                   );
                 },
