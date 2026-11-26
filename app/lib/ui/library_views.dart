@@ -298,13 +298,8 @@ class EpisodeList extends StatelessWidget {
         title: kind == EpisodeListKind.queue
             ? strings.numberedTitle(index + 1, episode.title)
             : episode.title,
-        leading: showPodcast ? _PodcastThumbnail(podcast?.imageUrl) : null,
-        topAligned: showPodcast,
         overline: showPodcast && podcast != null
-            ? Text(
-                podcast.title,
-                style: detailStyle.copyWith(fontWeight: FontWeight.w700),
-              )
+            ? _PodcastHeader(podcast)
             : null,
         selected: desktop ? episode.id == selectedId : null,
         lifted: lifted,
@@ -430,25 +425,49 @@ class _EpisodeMetadata extends StatelessWidget {
   }
 }
 
-class _PodcastThumbnail extends StatelessWidget {
-  const _PodcastThumbnail(this.imageUrl);
+class _PodcastHeader extends StatelessWidget {
+  const _PodcastHeader(this.podcast);
 
-  static const _side = 52.0;
+  final Podcast podcast;
+
+  @override
+  Widget build(BuildContext context) {
+    final name = Text(
+      podcast.title,
+      style: detailStyle.copyWith(fontWeight: FontWeight.w700),
+    );
+    if (validCoverUrl(podcast.imageUrl) == null) return name;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        spacing: 8,
+        children: [
+          _PodcastThumbnail(podcast.imageUrl, side: 44),
+          Expanded(child: name),
+        ],
+      ),
+    );
+  }
+}
+
+class _PodcastThumbnail extends StatelessWidget {
+  const _PodcastThumbnail(this.imageUrl, {this.side = 52});
 
   final String? imageUrl;
+  final double side;
 
   @override
   Widget build(BuildContext context) {
     final url = validCoverUrl(imageUrl);
     return SizedBox.square(
-      dimension: _side,
+      dimension: side,
       child: url == null
           ? null
           : ColorFiltered(
               colorFilter: coverGrayscale,
               child: Image(
                 image: CoverImage(url)
-                    .resized(_side, MediaQuery.devicePixelRatioOf(context)),
+                    .resized(side, MediaQuery.devicePixelRatioOf(context)),
                 fit: BoxFit.cover,
                 excludeFromSemantics: true,
                 errorBuilder: (_, _, _) => const SizedBox.shrink(),

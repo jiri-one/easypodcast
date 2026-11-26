@@ -72,11 +72,25 @@ void main() {
     final title = app.episode(101);
     try {
       final artwork = _inRow(title, find.byType(RawImage));
+      final name = _inRow(title, find.text(podcast.title));
       expect(tester.widget<RawImage>(artwork).image, isNotNull);
       expect(tester.getSize(artwork).aspectRatio, 1);
       expect(
-        tester.getTopLeft(artwork).dy,
-        tester.getTopLeft(_inRow(title, find.text(podcast.title))).dy,
+        tester.getCenter(artwork).dy,
+        moreOrLessEquals(tester.getCenter(name).dy, epsilon: 1),
+      );
+      expect(
+        tester.getTopLeft(name).dx,
+        greaterThan(tester.getTopRight(artwork).dx),
+      );
+      final episodeTitle = _inRow(title, find.text(title));
+      expect(
+        tester.getTopLeft(episodeTitle).dy,
+        greaterThanOrEqualTo(tester.getBottomLeft(artwork).dy),
+      );
+      expect(
+        tester.getTopLeft(episodeTitle).dx,
+        lessThan(tester.getTopLeft(artwork).dx + 1),
       );
 
       await app.section(LibrarySection.podcasts);
@@ -105,7 +119,7 @@ void main() {
   ) async {
     const url = 'https://podcast.example/loading.png';
     final frame = Completer<ImageInfo>();
-    final thumbnail = const CoverImage(url).resized(52, 1);
+    final thumbnail = const CoverImage(url).resized(44, 1);
     final key = await thumbnail.obtainKey(ImageConfiguration.empty);
     final cache = PaintingBinding.instance.imageCache;
     cache.putIfAbsent(key, () => OneFrameImageStreamCompleter(frame.future));
@@ -115,12 +129,12 @@ void main() {
       tester,
       library: DemoLibrary(firstPodcastCover: url),
     );
-    Finder title(int id) => _inRow(app.episode(id), find.text(app.episode(id)));
+    final podcast = app.services.library.podcast(1)!.title;
+    final name = _inRow(app.episode(101), find.text(podcast));
     final cover = _inRow(app.episode(101), find.byType(RawImage));
     try {
-      final left = tester.getTopLeft(title(101)).dx;
+      final left = tester.getTopLeft(name).dx;
       expect(tester.widget<RawImage>(cover).image, isNull);
-      expect(tester.getTopLeft(title(204)).dx, left);
 
       final recorder = ui.PictureRecorder();
       Canvas(recorder).drawColor(Colors.black, BlendMode.src);
@@ -130,7 +144,7 @@ void main() {
 
       await tester.pumpAndSettle();
       expect(tester.widget<RawImage>(cover).image, isNotNull);
-      expect(tester.getTopLeft(title(101)).dx, left);
+      expect(tester.getTopLeft(name).dx, left);
     } finally {
       await app.finish();
     }
