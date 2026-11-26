@@ -33,6 +33,7 @@ void main() {
           size: size,
           locale: locale,
           desktopFont: desktop ? font : null,
+          playerCover: true,
         );
         Future<void> check(String name) async {
           expect(tester.takeException(), isNull, reason: name);
@@ -86,9 +87,7 @@ void main() {
       expect(tester.getRect(mini), original);
       await app.mini(episode.title);
       expect(find.byType(PlayerPage), findsOneWidget);
-      await app.tapText(
-        l.skipForwardValue(app.services.settings.skipForwardSeconds),
-      );
+      await app.tapText('+${app.services.settings.skipForwardSeconds}');
       expect(player.position.value, stored + const Duration(seconds: 30));
       expect(tester.takeException(), isNull);
     } finally {
@@ -98,28 +97,22 @@ void main() {
   });
 
   testWidgets(
-    'playback time samples each minute and immediately after a skip',
+    'playback clocks sample every second and immediately after a skip',
     (tester) async {
       final app = await _phone(tester);
-      final l = app.strings;
       final player = app.services.player;
-      String remaining(int minutes) =>
-          l.remainingOfTotal(l.minutes(minutes), '55');
       try {
-        await app.mini(l.play);
+        await app.mini(app.strings.play);
         await app.mini(app.episode(101));
-        expect(find.text(remaining(23)), findsOneWidget);
-        await player.seekBy(const Duration(minutes: 3));
-        await tester.pump(const Duration(seconds: 59));
-        expect(find.text(remaining(23)), findsOneWidget);
+        expect(find.text('32:00'), findsOneWidget);
+        expect(find.text('−23:00'), findsOneWidget);
         await tester.pump(const Duration(seconds: 1));
-        expect(find.text(remaining(19)), findsOneWidget);
+        expect(find.text('32:01'), findsOneWidget);
+        expect(find.text('−22:59'), findsOneWidget);
 
-        await player.seekBy(const Duration(minutes: 2));
-        await app.tapText(
-          l.skipForwardValue(app.services.settings.skipForwardSeconds),
-        );
-        expect(find.text(remaining(17)), findsOneWidget);
+        await app.tapText('+30');
+        expect(player.position.value, const Duration(minutes: 32, seconds: 31));
+        expect(find.text('32:31'), findsOneWidget);
       } finally {
         await app.finish();
       }
@@ -239,7 +232,7 @@ void main() {
     },
   );
 
-  testWidgets('enqueue flips in place and queue can move up, down, and first', (
+  testWidgets('enqueue flips in place and tapping a queue row opens its page', (
     tester,
   ) async {
     final app = await _phone(tester);
@@ -260,26 +253,8 @@ void main() {
       );
       await app.back();
       await app.section(LibrarySection.queue);
-      await app.row(l.queueEdit);
-      expect(find.text(l.queueSelect), findsOneWidget);
-      final title = app.episode(201);
-      await app.row(l.numberedTitle(4, title));
-      await app.tapText(l.moveUp);
-      expect(ids(), [203, 401, 201, 602]);
-      await app.tapText(l.moveDown);
-      expect(ids(), [203, 401, 602, 201]);
-      await app.tapText(l.moveToTop);
-      expect(ids(), [201, 203, 401, 602]);
-      expect(
-        tester
-            .widget<EinkRow>(
-              find.widgetWithText(EinkRow, l.numberedTitle(1, title)),
-            )
-            .selected,
-        isTrue,
-      );
-      await app.back();
-      await app.row(l.numberedTitle(1, title));
+      await app.row(l.numberedTitle(4, app.episode(201)));
+      expect(find.byType(EpisodePage), findsOneWidget);
       await app.tapText(l.removeFromQueue);
       expect(ids(), [203, 401, 602]);
     } finally {

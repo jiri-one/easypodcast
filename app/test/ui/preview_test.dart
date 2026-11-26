@@ -49,6 +49,7 @@ void main() {
       tester,
       size: const Size(392, 785),
       locale: const Locale('cs'),
+      playerCover: true,
     );
     try {
       await app.services.player.setSpeed(1.2);
@@ -65,6 +66,7 @@ void main() {
       size: const Size(1000, 700),
       locale: const Locale('cs'),
       desktopFont: family,
+      playerCover: true,
     );
     try {
       await app.services.player.setSpeed(1.2);

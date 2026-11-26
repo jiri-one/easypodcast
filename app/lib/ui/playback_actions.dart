@@ -101,6 +101,12 @@ class PlaybackActions extends ChangeNotifier {
     episodeId: services.player.current?.id,
   );
 
+  Future<void> seekTo(int episodeId, Duration position) {
+    final player = services.player;
+    if (player.current?.id != episodeId) return Future.value();
+    return _run(() => player.seekTo(position), episodeId: episodeId);
+  }
+
   Future<void> speed(double value) =>
       _run(() => services.player.setSpeed(value));
 

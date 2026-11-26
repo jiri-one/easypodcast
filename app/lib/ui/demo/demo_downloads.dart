@@ -16,19 +16,23 @@ class DemoDownloadService extends DownloadService {
   final Library _library;
   late final StreamSubscription<int> _finished;
   final _completed = {204, 101};
-  final _queued = <int>{};
+  final _active = <int, DownloadInfo>{};
 
   void queueDownload(int episodeId) {
-    if (!_completed.contains(episodeId) && _queued.add(episodeId)) {
-      notifyListeners();
-    }
+    if (_completed.contains(episodeId)) return;
+    setDownloadInfo(episodeId, const DownloadInfo(DownloadStatus.queued));
+  }
+
+  void setDownloadInfo(int episodeId, DownloadInfo info) {
+    _completed.remove(episodeId);
+    _active[episodeId] = info;
+    notifyListeners();
   }
 
   @override
   DownloadInfo statusOf(int episodeId) {
-    if (_queued.contains(episodeId)) {
-      return const DownloadInfo(DownloadStatus.queued);
-    }
+    final active = _active[episodeId];
+    if (active != null) return active;
     final file = localFileOf(episodeId);
     return file == null
         ? DownloadInfo.none
@@ -49,14 +53,14 @@ class DemoDownloadService extends DownloadService {
         _library.stateOf(episodeId).isDismissed) {
       return;
     }
-    _queued.remove(episodeId);
+    _active.remove(episodeId);
     if (_completed.add(episodeId)) notifyListeners();
   }
 
   @override
   Future<void> delete(int episodeId) async {
-    final queued = _queued.remove(episodeId);
-    if (_completed.remove(episodeId) || queued) notifyListeners();
+    final active = _active.remove(episodeId);
+    if (_completed.remove(episodeId) || active != null) notifyListeners();
   }
 
   @override

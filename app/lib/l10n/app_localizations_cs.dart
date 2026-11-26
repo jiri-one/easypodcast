@@ -39,6 +39,17 @@ class AppLocalizationsCs extends AppLocalizations {
   String get player => 'Přehrávač';
 
   @override
+  String get playerRedraw => 'Překreslování času v přehrávači';
+
+  @override
+  String get seekPlayback => 'Pozice přehrávání';
+
+  @override
+  String nextInQueue(String title) {
+    return 'Další ve frontě: $title';
+  }
+
+  @override
   String get play => 'Přehrát';
 
   @override
@@ -72,13 +83,15 @@ class AppLocalizationsCs extends AppLocalizations {
   String get stateDismissed => 'vyřazený';
 
   @override
-  String get stateDownloaded => 'stažený';
+  String get stateDownloaded => 'staženo';
 
   @override
   String get stateInQueue => 've frontě';
 
   @override
-  String get stateDownloading => 'Stahuji…';
+  String stateDownloading(int percent) {
+    return 'stahuji $percent %';
+  }
 
   @override
   String get stateWaitingForWifi => 'čeká na Wi-Fi';
@@ -123,25 +136,7 @@ class AppLocalizationsCs extends AppLocalizations {
   String get selectEpisode => 'Vyber díl v seznamu.';
 
   @override
-  String get queueEdit => 'Upravit pořadí';
-
-  @override
-  String get queueOrder => 'Pořadí fronty';
-
-  @override
-  String get queueSelect => 'Klepni na díl, který chceš posunout.';
-
-  @override
-  String get queueLoading => 'Načítám frontu…';
-
-  @override
-  String get moveUp => 'Výš';
-
-  @override
-  String get moveDown => 'Níž';
-
-  @override
-  String get moveToTop => 'Na začátek fronty';
+  String get episodeActions => 'Akce dílu';
 
   @override
   String get addToQueue => 'Přidat do fronty';
@@ -153,13 +148,27 @@ class AppLocalizationsCs extends AppLocalizations {
   String get download => 'Stáhnout';
 
   @override
+  String downloadProgress(int percent) {
+    return 'Stahuji… $percent %';
+  }
+
+  @override
+  String get waitingForWifi => 'Čeká na Wi-Fi';
+
+  @override
+  String get waitingForDownload => 'Čeká na stažení';
+
+  @override
   String get deleteFile => 'Smazat soubor';
 
   @override
   String get cancelDownload => 'Zrušit stahování';
 
   @override
-  String get retryDownload => 'Zkusit stáhnout znovu';
+  String get cancelDownloadTitle => 'Zrušit stahování?';
+
+  @override
+  String get retryDownload => 'Stahování selhalo, zkusit znovu';
 
   @override
   String get markPlayed => 'Označit jako přehrané';

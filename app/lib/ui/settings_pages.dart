@@ -17,8 +17,10 @@ class SettingsPage extends StatelessWidget {
     super.key,
     required this.playback,
     required this.alphabetical,
-    required this.sortFailed,
+    required this.preferencesFailed,
     required this.onAlphabetical,
+    required this.redrawSeconds,
+    required this.onRedrawSeconds,
     required this.downloadsAvailable,
     required this.onServer,
     required this.onFeeds,
@@ -27,8 +29,10 @@ class SettingsPage extends StatelessWidget {
 
   final PlaybackActions playback;
   final bool alphabetical;
-  final bool sortFailed;
+  final bool preferencesFailed;
   final VoidCallback onAlphabetical;
+  final int redrawSeconds;
+  final ValueChanged<int> onRedrawSeconds;
   final bool downloadsAvailable;
   final VoidCallback onServer;
   final VoidCallback onFeeds;
@@ -68,18 +72,26 @@ class SettingsPage extends StatelessWidget {
           trailing: const Icon(Icons.chevron_right),
           onPressed: () => showSpeedChoices(context, playback),
         ),
-        _SkipRow(
+        _SecondsRow(
           title: strings.skipBack,
           options: const [10, 15, 30],
           value: settings.skipBackSeconds,
           onChange: (value) => settings.skipBackSeconds = value,
         ),
-        _SkipRow(
+        _SecondsRow(
           title: strings.skipForward,
           options: const [15, 30, 60],
           value: settings.skipForwardSeconds,
           onChange: (value) => settings.skipForwardSeconds = value,
         ),
+        if (downloadsAvailable)
+          _SecondsRow(
+            title: strings.playerRedraw,
+            options: const [1, 10, 60],
+            value: redrawSeconds,
+            onChange: onRedrawSeconds,
+            showMinute: true,
+          ),
         if (downloadsAvailable) ...[
           _ToggleRow(
             title: strings.downloadWifi,
@@ -99,7 +111,7 @@ class SettingsPage extends StatelessWidget {
           value: alphabetical,
           onPressed: onAlphabetical,
         ),
-        if (sortFailed) ProblemBox(strings.actionFailed),
+        if (preferencesFailed) ProblemBox(strings.actionFailed),
         EinkRow(
           title: strings.feedStatus,
           trailing: const Icon(Icons.chevron_right),
@@ -162,18 +174,20 @@ class _ToggleRow extends StatelessWidget {
   );
 }
 
-class _SkipRow extends StatelessWidget {
-  const _SkipRow({
+class _SecondsRow extends StatelessWidget {
+  const _SecondsRow({
     required this.title,
     required this.options,
     required this.value,
     required this.onChange,
+    this.showMinute = false,
   });
 
   final String title;
   final List<int> options;
   final int value;
   final ValueChanged<int> onChange;
+  final bool showMinute;
 
   @override
   Widget build(BuildContext context) {
@@ -197,7 +211,9 @@ class _SkipRow extends StatelessWidget {
                       widthFactor: 1,
                       heightFactor: 1,
                       child: Text(
-                        strings.seconds(seconds),
+                        showMinute && seconds == 60
+                            ? strings.minutes(1)
+                            : strings.seconds(seconds),
                         textAlign: TextAlign.center,
                       ),
                     ),

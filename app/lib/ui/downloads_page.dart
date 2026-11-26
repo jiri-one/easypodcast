@@ -19,12 +19,16 @@ class DownloadsPage extends StatefulWidget {
     super.key,
     required this.playback,
     required this.requestedIds,
+    required this.wifiConnected,
     required this.onOpen,
+    required this.onMenu,
   });
 
   final PlaybackActions playback;
   final Set<int> requestedIds;
+  final ValueListenable<bool?> wifiConnected;
   final ValueChanged<Episode> onOpen;
+  final ValueChanged<Episode> onMenu;
 
   @override
   State<DownloadsPage> createState() => _DownloadsPageState();
@@ -181,7 +185,9 @@ class _DownloadsPageState extends State<DownloadsPage> {
           kind: EpisodeListKind.downloads,
           episodes: episodes,
           playback: widget.playback,
+          wifiConnected: widget.wifiConnected,
           onOpen: widget.onOpen,
+          onMenu: widget.onMenu,
           fileSizes: storage?.sizes ?? const {},
           actions: [if (storage != null) _storageLine(context, storage)],
         );

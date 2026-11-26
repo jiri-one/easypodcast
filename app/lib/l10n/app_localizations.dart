@@ -153,6 +153,24 @@ abstract class AppLocalizations {
   /// **'Player'**
   String get player;
 
+  /// No description provided for @playerRedraw.
+  ///
+  /// In en, this message translates to:
+  /// **'Player time refresh interval'**
+  String get playerRedraw;
+
+  /// No description provided for @seekPlayback.
+  ///
+  /// In en, this message translates to:
+  /// **'Playback position'**
+  String get seekPlayback;
+
+  /// No description provided for @nextInQueue.
+  ///
+  /// In en, this message translates to:
+  /// **'Next in queue: {title}'**
+  String nextInQueue(String title);
+
   /// No description provided for @play.
   ///
   /// In en, this message translates to:
@@ -234,8 +252,8 @@ abstract class AppLocalizations {
   /// No description provided for @stateDownloading.
   ///
   /// In en, this message translates to:
-  /// **'Downloading…'**
-  String get stateDownloading;
+  /// **'downloading {percent}%'**
+  String stateDownloading(int percent);
 
   /// No description provided for @stateWaitingForWifi.
   ///
@@ -321,47 +339,11 @@ abstract class AppLocalizations {
   /// **'Select an episode from the list.'**
   String get selectEpisode;
 
-  /// No description provided for @queueEdit.
+  /// No description provided for @episodeActions.
   ///
   /// In en, this message translates to:
-  /// **'Edit order'**
-  String get queueEdit;
-
-  /// No description provided for @queueOrder.
-  ///
-  /// In en, this message translates to:
-  /// **'Queue order'**
-  String get queueOrder;
-
-  /// No description provided for @queueSelect.
-  ///
-  /// In en, this message translates to:
-  /// **'Select the episode you want to move.'**
-  String get queueSelect;
-
-  /// No description provided for @queueLoading.
-  ///
-  /// In en, this message translates to:
-  /// **'Loading queue…'**
-  String get queueLoading;
-
-  /// No description provided for @moveUp.
-  ///
-  /// In en, this message translates to:
-  /// **'Move up'**
-  String get moveUp;
-
-  /// No description provided for @moveDown.
-  ///
-  /// In en, this message translates to:
-  /// **'Move down'**
-  String get moveDown;
-
-  /// No description provided for @moveToTop.
-  ///
-  /// In en, this message translates to:
-  /// **'Move to top'**
-  String get moveToTop;
+  /// **'Episode actions'**
+  String get episodeActions;
 
   /// No description provided for @addToQueue.
   ///
@@ -381,6 +363,24 @@ abstract class AppLocalizations {
   /// **'Download'**
   String get download;
 
+  /// No description provided for @downloadProgress.
+  ///
+  /// In en, this message translates to:
+  /// **'Downloading… {percent}%'**
+  String downloadProgress(int percent);
+
+  /// No description provided for @waitingForWifi.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting for Wi-Fi'**
+  String get waitingForWifi;
+
+  /// No description provided for @waitingForDownload.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting to download'**
+  String get waitingForDownload;
+
   /// No description provided for @deleteFile.
   ///
   /// In en, this message translates to:
@@ -393,10 +393,16 @@ abstract class AppLocalizations {
   /// **'Cancel download'**
   String get cancelDownload;
 
+  /// No description provided for @cancelDownloadTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel download?'**
+  String get cancelDownloadTitle;
+
   /// No description provided for @retryDownload.
   ///
   /// In en, this message translates to:
-  /// **'Retry download'**
+  /// **'Download failed, try again'**
   String get retryDownload;
 
   /// No description provided for @markPlayed.

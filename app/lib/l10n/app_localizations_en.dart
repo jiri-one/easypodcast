@@ -39,6 +39,17 @@ class AppLocalizationsEn extends AppLocalizations {
   String get player => 'Player';
 
   @override
+  String get playerRedraw => 'Player time refresh interval';
+
+  @override
+  String get seekPlayback => 'Playback position';
+
+  @override
+  String nextInQueue(String title) {
+    return 'Next in queue: $title';
+  }
+
+  @override
   String get play => 'Play';
 
   @override
@@ -78,7 +89,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get stateInQueue => 'queued';
 
   @override
-  String get stateDownloading => 'Downloading…';
+  String stateDownloading(int percent) {
+    return 'downloading $percent%';
+  }
 
   @override
   String get stateWaitingForWifi => 'waiting for Wi-Fi';
@@ -124,25 +137,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get selectEpisode => 'Select an episode from the list.';
 
   @override
-  String get queueEdit => 'Edit order';
-
-  @override
-  String get queueOrder => 'Queue order';
-
-  @override
-  String get queueSelect => 'Select the episode you want to move.';
-
-  @override
-  String get queueLoading => 'Loading queue…';
-
-  @override
-  String get moveUp => 'Move up';
-
-  @override
-  String get moveDown => 'Move down';
-
-  @override
-  String get moveToTop => 'Move to top';
+  String get episodeActions => 'Episode actions';
 
   @override
   String get addToQueue => 'Add to queue';
@@ -154,13 +149,27 @@ class AppLocalizationsEn extends AppLocalizations {
   String get download => 'Download';
 
   @override
+  String downloadProgress(int percent) {
+    return 'Downloading… $percent%';
+  }
+
+  @override
+  String get waitingForWifi => 'Waiting for Wi-Fi';
+
+  @override
+  String get waitingForDownload => 'Waiting to download';
+
+  @override
   String get deleteFile => 'Delete file';
 
   @override
   String get cancelDownload => 'Cancel download';
 
   @override
-  String get retryDownload => 'Retry download';
+  String get cancelDownloadTitle => 'Cancel download?';
+
+  @override
+  String get retryDownload => 'Download failed, try again';
 
   @override
   String get markPlayed => 'Mark as played';

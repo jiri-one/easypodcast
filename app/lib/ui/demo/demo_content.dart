@@ -7,7 +7,7 @@ typedef DemoContent = ({
   QueueState queue,
 });
 
-DemoContent createDemoContent() {
+DemoContent createDemoContent({String? firstPodcastCover}) {
   final now = nowUtc();
   final local = now.toLocal();
   final today = DateTime(local.year, local.month, local.day);
@@ -23,6 +23,7 @@ DemoContent createDemoContent() {
       title: show.title,
       author: show.author,
       description: show.description,
+      imageUrl: id == 1 ? firstPodcastCover : null,
       episodeCount: count,
       episodesVersion: '1',
       lastSuccessAt: now.subtract(

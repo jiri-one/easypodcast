@@ -1,8 +1,11 @@
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../core/downloads.dart';
+import '../core/services.dart';
+import '../core/sync.dart';
 import '../l10n/app_localizations.dart';
 import 'theme.dart';
 
@@ -108,6 +111,7 @@ class EinkRow extends StatelessWidget {
     this.trailing,
     this.onPressed,
     this.selected,
+    this.lifted = false,
     this.toggled,
     this.underlined = false,
     this.compact = false,
@@ -121,6 +125,7 @@ class EinkRow extends StatelessWidget {
   final Widget? trailing;
   final VoidCallback? onPressed;
   final bool? selected;
+  final bool lifted;
   final bool? toggled;
   final bool underlined;
   final bool compact;
@@ -129,7 +134,7 @@ class EinkRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final inverted = selected ?? false;
+    final inverted = lifted || selected == true;
     final padding = EdgeInsets.symmetric(
       horizontal: desktop ? 16 : 12,
       vertical: compact ? 6 : 10,
@@ -209,6 +214,8 @@ class EinkButton extends StatelessWidget {
     this.icon,
     this.minHeight = 48,
     this.alternatives = const [],
+    this.progress,
+    this.error = false,
   });
 
   final String label;
@@ -218,10 +225,12 @@ class EinkButton extends StatelessWidget {
   final IconData? icon;
   final double minHeight;
   final List<String> alternatives;
+  final int? progress;
+  final bool error;
 
   Widget _button(TextStyle labelStyle, double height) {
     const padding = EdgeInsets.symmetric(horizontal: 8, vertical: 6);
-    final style =
+    var style =
         (selected == null
                 ? const ButtonStyle()
                 : choiceButtonStyle(selected: selected!))
@@ -231,31 +240,82 @@ class EinkButton extends StatelessWidget {
               textStyle: WidgetStatePropertyAll(labelStyle),
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             );
+    if (error) {
+      style = style.copyWith(
+        side: WidgetStateProperty.resolveWith(
+          (states) =>
+              BorderSide(width: states.contains(WidgetState.focused) ? 3 : 2),
+        ),
+      );
+    }
     final text = Text(label, textAlign: TextAlign.center);
-    final content = icon == null
-        ? text
-        : Row(
-            mainAxisSize: MainAxisSize.min,
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon, size: 20),
-              const SizedBox(width: 6),
-              Flexible(child: text),
-            ],
-          );
+    final Widget content;
+    if (progress case final int percent) {
+      final fill = percent / 100;
+      style = style.copyWith(
+        padding: const WidgetStatePropertyAll(EdgeInsets.zero),
+      );
+      content = Stack(
+        alignment: Alignment.center,
+        children: [
+          Positioned.fill(
+            child: FractionallySizedBox(
+              widthFactor: fill,
+              alignment: Alignment.centerLeft,
+              child: const ColoredBox(color: Colors.black),
+            ),
+          ),
+          ShaderMask(
+            blendMode: BlendMode.srcIn,
+            shaderCallback: (bounds) => LinearGradient(
+              begin: Alignment.centerLeft,
+              end: Alignment.centerRight,
+              colors: const [Colors.white, Colors.black],
+              stops: [fill, fill],
+            ).createShader(bounds),
+            child: Container(
+              width: double.infinity,
+              constraints: BoxConstraints(minHeight: height),
+              padding: padding,
+              alignment: Alignment.center,
+              child: text,
+            ),
+          ),
+        ],
+      );
+    } else if (icon case final IconData icon) {
+      content = Row(
+        mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, size: 20),
+          const SizedBox(width: 6),
+          Flexible(child: text),
+        ],
+      );
+    } else {
+      content = text;
+    }
     if (primary) {
       return FilledButton(onPressed: onPressed, style: style, child: content);
     }
     return Semantics(
       selected: selected,
-      child: OutlinedButton(onPressed: onPressed, style: style, child: content),
+      child: OutlinedButton(
+        onPressed: onPressed,
+        style: style,
+        clipBehavior: progress == null ? Clip.none : Clip.antiAlias,
+        child: content,
+      ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final style = Theme.of(context).textTheme.labelLarge!
-        .merge(buttonLabelStyle);
+    final labelStyle = error
+        ? buttonLabelStyle.copyWith(fontWeight: FontWeight.w700)
+        : buttonLabelStyle;
+    final style = Theme.of(context).textTheme.labelLarge!.merge(labelStyle);
     if (alternatives.isEmpty) return _button(style, minHeight);
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -267,8 +327,7 @@ class EinkButton extends StatelessWidget {
           textDirection: Directionality.of(context),
           textScaler: MediaQuery.textScalerOf(context),
         );
-        final style = DefaultTextStyle.of(context).style
-            .merge(buttonLabelStyle);
+        final style = DefaultTextStyle.of(context).style.merge(labelStyle);
         var height = minHeight;
         for (final text in [label, ...alternatives]) {
           painter.text = TextSpan(text: text, style: style);
@@ -367,7 +426,7 @@ class EinkDialogPanel extends StatelessWidget {
 Future<bool> confirmAction(
   BuildContext context, {
   required String title,
-  required String message,
+  String? message,
   required String action,
 }) async {
   final cancel = context.strings.cancel;
@@ -457,56 +516,101 @@ class LabeledField extends StatelessWidget {
   );
 }
 
+typedef DownloadDisplay = ({
+  DownloadStatus status,
+  int percent,
+  bool waitingForWifi,
+});
+
+const DownloadDisplay noDownload = (
+  status: DownloadStatus.none,
+  percent: 0,
+  waitingForWifi: false,
+);
+
 class DownloadStatusView extends StatefulWidget {
   const DownloadStatusView({
     super.key,
-    required this.downloads,
+    required this.services,
+    required this.wifiConnected,
     required this.episodeId,
     required this.builder,
   });
 
-  final DownloadService downloads;
+  final AppServices services;
+  final ValueListenable<bool?> wifiConnected;
   final int episodeId;
-  final Widget Function(BuildContext context, DownloadStatus status) builder;
+  final Widget Function(BuildContext context, DownloadDisplay download) builder;
 
   @override
   State<DownloadStatusView> createState() => _DownloadStatusViewState();
 }
 
 class _DownloadStatusViewState extends State<DownloadStatusView> {
-  late DownloadStatus _status;
+  late ({DownloadStatus status, int percent}) _download;
 
-  DownloadStatus get _current =>
-      widget.downloads.statusOf(widget.episodeId).status;
+  ({DownloadStatus status, int percent}) get _current {
+    final info = widget.services.downloads.statusOf(widget.episodeId);
+    return (
+      status: info.status,
+      percent: info.status == DownloadStatus.running
+          ? (info.progress.clamp(0.0, 1.0) * 10).floor() * 10
+          : 0,
+    );
+  }
 
   @override
   void initState() {
     super.initState();
-    _status = _current;
-    widget.downloads.addListener(_changed);
+    _download = _current;
+    widget.services.downloads.addListener(_changed);
   }
 
   @override
   void didUpdateWidget(DownloadStatusView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.downloads != widget.downloads) {
-      oldWidget.downloads.removeListener(_changed);
-      widget.downloads.addListener(_changed);
+    if (oldWidget.services.downloads != widget.services.downloads) {
+      oldWidget.services.downloads.removeListener(_changed);
+      widget.services.downloads.addListener(_changed);
     }
-    _status = _current;
+    _download = _current;
   }
 
   void _changed() {
     final next = _current;
-    if (_status != next) setState(() => _status = next);
+    if (_download != next) setState(() => _download = next);
   }
 
   @override
   void dispose() {
-    widget.downloads.removeListener(_changed);
+    widget.services.downloads.removeListener(_changed);
     super.dispose();
   }
 
   @override
-  Widget build(BuildContext context) => widget.builder(context, _status);
+  Widget build(BuildContext context) {
+    if (_download.status != DownloadStatus.queued ||
+        !widget.services.settings.downloadOnWifiOnly) {
+      return _build(context, waitingForWifi: false);
+    }
+    return ValueListenableBuilder(
+      valueListenable: widget.wifiConnected,
+      builder: (context, wifi, _) => wifi == null
+          ? ValueListenableBuilder(
+              valueListenable: widget.services.sync.status,
+              builder: (context, sync, _) => _build(
+                context,
+                waitingForWifi: sync.phase == SyncPhase.offline,
+              ),
+            )
+          : _build(context, waitingForWifi: !wifi),
+    );
+  }
+
+  Widget _build(BuildContext context, {required bool waitingForWifi}) =>
+      widget.builder(context, (
+        status: _download.status,
+        percent: _download.percent,
+        waitingForWifi: waitingForWifi,
+      ));
 }

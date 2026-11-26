@@ -1,17 +1,22 @@
 import 'dart:io';
+import 'dart:ui' as ui;
 
+import 'package:easypodcast/core/downloads.dart';
 import 'package:easypodcast/core/services.dart';
 import 'package:easypodcast/l10n/app_localizations.dart';
 import 'package:easypodcast/ui/app_root.dart';
 import 'package:easypodcast/ui/demo/demo_api.dart';
 import 'package:easypodcast/ui/demo/demo_downloads.dart';
+import 'package:easypodcast/ui/demo/demo_library.dart';
 import 'package:easypodcast/ui/demo/demo_services.dart';
 import 'package:easypodcast/ui/demo/demo_sync.dart';
 import 'package:easypodcast/ui/eink_widgets.dart';
 import 'package:easypodcast/ui/library_views.dart';
+import 'package:easypodcast/ui/playback_position.dart';
 import 'package:easypodcast/ui/player_views.dart';
 import 'package:easypodcast/ui/podcast_home.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
@@ -67,9 +72,17 @@ class UiHarness {
     required Locale locale,
     String? desktopFont,
     bool loggedIn = true,
+    DemoLibrary? library,
+    bool playerCover = false,
   }) async {
     final desktop = desktopFont != null;
-    final services = await createDemoServices(loggedIn: loggedIn);
+    if (playerCover) _cacheCover();
+    final services = await createDemoServices(
+      loggedIn: loggedIn,
+      library:
+          library ??
+          (playerCover ? DemoLibrary(firstPodcastCover: _coverUrl) : null),
+    );
     final app = UiHarness._(tester, services, desktop);
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1;
@@ -124,6 +137,25 @@ class UiHarness {
   Future<void> tapText(String text) => tap(find.text(text));
 
   Future<void> row(String title) => tap(find.widgetWithText(EinkRow, title));
+
+  Future<void> holdRow(String title, {bool rightClick = false}) async {
+    final row = find.widgetWithText(EinkRow, title);
+    await tester.ensureVisible(row);
+    await tester.pumpAndSettle();
+    if (rightClick) {
+      await tester.tap(
+        row,
+        kind: PointerDeviceKind.mouse,
+        buttons: kSecondaryMouseButton,
+      );
+    } else {
+      await tester.longPress(
+        row,
+        kind: desktop ? PointerDeviceKind.mouse : PointerDeviceKind.touch,
+      );
+    }
+    await tester.pumpAndSettle();
+  }
 
   Future<void> scrollToRow(
     String title,
@@ -184,10 +216,70 @@ class UiHarness {
   }
 }
 
+const _coverUrl = 'https://podcast.example/1/cover.png';
+
+void _cacheCover() {
+  const key = NetworkImage(_coverUrl);
+  final cache = PaintingBinding.instance.imageCache;
+  cache.putIfAbsent(key, () {
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    const size = Size.square(192);
+    final paint = Paint()..color = const Color(0xffb4cbd3);
+    canvas.drawRect(Offset.zero & size, paint);
+    paint.color = const Color(0xffe5c596);
+    canvas.drawCircle(const Offset(136, 55), 24, paint);
+    paint.color = const Color(0xff506e62);
+    canvas.drawPath(
+      Path()
+        ..moveTo(0, 100)
+        ..lineTo(43, 58)
+        ..lineTo(73, 88)
+        ..lineTo(108, 70)
+        ..lineTo(192, 108)
+        ..lineTo(192, 192)
+        ..lineTo(0, 192)
+        ..close(),
+      paint,
+    );
+    paint
+      ..color = const Color(0xffd7cca5)
+      ..strokeWidth = 3;
+    for (final (y, halfWidth) in const [
+      (102.0, 9.0),
+      (116.0, 15.0),
+      (136.0, 22.0),
+      (161.0, 32.0),
+      (189.0, 45.0),
+    ]) {
+      canvas.drawLine(
+        Offset(99 - halfWidth, y),
+        Offset(99 + halfWidth, y),
+        paint,
+      );
+    }
+    paint
+      ..color = const Color(0xff292e39)
+      ..strokeWidth = 5;
+    canvas.drawLine(const Offset(94, 93), const Offset(60, 192), paint);
+    canvas.drawLine(const Offset(104, 93), const Offset(138, 192), paint);
+    final picture = recorder.endRecording();
+    final image = picture.toImageSync(192, 192);
+    picture.dispose();
+    return OneFrameImageStreamCompleter(Future.value(ImageInfo(image: image)));
+  });
+  addTearDown(() => cache.evict(key));
+}
+
 typedef VisitScreen = Future<void> Function(String name);
 
 Future<void> tourPhone(UiHarness app, VisitScreen visit) async {
   final l = app.strings;
+  final downloads = app.services.downloads as DemoDownloadService;
+  const running = DownloadInfo(DownloadStatus.running, progress: 0.43);
+  downloads.setDownloadInfo(704, running);
+  downloads.setDownloadInfo(203, running);
+  await app.tester.pumpAndSettle();
   await visit('01-in-progress');
   await app.menu();
   await visit('02-list-switcher');
@@ -203,6 +295,12 @@ Future<void> tourPhone(UiHarness app, VisitScreen visit) async {
   await app.mini(l.play);
   await app.mini(app.episode(101));
   await visit('05-player');
+  final track = app.tester.getRect(find.byKey(PlaybackTimeline.trackKey));
+  final seek = await app.tester.startGesture(track.center);
+  await seek.moveTo(track.center + Offset(track.width / 5, 0));
+  await visit('27-player-seeking');
+  await seek.cancel();
+  await app.tester.pumpAndSettle();
   await app.tapText(l.speed);
   await visit('06-speed');
   await app.dialog(l.close);
@@ -213,13 +311,18 @@ Future<void> tourPhone(UiHarness app, VisitScreen visit) async {
   await app.dialog(l.sleepOff);
   await app.back();
 
+  await app.services.library.enqueue(101, next: true);
   await app.section(LibrarySection.queue);
   await visit('07-queue');
-  await app.row(l.queueEdit);
-  await app.row(l.numberedTitle(2, app.episode(401)));
-  await visit('08-queue-order');
+  final downloading = l.numberedTitle(2, app.episode(203));
+  await app.holdRow(downloading);
+  await visit('08-episode-actions');
+  await app.dialog(l.close);
+  await app.row(downloading);
+  await visit('26-downloading-episode');
   await app.back();
-  await app.back();
+  await downloads.delete(203);
+  await downloads.delete(704);
 
   await app.section(LibrarySection.newEpisodes);
   await visit('09-new-episodes');
@@ -251,7 +354,7 @@ Future<void> tourPhone(UiHarness app, VisitScreen visit) async {
   await app.back();
 
   (app.services.sync as DemoSyncService).setOffline();
-  (app.services.downloads as DemoDownloadService).queueDownload(602);
+  downloads.queueDownload(602);
   await app.section(LibrarySection.downloads);
   await visit('13-downloads-offline');
   await app.back();
@@ -309,17 +412,9 @@ Future<void> tourDesktop(
   await app.dialog(l.close);
   await app.section(LibrarySection.queue);
   await visit('pc-queue');
-  await app.row(l.queueEdit);
-  await app.tap(
-    find.descendant(
-      of: find.byType(QueueEditor),
-      matching: find.widgetWithText(
-        EinkRow,
-        l.numberedTitle(2, app.episode(401)),
-      ),
-    ),
-  );
-  await visit('pc-reorder');
+  await app.holdRow(l.numberedTitle(2, app.episode(401)), rightClick: true);
+  await visit('pc-episode-actions');
+  await app.dialog(l.close);
   await app.section(LibrarySection.newEpisodes);
   await app.openEpisode(201);
   await visit('pc-new');

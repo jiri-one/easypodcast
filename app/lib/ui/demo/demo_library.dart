@@ -6,7 +6,8 @@ import '../../core/models.dart';
 import 'demo_content.dart';
 
 class DemoLibrary extends Library {
-  DemoLibrary() : this._(createDemoContent());
+  DemoLibrary({String? firstPodcastCover})
+    : this._(createDemoContent(firstPodcastCover: firstPodcastCover));
 
   DemoLibrary._(DemoContent content)
     : _podcasts = content.podcasts,

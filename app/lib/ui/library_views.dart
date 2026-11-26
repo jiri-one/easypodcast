@@ -1,9 +1,11 @@
+import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../core/downloads.dart';
 import '../core/models.dart';
 import '../core/sync.dart';
 import 'eink_widgets.dart';
+import 'episode_queue.dart';
 import 'episode_text.dart';
 import 'feed_refresh.dart';
 import 'playback_actions.dart';
@@ -106,6 +108,8 @@ class EpisodeList extends StatelessWidget {
     required this.episodes,
     required this.playback,
     required this.onOpen,
+    required this.onMenu,
+    required this.wifiConnected,
     this.actions = const [],
     this.desktop = false,
     this.downloadsAvailable = true,
@@ -117,6 +121,8 @@ class EpisodeList extends StatelessWidget {
   final List<Episode> episodes;
   final PlaybackActions playback;
   final ValueChanged<Episode> onOpen;
+  final ValueChanged<Episode> onMenu;
+  final ValueListenable<bool?> wifiConnected;
   final List<Widget> actions;
   final bool desktop;
   final bool downloadsAvailable;
@@ -126,6 +132,17 @@ class EpisodeList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final strings = context.strings;
+    if (kind == EpisodeListKind.queue) {
+      return EpisodeQueue(
+        key: key ?? PageStorageKey(kind),
+        library: playback.services.library,
+        episodes: episodes,
+        header: ListProblems(playback: playback),
+        onMenu: onMenu,
+        rowBuilder: (context, episode, index, lifted) =>
+            _episodeRow(context, episode, index, queued: true, lifted: lifted),
+      );
+    }
     final queued = switch (kind) {
       EpisodeListKind.podcast || EpisodeListKind.newEpisodes =>
         playback.services.library.queue.map((episode) => episode.id).toSet(),
@@ -154,7 +171,7 @@ class EpisodeList extends StatelessWidget {
               context,
               episode,
               index,
-              queued.contains(episode.id),
+              queued: queued.contains(episode.id),
             );
             if (kind == EpisodeListKind.newEpisodes &&
                 (index == 0 ||
@@ -191,9 +208,10 @@ class EpisodeList extends StatelessWidget {
   Widget _episodeRow(
     BuildContext context,
     Episode episode,
-    int index,
-    bool queued,
-  ) {
+    int index, {
+    required bool queued,
+    bool lifted = false,
+  }) {
     final strings = context.strings;
     final library = playback.services.library;
     final state = library.stateOf(episode.id);
@@ -216,16 +234,9 @@ class EpisodeList extends StatelessWidget {
     };
 
     final row = desktop ? EpisodeRowKey(episode) : ValueKey(episode.id);
-    Widget buildRow(BuildContext context, DownloadStatus download) {
-      final wifiOnly = playback.services.settings.downloadOnWifiOnly;
-      final waitingForWifi =
-          wifiOnly &&
-          playback.services.sync.status.value.phase == SyncPhase.offline;
-      final downloadText = downloadStateText(
-        strings,
-        download,
-        waitingForWifi: waitingForWifi,
-      );
+    Widget buildRow(BuildContext context, DownloadDisplay download) {
+      final downloadText = downloadStateText(strings, download);
+      final downloaded = download.status == DownloadStatus.done;
       final parts = switch (kind) {
         EpisodeListKind.inProgress => [status, ?downloadText],
         EpisodeListKind.queue => [
@@ -246,35 +257,45 @@ class EpisodeList extends StatelessWidget {
           if (queued) strings.stateInQueue,
           ?downloadText,
         ],
-        EpisodeListKind.downloads when download == DownloadStatus.done => [
+        EpisodeListKind.downloads when downloaded => [
           status,
           if (fileSizes[episode.id] case final int bytes)
-            bytesText(strings, bytes)
-          else
-            strings.stateDownloaded,
+            bytesText(strings, bytes),
         ],
         EpisodeListKind.downloads => [?downloadText],
       };
-      return EinkRow(
+      final content = EinkRow(
         key: row,
         title: kind == EpisodeListKind.queue
             ? strings.numberedTitle(index + 1, episode.title)
             : episode.title,
         selected: desktop ? episode.id == selectedId : null,
+        lifted: lifted,
         desktop: desktop,
         onPressed: () => onOpen(episode),
         details: [
           if (kind != EpisodeListKind.podcast && podcast != null)
             Text(podcast, style: detailStyle),
-          if (parts.isNotEmpty)
+          if (parts.isNotEmpty || downloaded)
             metadataLine(
-              parts.first,
+              parts.firstOrNull ?? '',
               parts.skip(1),
               bold:
-                  (playing && parts.first == status) ||
-                  (kind == EpisodeListKind.podcast && state.isNew),
+                  parts.isNotEmpty &&
+                  ((playing && parts.first == status) ||
+                      (kind == EpisodeListKind.podcast && state.isNew)),
+              trailing: downloaded
+                  ? Icon(
+                      Icons.download_done,
+                      size: 16,
+                      color: lifted || (desktop && episode.id == selectedId)
+                          ? Colors.white
+                          : Colors.black,
+                      semanticLabel: strings.stateDownloaded,
+                    )
+                  : null,
             ),
-          if (download == DownloadStatus.failed)
+          if (download.status == DownloadStatus.failed)
             Padding(
               padding: const EdgeInsets.only(top: 4),
               child: DefaultTextStyle.merge(
@@ -284,19 +305,26 @@ class EpisodeList extends StatelessWidget {
             ),
         ],
       );
+      void showMenu() => onMenu(episode);
+      return Semantics(
+        onLongPress: showMenu,
+        onLongPressHint: strings.episodeActions,
+        child: GestureDetector(
+          excludeFromSemantics: true,
+          onLongPress: kind == EpisodeListKind.queue ? null : showMenu,
+          onSecondaryTap: showMenu,
+          child: content,
+        ),
+      );
     }
 
-    if (!downloadsAvailable) return buildRow(context, DownloadStatus.none);
+    if (!downloadsAvailable) return buildRow(context, noDownload);
     return DownloadStatusView(
       key: ValueKey(episode.id),
-      downloads: playback.services.downloads,
+      services: playback.services,
+      wifiConnected: wifiConnected,
       episodeId: episode.id,
-      builder: (context, status) => status == DownloadStatus.queued
-          ? ValueListenableBuilder(
-              valueListenable: playback.services.sync.status,
-              builder: (context, _, _) => buildRow(context, status),
-            )
-          : buildRow(context, status),
+      builder: buildRow,
     );
   }
 }
@@ -412,124 +440,4 @@ List<Podcast> _alphabetical(List<Podcast> podcasts, String locale) {
     return byLength == 0 ? a.$1.title.compareTo(b.$1.title) : byLength;
   });
   return [for (final entry in entries) entry.$1];
-}
-
-class QueueEditor extends StatefulWidget {
-  const QueueEditor({super.key, required this.playback, this.desktop = false});
-
-  final PlaybackActions playback;
-  final bool desktop;
-
-  @override
-  State<QueueEditor> createState() => _QueueEditorState();
-}
-
-class _QueueEditorState extends State<QueueEditor> {
-  final _scroll = ScrollController();
-  int? _selected;
-  bool _moving = false;
-  bool _failed = false;
-
-  Future<void> _move(int target) async {
-    final selected = _selected;
-    if (selected == null || _moving) return;
-    setState(() {
-      _moving = true;
-      _failed = false;
-    });
-    try {
-      await widget.playback.services.library.moveInQueue(selected, target);
-      if (mounted && target == 0 && _scroll.hasClients) _scroll.jumpTo(0);
-    } on Exception {
-      if (mounted) _failed = true;
-    } finally {
-      if (mounted) setState(() => _moving = false);
-    }
-  }
-
-  @override
-  void dispose() {
-    _scroll.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final strings = context.strings;
-    final queue = widget.playback.services.library.queue;
-    final index = queue.indexWhere((e) => e.id == _selected);
-    final controls = index < 0
-        ? Align(
-            alignment: AlignmentDirectional.centerStart,
-            child: Text(strings.queueSelect, style: buttonLabelStyle),
-          )
-        : Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            spacing: 8,
-            children: [
-              Row(
-                spacing: 8,
-                children: [
-                  Expanded(
-                    child: EinkButton(
-                      strings.moveUp,
-                      icon: Icons.arrow_upward,
-                      onPressed: index == 0 ? null : () => _move(index - 1),
-                    ),
-                  ),
-                  Expanded(
-                    child: EinkButton(
-                      strings.moveDown,
-                      icon: Icons.arrow_downward,
-                      onPressed: index == queue.length - 1
-                          ? null
-                          : () => _move(index + 1),
-                    ),
-                  ),
-                ],
-              ),
-              EinkButton(
-                strings.moveToTop,
-                onPressed: index == 0 ? null : () => _move(0),
-              ),
-            ],
-          );
-    return Column(
-      children: [
-        if (_failed) ProblemBox(strings.actionFailed),
-        if (_moving) PageMessage(strings.queueLoading),
-        if (queue.isEmpty) PageMessage(strings.queueEmpty),
-        Expanded(
-          child: ListView.builder(
-            controller: _scroll,
-            itemCount: queue.length,
-            itemBuilder: (context, i) {
-              final episode = queue[i];
-              return EinkRow(
-                key: ValueKey(episode.id),
-                title: strings.numberedTitle(i + 1, episode.title),
-                onPressed: () => setState(() => _selected = episode.id),
-                selected: episode.id == _selected,
-                desktop: widget.desktop,
-              );
-            },
-          ),
-        ),
-        if (queue.isNotEmpty)
-          DecoratedBox(
-            decoration: const BoxDecoration(
-              border: Border(top: BorderSide(width: 2)),
-            ),
-            child: Container(
-              constraints: const BoxConstraints(minHeight: 122),
-              padding: const EdgeInsets.all(8),
-              width: double.infinity,
-              alignment: Alignment.center,
-              child: controls,
-            ),
-          ),
-      ],
-    );
-  }
 }

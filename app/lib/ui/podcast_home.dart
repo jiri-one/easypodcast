@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
@@ -11,12 +12,14 @@ import 'account_pages.dart';
 import 'app_root.dart';
 import 'downloads_page.dart';
 import 'eink_widgets.dart';
+import 'episode_actions.dart';
 import 'episode_page.dart';
 import 'feed_refresh.dart';
 import 'library_views.dart';
 import 'playback_actions.dart';
 import 'player_views.dart';
 import 'settings_pages.dart';
+import 'theme.dart';
 
 class PodcastHome extends StatelessWidget {
   const PodcastHome({super.key});
@@ -34,17 +37,7 @@ class PodcastHome extends StatelessWidget {
   }
 }
 
-enum _Screen {
-  episode,
-  player,
-  podcast,
-  about,
-  add,
-  reorder,
-  server,
-  feeds,
-  opml,
-}
+enum _Screen { episode, player, podcast, about, add, server, feeds, opml }
 
 typedef _Page = ({_Screen screen, int? id});
 
@@ -57,8 +50,10 @@ class _LibraryHome extends StatefulWidget {
   State<_LibraryHome> createState() => _LibraryHomeState();
 }
 
-class _LibraryHomeState extends State<_LibraryHome> {
+class _LibraryHomeState extends State<_LibraryHome>
+    with WidgetsBindingObserver {
   static const _sortPreference = 'alphabeticalPodcasts';
+  static const _redrawPreference = 'playerRedrawSeconds';
 
   late final _playback = PlaybackActions(widget.services);
   late final _refresh = FeedRefresh(widget.services);
@@ -70,13 +65,19 @@ class _LibraryHomeState extends State<_LibraryHome> {
   ]);
   final _pages = <_Page>[];
   final _requestedDownloads = <int>{};
+  final _downloadWifi = ValueNotifier<bool?>(null);
   final _scrollPositions = PageStorageBucket();
+  StreamSubscription<List<ConnectivityResult>>? _network;
 
   LibrarySection _section = LibrarySection.inProgress;
   bool _menuOpen = false;
+  bool _episodeMenuOpen = false;
   bool _alphabetical = false;
   bool _sortEdited = false;
   bool _sortFailed = false;
+  int _redrawSeconds = 1;
+  bool _redrawEdited = false;
+  bool _redrawFailed = false;
 
   bool get _linux => !kIsWeb && defaultTargetPlatform == TargetPlatform.linux;
   bool get _wide => _linux && MediaQuery.sizeOf(context).width >= 760;
@@ -91,15 +92,50 @@ class _LibraryHomeState extends State<_LibraryHome> {
   @override
   void initState() {
     super.initState();
-    unawaited(_loadSortPreference());
+    unawaited(_loadPreferences());
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      WidgetsBinding.instance.addObserver(this);
+      unawaited(_watchWifi());
+    }
   }
 
-  Future<void> _loadSortPreference() async {
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) unawaited(_watchWifi());
+  }
+
+  Future<void> _watchWifi() async {
+    final connectivity = Connectivity();
+    try {
+      final current = await connectivity.checkConnectivity();
+      if (!mounted) return;
+      _downloadWifi.value = current.contains(ConnectivityResult.wifi);
+      _network ??= connectivity.onConnectivityChanged.listen(
+        (connections) =>
+            _downloadWifi.value = connections.contains(ConnectivityResult.wifi),
+        onError: (Object _) => _downloadWifi.value = null,
+      );
+    } on Exception {
+      if (mounted) _downloadWifi.value = null;
+    }
+  }
+
+  Future<void> _loadPreferences() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      if (!mounted || _sortEdited) return;
-      final sorted = prefs.getBool(_sortPreference) ?? false;
-      if (sorted != _alphabetical) setState(() => _alphabetical = sorted);
+      if (!mounted) return;
+      final sorted = _sortEdited
+          ? _alphabetical
+          : prefs.getBool(_sortPreference) ?? false;
+      final savedRedraw = prefs.getInt(_redrawPreference);
+      final redraw = !_redrawEdited && (savedRedraw == 10 || savedRedraw == 60)
+          ? savedRedraw!
+          : _redrawSeconds;
+      if (sorted == _alphabetical && redraw == _redrawSeconds) return;
+      setState(() {
+        _alphabetical = sorted;
+        _redrawSeconds = redraw;
+      });
     } on Exception {
       if (mounted) setState(() => _sortFailed = true);
     }
@@ -121,8 +157,26 @@ class _LibraryHomeState extends State<_LibraryHome> {
     }
   }
 
+  Future<void> _setRedrawSeconds(int seconds) async {
+    _redrawEdited = true;
+    setState(() => _redrawSeconds = seconds);
+    var saved = false;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      saved = await prefs.setInt(_redrawPreference, seconds);
+    } on Exception {
+      saved = false;
+    }
+    if (mounted && seconds == _redrawSeconds && _redrawFailed == saved) {
+      setState(() => _redrawFailed = !saved);
+    }
+  }
+
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    unawaited(_network?.cancel());
+    _downloadWifi.dispose();
     _playback.dispose();
     _refresh.dispose();
     super.dispose();
@@ -156,6 +210,36 @@ class _LibraryHomeState extends State<_LibraryHome> {
       if (wide) _pages.removeWhere((page) => page.screen != _Screen.podcast);
       _pages.add((screen: _Screen.episode, id: episode.id));
     });
+  }
+
+  Future<void> _openEpisodeMenu(Episode episode) async {
+    if (_episodeMenuOpen) return;
+    _episodeMenuOpen = true;
+    try {
+      await EpisodeActions(
+        episode: episode,
+        playback: _playback,
+        downloadsAvailable: !_linux,
+        wifiConnected: _downloadWifi,
+        onTrackDownload: _requestedDownloads.add,
+      ).showMenu(context);
+    } on Exception {
+      if (!mounted) return;
+      await showEinkDialog<void>(
+        context: context,
+        builder: (context) => EinkDialogPanel(
+          title: context.strings.actionFailed,
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text(context.strings.close, style: buttonLabelStyle),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      _episodeMenuOpen = false;
+    }
   }
 
   void _openPodcast(Podcast podcast) => setState(() {
@@ -455,10 +539,13 @@ class _LibraryHomeState extends State<_LibraryHome> {
         _episodePodcastTitle(page.id!) ?? strings.episodeMissing,
       _Screen.podcast =>
         library.podcast(page.id!)?.title ?? strings.podcastMissing,
-      _Screen.player => strings.player,
+      _Screen.player => switch (_playback.target) {
+        Episode(:final podcastId) =>
+          library.podcast(podcastId)?.title ?? strings.player,
+        null => strings.player,
+      },
       _Screen.about => strings.aboutPodcast,
       _Screen.add => strings.addPodcast,
-      _Screen.reorder => strings.queueOrder,
       _Screen.server => strings.server,
       _Screen.feeds => strings.feedStatus,
       _Screen.opml => strings.opml,
@@ -474,7 +561,6 @@ class _LibraryHomeState extends State<_LibraryHome> {
   }
 
   Widget _sectionBody(BuildContext context, {bool desktop = false}) {
-    final strings = context.strings;
     final selected = _pages.lastOrNull;
     final kind = switch (_section) {
       LibrarySection.inProgress => EpisodeListKind.inProgress,
@@ -488,18 +574,12 @@ class _LibraryHomeState extends State<_LibraryHome> {
         episodes: _activeEpisodeList(),
         playback: _playback,
         onOpen: _openEpisode,
+        onMenu: _openEpisodeMenu,
         desktop: desktop,
         downloadsAvailable: !_linux,
+        wifiConnected: _downloadWifi,
         selectedId: selected?.screen == _Screen.episode ? selected?.id : null,
         actions: [
-          if (_section == LibrarySection.queue)
-            EinkRow(
-              title: strings.queueEdit,
-              compact: true,
-              underlined: true,
-              trailing: const Icon(Icons.chevron_right),
-              onPressed: () => _open(_Screen.reorder),
-            ),
           if (_section == LibrarySection.newEpisodes)
             RefreshRow(refresh: _refresh, lastLoaded: _refresh.lastLoaded),
         ],
@@ -516,13 +596,17 @@ class _LibraryHomeState extends State<_LibraryHome> {
       LibrarySection.downloads => DownloadsPage(
         playback: _playback,
         requestedIds: _requestedDownloads,
+        wifiConnected: _downloadWifi,
         onOpen: _openEpisode,
+        onMenu: _openEpisodeMenu,
       ),
       LibrarySection.settings => SettingsPage(
         playback: _playback,
         alphabetical: _alphabetical,
-        sortFailed: _sortFailed,
+        preferencesFailed: _sortFailed || _redrawFailed,
         onAlphabetical: _toggleSort,
+        redrawSeconds: _redrawSeconds,
+        onRedrawSeconds: _setRedrawSeconds,
         downloadsAvailable: !_linux,
         onServer: () => _open(_Screen.server),
         onFeeds: () => _open(_Screen.feeds),
@@ -544,8 +628,10 @@ class _LibraryHomeState extends State<_LibraryHome> {
       episodes: library.episodesOf(id),
       playback: _playback,
       onOpen: _openEpisode,
+      onMenu: _openEpisodeMenu,
       desktop: desktop,
       downloadsAvailable: !_linux,
+      wifiConnected: _downloadWifi,
       selectedId: last?.screen == _Screen.episode ? last?.id : null,
       actions: [
         if (podcast.subscribed)
@@ -579,6 +665,7 @@ class _LibraryHomeState extends State<_LibraryHome> {
           playback: _playback,
           desktopPanel: desktop,
           downloadsAvailable: !_linux,
+          wifiConnected: _downloadWifi,
           onTrackDownload: _requestedDownloads.add,
         );
       case _Screen.podcast:
@@ -597,11 +684,10 @@ class _LibraryHomeState extends State<_LibraryHome> {
           playback: _playback,
           onEpisode: _openEpisode,
           sleepAvailable: !_linux,
+          redrawSeconds: _linux ? 1 : _redrawSeconds,
         );
       case _Screen.add:
         return AddPodcastPage(services: services, onAdded: _openPodcast);
-      case _Screen.reorder:
-        return QueueEditor(playback: _playback, desktop: desktop);
       case _Screen.server:
         return ServerPage(services: services);
       case _Screen.feeds:

@@ -15,10 +15,15 @@ Duration? episodeDuration(Episode episode, EpisodeState state) {
   return feed == null || feed <= 0 ? null : Duration(seconds: feed);
 }
 
-String positionText(Duration position) {
+String positionText(Duration position, {bool padMinutes = false}) {
   final minutes = position.inMinutes.remainder(60);
   final seconds = position.inSeconds.remainder(60).toString().padLeft(2, '0');
-  if (position.inHours == 0) return '$minutes:$seconds';
+  if (position.inHours == 0) {
+    final minuteText = padMinutes
+        ? minutes.toString().padLeft(2, '0')
+        : minutes;
+    return '$minuteText:$seconds';
+  }
   return '${position.inHours}:${minutes.toString().padLeft(2, '0')}:$seconds';
 }
 
@@ -92,31 +97,38 @@ String bytesText(AppLocalizations strings, int bytes) {
   return strings.kilobytes(number.format(bytes / 1000));
 }
 
-String? downloadStateText(
-  AppLocalizations strings,
-  DownloadStatus status, {
-  required bool waitingForWifi,
-}) => switch (status) {
-  DownloadStatus.none => null,
-  DownloadStatus.queued =>
-    waitingForWifi
-        ? strings.stateWaitingForWifi
-        : strings.stateWaitingForDownload,
-  DownloadStatus.running => strings.stateDownloading,
-  DownloadStatus.done => strings.stateDownloaded,
-  DownloadStatus.failed => null,
-};
+String? downloadStateText(AppLocalizations strings, DownloadDisplay download) =>
+    switch (download.status) {
+      DownloadStatus.queued =>
+        download.waitingForWifi
+            ? strings.stateWaitingForWifi
+            : strings.stateWaitingForDownload,
+      DownloadStatus.running => strings.stateDownloading(download.percent),
+      _ => null,
+    };
 
-Text metadataLine(String first, Iterable<String> rest, {bool bold = false}) =>
-    Text.rich(
+Text metadataLine(
+  String first,
+  Iterable<String> rest, {
+  bool bold = false,
+  Widget? trailing,
+}) => Text.rich(
+  TextSpan(
+    children: [
       TextSpan(
-        children: [
-          TextSpan(
-            text: first,
-            style: bold ? const TextStyle(fontWeight: FontWeight.w700) : null,
-          ),
-          for (final text in rest) TextSpan(text: '$metadataSeparator$text'),
-        ],
+        text: first,
+        style: bold ? const TextStyle(fontWeight: FontWeight.w700) : null,
       ),
-      style: detailStyle,
-    );
+      for (final text in rest) TextSpan(text: '$metadataSeparator$text'),
+      if (trailing != null)
+        WidgetSpan(
+          alignment: PlaceholderAlignment.middle,
+          child: Padding(
+            padding: EdgeInsetsDirectional.only(start: first.isEmpty ? 0 : 4),
+            child: trailing,
+          ),
+        ),
+    ],
+  ),
+  style: detailStyle,
+);
