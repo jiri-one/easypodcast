@@ -88,6 +88,7 @@ type queue struct {
 type stateChange struct {
 	Episodes         []episodeState `json:"episodes"`
 	Queue            *queue         `json:"queue"`
+	expectedServerID *string
 	queueOnlyIfEmpty bool
 }
 
@@ -105,5 +106,6 @@ type stateResult struct {
 	stateChange
 	ServerID            string  `json:"server_id"`
 	Unknown             []int64 `json:"unknown"`
+	Future              []any   `json:"future"`
 	queueEntriesWritten int
 }

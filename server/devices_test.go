@@ -76,6 +76,13 @@ func TestDeviceCommands(t *testing.T) {
 		fields[1] != `"Kitchen speaker"` || fields[2] == "-" || fields[2] != fields[3] {
 		t.Fatal("new login did not set creation and last seen times")
 	}
+	testExec(t, s.db, "UPDATE devices SET last_seen_at = created_at - interval '1 minute' WHERE id = $1", second.ID)
+	checkAccess(second.Token, 200)
+	var recent bool
+	if err := s.db.QueryRow(ctx, "SELECT last_seen_at = created_at - interval '1 minute' FROM devices WHERE id = $1", second.ID).
+		Scan(&recent); err != nil || !recent {
+		t.Fatalf("authenticated request rewrote a recent last seen time: %v", err)
+	}
 
 	revoke := []string{"revoke", strconv.FormatInt(first.ID, 10)}
 	if err := devicesCommand(ctx, s, revoke, &out); err != nil {

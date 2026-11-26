@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -86,37 +85,18 @@ func (r *refresher) importOPML(ctx context.Context, urls []string) (opmlResult, 
 	outcomes := make([]outcome, len(urls))
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
-	var workers sync.WaitGroup
-	jobs := make(chan int)
-	for range min(cap(r.slots), len(urls)) {
-		workers.Go(func() {
-			for i := range jobs {
-				if ctx.Err() != nil {
-					return
-				}
-				_, added, err := r.subscribe(ctx, urls[i])
-				var issue feedError
-				switch {
-				case err == nil, errors.As(err, &issue):
-					outcomes[i] = outcome{true, added, issue}
-				case errors.Is(err, context.DeadlineExceeded):
-					outcomes[i] = outcome{finished: true, issue: errFeedTimeout}
-				case ctx.Err() == nil:
-					cancel(err)
-				}
-			}
-		})
-	}
-send:
-	for i := range urls {
-		select {
-		case jobs <- i:
-		case <-ctx.Done():
-			break send
+	runWorkers(ctx, len(urls), cap(r.slots), func(i int) {
+		_, added, err := r.subscribe(ctx, urls[i])
+		var issue feedError
+		switch {
+		case err == nil, errors.As(err, &issue):
+			outcomes[i] = outcome{true, added, issue}
+		case errors.Is(err, context.DeadlineExceeded):
+			outcomes[i] = outcome{finished: true, issue: errFeedTimeout}
+		case ctx.Err() == nil:
+			cancel(err)
 		}
-	}
-	close(jobs)
-	workers.Wait()
+	})
 
 	result := opmlResult{Failed: []opmlFailure{}}
 	interruption := context.Cause(ctx)

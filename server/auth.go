@@ -79,8 +79,12 @@ func (s store) deviceID(ctx context.Context, token string) (int64, error) {
 	}
 	hash := sha256.Sum256(raw)
 	var id int64
-	err = s.db.QueryRow(ctx, `UPDATE devices SET last_seen_at = GREATEST(last_seen_at, now())
-		WHERE token_hash = $1 RETURNING id`, hash[:]).Scan(&id)
+	err = s.db.QueryRow(ctx, `WITH touched AS (
+			UPDATE devices SET last_seen_at = now() WHERE token_hash = $1
+				AND (last_seen_at IS NULL OR last_seen_at <= now() - interval '5 minutes') RETURNING id
+		)
+		SELECT id FROM touched UNION ALL
+		SELECT id FROM devices WHERE token_hash = $1 AND NOT EXISTS (SELECT 1 FROM touched)`, hash[:]).Scan(&id)
 	return id, err
 }
 

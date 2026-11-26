@@ -20,7 +20,6 @@ var migrations embed.FS
 const (
 	migrationLock        = 47091031
 	feedLock             = 47091032
-	stateLock            = 47091033
 	feedRefreshMigration = "migrations/006_feed_refresh.sql"
 )
 
@@ -214,19 +213,20 @@ func (s store) episode(ctx context.Context, id int64) (episodeDetail, error) {
 	return result, err
 }
 
+const episodeStateColumns = "episode_id, position_ms, status, duration_ms, updated_at"
+
 func (s store) episodeState(ctx context.Context, id int64) (*episodeState, error) {
-	var position *int64
+	var episodeID, position, duration *int64
 	var status *string
-	var duration *int64
 	var updatedAt *time.Time
-	err := s.db.QueryRow(ctx, `SELECT es.position_ms, es.status, es.duration_ms, es.updated_at FROM episodes e
+	err := s.db.QueryRow(ctx, "SELECT "+episodeStateColumns+` FROM episodes e
 		LEFT JOIN episode_state es ON es.episode_id = e.id WHERE e.id = $1`, id).
-		Scan(&position, &status, &duration, &updatedAt)
-	if err != nil || position == nil {
+		Scan(&episodeID, &position, &status, &duration, &updatedAt)
+	if err != nil || episodeID == nil {
 		return nil, err
 	}
 	return &episodeState{
-		EpisodeID: id, PositionMS: *position, Status: *status, DurationMS: duration, UpdatedAt: timestamp{*updatedAt},
+		EpisodeID: *episodeID, PositionMS: *position, Status: *status, DurationMS: duration, UpdatedAt: timestamp{*updatedAt},
 	}, nil
 }
 
@@ -276,7 +276,7 @@ func (s store) state(ctx context.Context) (stateSnapshot, error) {
 			return err
 		}
 		result.stateRevision = revision
-		rows, err := tx.Query(ctx, "SELECT episode_id, position_ms, status, duration_ms, updated_at FROM episode_state ORDER BY episode_id")
+		rows, err := tx.Query(ctx, "SELECT "+episodeStateColumns+" FROM episode_state ORDER BY episode_id")
 		if err != nil {
 			return err
 		}
@@ -291,18 +291,20 @@ func (s store) state(ctx context.Context) (stateSnapshot, error) {
 }
 
 var errInvalidState = errors.New("invalid episode or queue state")
-var errFutureState = errors.New("updated_at is more than 24 hours ahead of server time")
+var errServerIDChanged = errors.New("server identity changed")
 
 func (s store) updateState(ctx context.Context, change stateChange, now time.Time) (stateResult, error) {
 	latest := make(map[int64]episodeState, len(change.Episodes))
 	ids := make([]int64, 0, len(change.Episodes))
+	result := stateResult{Unknown: []int64{}, Future: []any{}}
 	limit := now.Add(24 * time.Hour)
 	for _, e := range change.Episodes {
-		if e.UpdatedAt.After(limit) {
-			return stateResult{}, errFutureState
-		}
 		if e.UpdatedAt.IsZero() || e.PositionMS < 0 || (e.Status != "" && e.Status != "played" && e.Status != "dismissed") {
 			return stateResult{}, errInvalidState
+		}
+		if e.UpdatedAt.After(limit) {
+			result.Future = append(result.Future, e.EpisodeID)
+			continue
 		}
 		current, exists := latest[e.EpisodeID]
 		if !exists {
@@ -312,25 +314,27 @@ func (s store) updateState(ctx context.Context, change stateChange, now time.Tim
 			latest[e.EpisodeID] = e
 		}
 	}
-	if change.Queue != nil {
-		if change.Queue.UpdatedAt.After(limit) {
-			return stateResult{}, errFutureState
-		}
-		if change.Queue.UpdatedAt.IsZero() || change.Queue.EpisodeIDs == nil {
+	if q := change.Queue; q != nil {
+		if q.UpdatedAt.IsZero() || q.EpisodeIDs == nil {
 			return stateResult{}, errInvalidState
 		}
-	}
-	result := stateResult{stateChange: stateChange{Episodes: []episodeState{}}, Unknown: []int64{}}
-	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
-		err := applyStates(ctx, tx, ids, latest, change.Queue, change.queueOnlyIfEmpty, &result)
-		if err != nil {
-			return err
+		if q.UpdatedAt.After(limit) {
+			result.Future = append(result.Future, "queue")
+			change.Queue = nil
 		}
-		revision, err := scanStateRevision(tx.QueryRow(ctx, stateRevisionSQL))
+	}
+	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
+		revision, err := scanStateRevision(tx.QueryRow(ctx, stateRevisionSQL+" FOR UPDATE"))
 		if err != nil {
 			return err
 		}
 		result.ServerID = revision.ServerID
+		if id := change.expectedServerID; id != nil && *id != result.ServerID {
+			return errServerIDChanged
+		}
+		if err := applyStates(ctx, tx, ids, latest, change.Queue, change.queueOnlyIfEmpty, &result); err != nil {
+			return err
+		}
 		result.Queue, err = readQueue(ctx, tx)
 		return err
 	})
@@ -338,9 +342,6 @@ func (s store) updateState(ctx context.Context, change stateChange, now time.Tim
 }
 
 func applyStates(ctx context.Context, tx pgx.Tx, ids []int64, latest map[int64]episodeState, q *queue, queueOnlyIfEmpty bool, result *stateResult) error {
-	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", stateLock); err != nil {
-		return err
-	}
 	lookupIDs := ids
 	if q != nil {
 		lookupIDs = append(append([]int64{}, ids...), q.EpisodeIDs...)
@@ -372,7 +373,7 @@ func applyStates(ctx context.Context, tx pgx.Tx, ids []int64, latest map[int64]e
 			continue
 		}
 		e := latest[id]
-		batch.Queue(`INSERT INTO episode_state (episode_id, position_ms, status, duration_ms, updated_at) VALUES ($1,$2,$3,$4,$5)
+		batch.Queue(`INSERT INTO episode_state (`+episodeStateColumns+`) VALUES ($1,$2,$3,$4,$5)
 			ON CONFLICT (episode_id) DO UPDATE SET position_ms = EXCLUDED.position_ms,
 			status = EXCLUDED.status, duration_ms = EXCLUDED.duration_ms, updated_at = EXCLUDED.updated_at
 			WHERE EXCLUDED.updated_at > episode_state.updated_at`, id, e.PositionMS, e.Status, e.DurationMS, e.UpdatedAt.Time).
@@ -409,7 +410,7 @@ func applyStates(ctx context.Context, tx pgx.Tx, ids []int64, latest map[int64]e
 			return err
 		}
 	}
-	rows, err = tx.Query(ctx, `SELECT es.episode_id, es.position_ms, es.status, es.duration_ms, es.updated_at
+	rows, err = tx.Query(ctx, "SELECT "+episodeStateColumns+`
 		FROM unnest($1::bigint[]) WITH ORDINALITY AS input(id, position)
 		JOIN episode_state es ON es.episode_id = input.id ORDER BY input.position`, ids)
 	if err != nil {

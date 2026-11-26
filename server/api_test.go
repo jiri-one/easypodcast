@@ -164,7 +164,7 @@ func TestHTTPAPI(t *testing.T) {
 	call("GET", "/api/podcasts/999999/episodes", "", "", "", 404)
 	call("GET", "/api/episodes/abc", "", "", "", 400)
 
-	send := func(when time.Time, position int64, status string, duration *int64, ids []int64, code int) *httptest.ResponseRecorder {
+	send := func(when time.Time, position int64, status string, duration *int64, ids []int64) stateResult {
 		body, err := json.Marshal(stateChange{
 			Episodes: []episodeState{
 				{EpisodeID: copper.ID, PositionMS: position, Status: status, DurationMS: duration, UpdatedAt: timestamp{when}},
@@ -175,36 +175,50 @@ func TestHTTPAPI(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return call("POST", "/api/state", string(body), "", "", code)
+		return response[stateResult](t, call("POST", "/api/state", string(body), "", "", 200))
 	}
 	at := now.Add(-time.Minute)
 	measured, remeasured := int64(243210), int64(250123)
-	result := response[stateResult](t, send(at, 120000, "", &measured, []int64{paper.ID, 999999, copper.ID}, 200))
+	result := send(at, 120000, "", &measured, []int64{paper.ID, 999999, copper.ID})
 	if result.ServerID != tokens.ServerID || len(result.Episodes) != 1 || result.Episodes[0].PositionMS != 120000 ||
 		result.Episodes[0].DurationMS == nil || *result.Episodes[0].DurationMS != measured ||
-		!slices.Equal(result.Unknown, []int64{999999}) || !slices.Equal(result.Queue.EpisodeIDs, []int64{paper.ID, copper.ID}) {
+		!slices.Equal(result.Unknown, []int64{999999}) || result.Future == nil || len(result.Future) != 0 ||
+		!slices.Equal(result.Queue.EpisodeIDs, []int64{paper.ID, copper.ID}) {
 		t.Fatalf("initial state: %+v", result)
 	}
 	for _, stale := range []time.Time{at, at.Add(-time.Second)} {
-		result = response[stateResult](t, send(stale, 1, "played", &remeasured, []int64{}, 200))
+		result = send(stale, 1, "played", &remeasured, []int64{})
 		if result.Episodes[0].PositionMS != 120000 || result.Episodes[0].Status != "" ||
 			result.Episodes[0].DurationMS == nil || *result.Episodes[0].DurationMS != measured || len(result.Queue.EpisodeIDs) != 2 {
 			t.Fatalf("stale state replaced newer state: %+v", result)
 		}
 	}
-	send(now.Add(24*time.Hour+time.Millisecond), 10, "dismissed", nil, []int64{}, 400)
+	result = send(now.Add(24*time.Hour+time.Millisecond), 10, "dismissed", nil, []int64{})
+	if result.Episodes == nil || len(result.Episodes) != 0 || len(result.Unknown) != 0 ||
+		!slices.Equal(result.Future, []any{float64(copper.ID), float64(999999), "queue"}) ||
+		result.Queue == nil || !result.Queue.UpdatedAt.Equal(at) {
+		t.Fatalf("future records were not skipped: %+v", result)
+	}
 	badDuration := fmt.Sprintf(`{"episodes":[{"episode_id":%d,"position_ms":0,"status":"","duration_ms":1.5,"updated_at":"2026-11-26T12:00:00.000Z"}]}`, copper.ID)
 	call("POST", "/api/state", badDuration, "", "", 400)
-	invalidQueue := fmt.Sprintf(`{"episodes":[{"episode_id":%d,"position_ms":39000,"status":"","updated_at":"2026-11-26T12:00:00.000Z"}],"queue":{"episode_ids":[],"updated_at":"2026-11-28T12:00:00.000Z"}}`, copper.ID)
+	invalidQueue := fmt.Sprintf(`{"episodes":[{"episode_id":%d,"position_ms":39000,"status":"","updated_at":"2026-11-26T12:00:00.000Z"}],"queue":{"updated_at":"2026-11-26T12:00:00.000Z"}}`, copper.ID)
 	call("POST", "/api/state", invalidQueue, "", "", 400)
 	snapshot := response[stateChange](t, call("GET", "/api/state", "", "", "", 200))
 	if snapshot.Episodes[0].PositionMS != 120000 || snapshot.Episodes[0].DurationMS == nil ||
 		*snapshot.Episodes[0].DurationMS != measured {
 		t.Fatal("invalid queue request applied episode update")
 	}
-	result = response[stateResult](t, send(now, 60000, "", &remeasured, []int64{copper.ID}, 200))
-	if result.Episodes[0].PositionMS != 60000 || result.Episodes[0].DurationMS == nil || *result.Episodes[0].DurationMS != remeasured {
-		t.Fatal("newer rewind did not win")
+	mixed := fmt.Sprintf(`{"episodes":[
+		{"episode_id":%d,"position_ms":60000,"status":"","duration_ms":%d,"updated_at":"2026-11-26T12:00:00.000Z"},
+		{"episode_id":%d,"position_ms":0,"status":"played","updated_at":"2026-11-27T12:00:00.001Z"},
+		{"episode_id":999999,"position_ms":0,"status":"","updated_at":"2026-11-26T12:00:00.000Z"}],
+		"queue":{"episode_ids":[],"updated_at":"2026-11-27T12:00:00.001Z"}}`, copper.ID, remeasured, paper.ID)
+	result = response[stateResult](t, call("POST", "/api/state", mixed, "", "", 200))
+	if len(result.Episodes) != 1 || result.Episodes[0].EpisodeID != copper.ID || result.Episodes[0].PositionMS != 60000 ||
+		result.Episodes[0].DurationMS == nil || *result.Episodes[0].DurationMS != remeasured ||
+		!slices.Equal(result.Unknown, []int64{999999}) || !slices.Equal(result.Future, []any{float64(paper.ID), "queue"}) ||
+		result.Queue == nil || !result.Queue.UpdatedAt.Equal(at) {
+		t.Fatalf("mixed push did not apply just the valid records: %+v", result)
 	}
 	episodeReply := response[struct {
 		State *episodeState `json:"state"`
@@ -212,7 +226,7 @@ func TestHTTPAPI(t *testing.T) {
 	if episodeReply.State == nil || episodeReply.State.DurationMS == nil || *episodeReply.State.DurationMS != remeasured {
 		t.Fatal("single episode state did not return the stored duration")
 	}
-	result = response[stateResult](t, send(now.Add(24*time.Hour), 0, "played", nil, []int64{}, 200))
+	result = send(now.Add(24*time.Hour), 0, "played", nil, []int64{})
 	if result.Episodes[0].Status != "played" || result.Episodes[0].DurationMS != nil ||
 		result.Queue.EpisodeIDs == nil || len(result.Queue.EpisodeIDs) != 0 {
 		t.Fatal("newer completion did not win")
@@ -343,7 +357,7 @@ func TestStateETagAndServerIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	const sample = `{"episodes":[{"episode_id":1,"position_ms":120000,"status":"","updated_at":"2026-11-26T12:00:00.000Z"}]}`
+	sample := fmt.Sprintf(`{"server_id":%q,"episodes":[{"episode_id":1,"position_ms":120000,"status":"","updated_at":"2026-11-26T12:00:00.000Z"}]}`, identity)
 	call(ctx, "POST", "", sample, 200)
 	updated := call(ctx, "GET", tag, "", 200)
 	tag = updated.Header().Get("ETag")
@@ -361,11 +375,18 @@ func TestStateETagAndServerIdentity(t *testing.T) {
 	if err := run(ctx, []string{"new-server-id"}); err != nil {
 		t.Fatal(err)
 	}
-	reset := response[stateSnapshot](t, call(ctx, "GET", tag, "", 200))
+	updated = call(ctx, "GET", tag, "", 200)
+	reset := response[stateSnapshot](t, updated)
 	if reset.ServerID == "" || reset.ServerID == identity || len(reset.Episodes) != 1 ||
 		reset.Episodes[0].PositionMS != 120000 || reset.Queue == nil || len(reset.Queue.EpisodeIDs) != 0 {
 		t.Fatalf("identity reset changed the wrong records: %+v", reset)
 	}
+	stale := fmt.Sprintf(`{"server_id":%q,"episodes":[{"episode_id":1,"position_ms":4000,"status":"","updated_at":"2026-11-26T12:03:00.000Z"}],"queue":{"episode_ids":[1],"updated_at":"2026-11-26T12:03:00.000Z"}}`, identity)
+	conflict := response[map[string]string](t, call(ctx, "POST", "", stale, 409))
+	if conflict["server_id"] != reset.ServerID || conflict["error"] != "server identity changed" {
+		t.Fatalf("wrong server identity conflict: %+v", conflict)
+	}
+	call(ctx, "GET", updated.Header().Get("ETag"), "", 304)
 	if posted := response[stateResult](t, call(ctx, "POST", "", "{}", 200)); posted.ServerID != reset.ServerID {
 		t.Fatalf("state update returned server ID %q after rotation", posted.ServerID)
 	}

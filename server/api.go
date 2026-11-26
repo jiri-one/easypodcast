@@ -372,17 +372,23 @@ func (r stateRevision) etag() string {
 }
 
 func (a *api) updateState(w http.ResponseWriter, r *http.Request) {
-	var change *stateChange
-	if !decodeJSON(w, r, &change) {
+	var input *struct {
+		stateChange
+		ServerID *string `json:"server_id"`
+	}
+	if !decodeJSON(w, r, &input) {
 		return
 	}
-	if change == nil {
+	if input == nil {
 		apiError(w, http.StatusBadRequest, "invalid state")
 		return
 	}
-	result, err := a.store.updateState(r.Context(), *change, a.now())
+	input.expectedServerID = input.ServerID
+	result, err := a.store.updateState(r.Context(), input.stateChange, a.now())
 	switch {
-	case errors.Is(err, errFutureState), errors.Is(err, errInvalidState):
+	case errors.Is(err, errServerIDChanged):
+		jsonReply(w, r, http.StatusConflict, map[string]string{"error": err.Error(), "server_id": result.ServerID})
+	case errors.Is(err, errInvalidState):
 		apiError(w, http.StatusBadRequest, err.Error())
 	case err != nil:
 		storeError(w, r, err)

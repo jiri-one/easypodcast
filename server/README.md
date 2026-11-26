@@ -27,7 +27,7 @@ export EASYPODCAST_DATABASE_URL='postgres://easypodcast@localhost/easypodcast?ss
 - `migrate` applies embedded migrations. Run it before the setup and import commands.
 - `new-server-id` replaces the server UUID. After restoring a backup, run `easypodcast migrate` and `easypodcast new-server-id` before starting the service.
 - `user set-password <name>` creates the listener or changes their password. For automation, append `--password-stdin` and supply one line on standard input.
-- `devices list` prints the ID, quoted device name, creation time and last seen time in UTC. Last seen starts at login and updates on authenticated requests. Unknown times for devices created before the upgrade appear as `-`.
+- `devices list` prints the ID, quoted device name, creation time and last seen time in UTC. Last seen starts at login and updates on authenticated requests at most once every five minutes. Unknown times for devices created before the upgrade appear as `-`.
 - `devices revoke <id>` revokes that device's token immediately. `devices revoke --all` revokes every device token. Changing the password leaves device tokens valid.
 - `import-opml <file>` imports subscriptions and prints counts.
 - `import-pinepods --pinepods-dsn <dsn> --pinepods-user <name>` reads PinePods 0.9.2 PostgreSQL, refreshes the subscriptions, and imports episode state and the queue. Use a read-only database login and a password file for the source. The command reports counts and can be run again before switching to EasyPodcast.
@@ -60,9 +60,15 @@ that need another import attempt.
 as an integer or `null`. The duration comes from the player. A strictly newer state replaces
 the entire record, including its duration. Requests that omit the field supply `null`.
 
-Login and both state endpoints return `server_id`. A client that sees a different UUID must
-discard its local copy and pending changes and fetch the library and state again. `GET /api/state`
-supports `ETag` and `If-None-Match`. A matching validator returns 304 with an empty body.
+Login and both `/api/state` methods return `server_id`. Clients send their stored UUID on
+each state push. A mismatch returns 409 with the current `server_id`. A changed UUID tells
+the client to discard its local copy and pending changes and fetch the library and state
+again. `GET /api/state` supports `ETag` and `If-None-Match`. A matching validator returns 304
+with an empty body.
+
+A state push skips episode states or a queue dated more than 24 hours ahead of the server
+clock. The 200 response lists those episode IDs and `"queue"` for a skipped queue in `future`.
+The client keeps them pending and repairs their timestamps before retrying when possible.
 
 The PinePods import matches by GUID, then by enclosure URL. Episodes missing from the feed are
 created as `removed_from_feed` using the PinePods title, enclosure URL, GUID, publication date

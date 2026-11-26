@@ -81,11 +81,12 @@ Derived values, the same everywhere:
    end, dismiss, mark). A pending change keeps its time when it is sent again. A state adopted from
    the server keeps the server's record and time and is never sent back. A new state of an episode
    always gets a later time than the device's previous state of it (add 1 ms on a tie).
-3. The server stores an incoming EpisodeState or Queue only if its `updated_at` is strictly later
-   than the stored one. It answers with the stored record either way.
-4. The server rejects (HTTP 400) a request with any `updated_at` more than 24 hours ahead of its own
-   clock. The client keeps such changes and retries later; this also covers a server whose clock is
-   wrong right after boot.
+3. A processed state or queue replaces a stored one only when its `updated_at` is strictly later.
+   The server answers with the stored record either way.
+4. The server skips records with `updated_at` more than 24 hours ahead of its clock and processes
+   the rest. The 200 reply lists the skipped episode IDs and the literal `"queue"` for a skipped
+   queue in `future`. The client keeps those changes pending, repairs their timestamps when it can,
+   and retries them.
 5. The client sends its pending changes (the latest state per episode, the latest queue) as soon as
    it can: on every pause including automatic ones (headphones unplugged, call, audio focus loss),
    on seek and skip, on completion, on any status or queue change, every 30 s while playing, and
@@ -134,7 +135,7 @@ Derived values, the same everywhere:
 
 Base URL `https://easypodcast.jiri.one/api` in production, `http://localhost:8080/api` locally.
 JSON in UTF-8. Every endpoint except `POST /api/login` and `GET /health` needs
-`Authorization: Bearer <token>`; without a valid token it answers 401. Errors have the body
+`Authorization: Bearer <token>`. Requests without a valid token get 401. Errors include
 `{"error": "<message>"}` with status 400, 401, 404, 409, 413, 422, 429 or 500.
 
 | Method and path | Request | Response |
@@ -147,15 +148,20 @@ JSON in UTF-8. Every endpoint except `POST /api/login` and `GET /health` needs
 | `GET /api/podcasts/{id}/episodes` | – | 200 `[Episode]`, newest first; `ETag` |
 | `GET /api/episodes/{id}` | – | 200 Episode plus `"description"` (plain text, links written as URLs) |
 | `GET /api/state` | Optional `If-None-Match` | 200 `{"episodes": [EpisodeState], "queue": Queue or null, "server_time", "server_id"}` with `ETag`, or 304 with an empty body when the validator matches |
-| `POST /api/state` | `{"episodes": [EpisodeState], "queue": Queue}`, both optional | 200 `{"episodes": [EpisodeState as stored], "queue": Queue or null, "unknown": [episode ids the server does not know], "server_id"}` |
+| `POST /api/state` | `{"server_id": "<stored UUID>", "episodes": [EpisodeState], "queue": Queue}`, all fields optional | 200 `{"episodes": [EpisodeState as stored], "queue": Queue or null, "unknown": [episode IDs], "future": [episode IDs or "queue"], "server_id": "<current UUID>"}`. 409 `{"error": "server identity changed", "server_id": "<current UUID>"}` when the supplied UUID differs. |
 | `GET /api/episodes/{id}/state` | – | 200 `{"state": EpisodeState or null}` |
 | `POST /api/refresh` | – | 202, starts fetching all subscribed feeds now |
 | `GET /api/opml` | – | 200 OPML of subscribed podcasts |
 | `POST /api/opml` | OPML document as the body | 200 `{"added", "existing", "failed": [{"feed_url", "error"}]}` |
 | `GET /health` | – | 200 `{"status": "ok"}` if the database is reachable and its recorded migrations match this binary, otherwise 503 |
 
-A `POST /api/state` with an episode id the server does not know stores nothing for it and lists the
-id under `unknown`; the client then drops the pending change. A body over 1 MiB gets 413.
+On `POST /api/state`, an omitted or null `server_id` is accepted for older clients. A mismatch
+aborts the transaction before any episode or queue writes. On 200, `episodes` echoes the stored
+states for known episode records the server processed. `queue` always returns the stored queue
+or `null`, including after a skipped queue update. `unknown` lists missing IDs from processed
+episode states and queue entries. The client drops those pending episode changes unless the ID
+also appears in `future`. Both lists are empty arrays when there are no entries. A body over 1 MiB
+gets 413.
 
 ## Server (WP-S)
 
@@ -177,12 +183,12 @@ id under `unknown`; the client then drops the pending change. A body over 1 MiB 
   superuser, extensions, `CREATE DATABASE` or the `postgres` database. Embedded SQL migrations
   with a `schema_migrations` table. A recorded migration unknown to the binary prevents startup.
 - Server identity is a database UUID. After restoring a backup, run `new-server-id` before
-  starting the server. Clients keep the UUID with their local copy and compare it on login and
-  in state replies. If the UUID changes, the client must discard its local copy and pending
-  changes and fetch all podcasts, episodes and state again. Check the identity with
-  `GET /api/state` before uploading pending changes. A 304 confirms the UUID and state covered by
-  the saved validator. The state validator changes when the UUID, an episode state, or the queue
-  changes. `server_time` is provided on 200 responses.
+  starting the server. Clients keep the UUID with their local copy, compare it on login and in
+  state replies, and send it on each `POST /api/state`. The server checks the supplied UUID inside
+  the state transaction. A 409 or a changed UUID tells the client to discard its local copy and
+  pending changes and fetch all podcasts, episodes and state again. A 304 on `GET /api/state`
+  confirms the UUID and state covered by the saved validator. The state validator changes when
+  the UUID, an episode state, or the queue changes. `GET /api/state` provides `server_time` on 200.
 - Single user: a `users` table exists only for the login; devices have their own tokens (32 random
   bytes, stored as SHA-256), revocable individually or together.
 - Feeds: each subscribed podcast is fetched every refresh interval with jitter, at most 4 at a
@@ -202,9 +208,9 @@ id under `unknown`; the client then drops the pending change. A body over 1 MiB 
 - CI `.github/workflows/server.yml` runs `go vet` and tests against PostgreSQL 18. It publishes a
   multi-arch image per qualifying ref, tagged `main` on the main branch or with the `v*` tag.
   The commit SHA identifies the binary version and image revision.
-- Tests: the state rules (newer wins, equal or older ignored, 24 h guard, unknown ids), every
-  endpoint with `httptest`, feed parsing on fixture feeds (missing GUIDs, changed enclosure URLs,
-  odd dates, HTML descriptions), migrations on a real PostgreSQL when
+- Tests: the state rules (newer wins, equal or older ignored, identity conflicts, 24 h skips,
+  unknown IDs), every endpoint with `httptest`, feed parsing fixtures (missing GUIDs, changed
+  enclosure URLs, odd dates, HTML descriptions), and migrations on a real PostgreSQL when
   `EASYPODCAST_TEST_DATABASE_URL` is set (otherwise those tests skip).
 
 ## Client (Flutter)

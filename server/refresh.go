@@ -61,7 +61,7 @@ func (r *refresher) run(ctx context.Context) {
 }
 
 func (r *refresher) refreshDue(ctx context.Context, force bool) {
-	rows, err := r.store.db.Query(ctx, `SELECT id, feed_url, etag, last_modified, failures, fetch_generation
+	rows, err := r.store.db.Query(ctx, "SELECT "+feedTargetColumns+`
 		FROM podcasts WHERE subscribed AND ($1 OR next_refresh_at <= now()) ORDER BY next_refresh_at, id`, force)
 	if err != nil {
 		if ctx.Err() == nil {
@@ -74,22 +74,32 @@ func (r *refresher) refreshDue(ctx context.Context, force bool) {
 		slog.Warn("Could not read feeds for refresh")
 		return
 	}
-	var workers sync.WaitGroup
-	jobs := make(chan feedTarget)
 	// Keep a slot available when background hosts are slow.
-	for range cap(r.slots) - 1 {
+	runWorkers(ctx, len(targets), cap(r.slots)-1, func(i int) {
+		target := targets[i]
+		if err := r.refresh(ctx, target); err != nil && ctx.Err() == nil {
+			slog.Warn("Feed refresh failed", "podcast_id", target.ID, "reason", refreshProblem(err))
+		}
+	})
+}
+
+func runWorkers(ctx context.Context, count, limit int, work func(int)) {
+	var workers sync.WaitGroup
+	jobs := make(chan int)
+	for range min(count, limit) {
 		workers.Go(func() {
-			for target := range jobs {
-				if err := r.refresh(ctx, target); err != nil && ctx.Err() == nil {
-					slog.Warn("Feed refresh failed", "podcast_id", target.ID, "reason", refreshProblem(err))
+			for i := range jobs {
+				if ctx.Err() != nil {
+					return
 				}
+				work(i)
 			}
 		})
 	}
 send:
-	for _, target := range targets {
+	for i := range count {
 		select {
-		case jobs <- target:
+		case jobs <- i:
 		case <-ctx.Done():
 			break send
 		}
@@ -102,25 +112,17 @@ func (r *refresher) refresh(ctx context.Context, target feedTarget) (resultErr e
 	failures := min(target.Failures+1, 63)
 	backoff := r.delay(failures)
 	// A process crash during parsing must leave the feed on backoff.
-	var scheduled bool
-	err := r.store.withFeedWriter(ctx, func() error {
-		tag, err := r.store.db.Exec(ctx, `UPDATE podcasts SET failures = $2, next_refresh_at = $3
-			WHERE id = $1 AND fetch_generation = $4`, target.ID, failures, time.Now().Add(backoff), target.Generation)
-		scheduled = tag.RowsAffected() != 0
-		return err
-	})
-	if err != nil || !scheduled {
+	tag, err := r.store.db.Exec(ctx, `UPDATE podcasts SET failures = $2, next_refresh_at = $3
+		WHERE id = $1 AND fetch_generation = $4`, target.ID, failures, time.Now().Add(backoff), target.Generation)
+	if err != nil || tag.RowsAffected() == 0 {
 		return err
 	}
 	defer func() {
 		if ctx.Err() != nil {
 			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 			defer cancel()
-			err := r.store.withFeedWriter(cleanup, func() error {
-				_, err := r.store.db.Exec(cleanup, `UPDATE podcasts SET failures = $2, next_refresh_at = now()
-					WHERE id = $1 AND fetch_generation = $3`, target.ID, target.Failures, target.Generation)
-				return err
-			})
+			_, err := r.store.db.Exec(cleanup, `UPDATE podcasts SET failures = $2, next_refresh_at = now()
+				WHERE id = $1 AND fetch_generation = $3`, target.ID, target.Failures, target.Generation)
 			resultErr = errors.Join(resultErr, err)
 		}
 	}()
@@ -131,12 +133,9 @@ func (r *refresher) refresh(ctx context.Context, target feedTarget) (resultErr e
 	if err == nil || ctx.Err() != nil {
 		return err
 	}
-	writeErr := r.store.withFeedWriter(ctx, func() error {
-		_, writeErr := r.store.db.Exec(ctx, `UPDATE podcasts SET last_error = $2, failures = $3,
-			next_refresh_at = $4, fetch_generation = fetch_generation + 1 WHERE id = $1 AND fetch_generation = $5`,
-			target.ID, string(refreshProblem(err)), failures, time.Now().Add(backoff), target.Generation)
-		return writeErr
-	})
+	_, writeErr := r.store.db.Exec(ctx, `UPDATE podcasts SET last_error = $2, failures = $3,
+		next_refresh_at = $4, fetch_generation = fetch_generation + 1 WHERE id = $1 AND fetch_generation = $5`,
+		target.ID, string(refreshProblem(err)), failures, time.Now().Add(backoff), target.Generation)
 	return errors.Join(err, writeErr)
 }
 

@@ -69,10 +69,12 @@ func migrateFeedAliases(ctx context.Context, tx pgx.Tx) error {
 	return tx.SendBatch(ctx, &batch).Close()
 }
 
+const feedTargetColumns = "id, feed_url, etag, last_modified, failures, fetch_generation"
+
 func (s store) feedTarget(ctx context.Context, id int64) (feedTarget, error) {
 	var f feedTarget
-	err := s.db.QueryRow(ctx, `SELECT id, feed_url, etag, last_modified, failures, fetch_generation
-		FROM podcasts WHERE id = $1`, id).Scan(&f.ID, &f.URL, &f.ETag, &f.LastModified, &f.Failures, &f.Generation)
+	err := s.db.QueryRow(ctx, "SELECT "+feedTargetColumns+" FROM podcasts WHERE id = $1", id).
+		Scan(&f.ID, &f.URL, &f.ETag, &f.LastModified, &f.Failures, &f.Generation)
 	return f, err
 }
 
