@@ -29,11 +29,37 @@ class EpisodePage extends StatefulWidget {
 }
 
 class _EpisodePageState extends State<EpisodePage> with ActionTapGuard {
-  late var _description = _library.description(_episode.id);
+  (int, String?)? _descriptionSource;
+  Future<String>? _description;
   String? _error;
 
   Episode get _episode => widget.episode;
   Library get _library => widget.playback.services.library;
+
+  @override
+  void initState() {
+    super.initState();
+    _onLibraryChanged();
+    _library.addListener(_onLibraryChanged);
+  }
+
+  @override
+  void dispose() {
+    _library.removeListener(_onLibraryChanged);
+    super.dispose();
+  }
+
+  void _onLibraryChanged() {
+    final podcastId = _library.episode(_episode.id)?.podcastId;
+    final source = podcastId == null
+        ? null
+        : (podcastId, _library.podcast(podcastId)?.episodesVersion);
+    if (source == _descriptionSource) return;
+    setState(() {
+      _descriptionSource = source;
+      _description = null;
+    });
+  }
 
   Future<void> _change(Future<void> Function() action) => guardAction(() async {
     if (_error != null) setState(() => _error = null);
@@ -63,6 +89,9 @@ class _EpisodePageState extends State<EpisodePage> with ActionTapGuard {
     final strings = context.strings;
     final episode = _episode;
     final id = episode.id;
+    final description = _descriptionSource == null
+        ? null
+        : _description ??= _library.description(id);
     final playback = widget.playback;
     final state = _library.stateOf(id);
     final podcast = _library.podcast(episode.podcastId);
@@ -165,7 +194,8 @@ class _EpisodePageState extends State<EpisodePage> with ActionTapGuard {
               if (meta.isNotEmpty)
                 Text(meta.join(metadataSeparator), style: detailStyle),
               FutureBuilder<String>(
-                future: _description,
+                key: ObjectKey(description),
+                future: description,
                 builder: (context, snapshot) {
                   if (snapshot.hasError) {
                     return Column(
@@ -173,9 +203,7 @@ class _EpisodePageState extends State<EpisodePage> with ActionTapGuard {
                       children: [
                         EinkError(strings.descriptionFailed),
                         TextButton(
-                          onPressed: () => setState(() {
-                            _description = _library.description(id);
-                          }),
+                          onPressed: () => setState(() => _description = null),
                           child: Text(strings.retry, style: buttonLabelStyle),
                         ),
                       ],

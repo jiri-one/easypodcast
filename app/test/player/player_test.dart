@@ -580,6 +580,44 @@ void main() {
   });
 
   testWidgets(
+    'retry after a stream failure during a seek reports the requested position',
+    (tester) async {
+      openPlayer();
+      const target = Duration(minutes: 2);
+      library.change(2, position: const Duration(seconds: 64));
+      await player.play(2);
+      final checkpoint = library.stateOf(2);
+      engine.onSeek = (_) {
+        engine.processingState = ProcessingState.idle;
+        engine.events.add(null);
+        throw OfflineException();
+      };
+
+      await player.seekTo(target);
+      await player.reportBeforeBackground();
+      expect(
+        player.lastPlaybackError?.reason,
+        PlaybackErrorReason.streamFailed,
+      );
+      expect(player.position.value, target);
+      expect(library.stateOf(2), same(checkpoint));
+
+      engine.onSeek = null;
+      final starting = Completer<void>();
+      engine.onPlay = () => starting.future;
+      final retry = player.resume();
+      await tester.pump();
+      expect(engine.position, target);
+      expect(library.stateOf(2), same(checkpoint));
+      starting.complete();
+      await retry;
+      expect(player.isPlaying, isTrue);
+      expect(player.lastPlaybackError, isNull);
+      expect(library.stateOf(2).resumePosition, target);
+    },
+  );
+
+  testWidgets(
     'hung seek releases pause and later commands without saving its target',
     (tester) async {
       openPlayer();

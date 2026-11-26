@@ -151,6 +151,34 @@ void main() {
   );
 
   testWidgets(
+    'open episode notes reload after a podcast update and a same-version reset',
+    (tester) async {
+      final library = _UpdatedNotesLibrary();
+      final app = await _phone(tester, library: library);
+      Finder notes(String text) => find.text(text, findRichText: true);
+      try {
+        await app.openEpisode(101);
+        final page = tester.state(find.byType(EpisodePage));
+        expect(notes('Original notes'), findsOneWidget);
+
+        library.update('2', 'Revised notes');
+        await tester.pumpAndSettle();
+        expect(notes('Revised notes'), findsOneWidget);
+        expect(notes('Original notes'), findsNothing);
+
+        library.update(null, '');
+        library.update('2', 'Restored notes');
+        await tester.pumpAndSettle();
+        expect(tester.state(find.byType(EpisodePage)), same(page));
+        expect(notes('Restored notes'), findsOneWidget);
+        expect(notes('Revised notes'), findsNothing);
+      } finally {
+        await app.finish();
+      }
+    },
+  );
+
+  testWidgets(
     'Back restores the podcast scroll position and long headings wrap',
     (tester) async {
       final library = _LongPodcastLibrary();
@@ -438,6 +466,28 @@ class _StaleFeedLibrary extends DemoLibrary {
   void refreshFeeds() {}
 
   void finishRefresh() => super.refreshFeeds();
+}
+
+class _UpdatedNotesLibrary extends DemoLibrary {
+  String? _version = '1';
+  String _notes = 'Original notes';
+
+  void update(String? version, String notes) {
+    _version = version;
+    _notes = notes;
+    notifyListeners();
+  }
+
+  @override
+  Episode? episode(int id) => _version == null ? null : super.episode(id);
+
+  @override
+  Podcast? podcast(int id) => _version == null
+      ? null
+      : super.podcast(id)?.copyWith(episodesVersion: _version);
+
+  @override
+  Future<String> description(int id) async => _notes;
 }
 
 class _LongPodcastLibrary extends DemoLibrary {

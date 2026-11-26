@@ -112,6 +112,30 @@ void main() {
   );
 
   test(
+    'an enclosure change rejects and removes the old file, even on restart',
+    () async {
+      final live = await saveDownload(1);
+      final restored = await saveDownload(2);
+      final oldTask = downloader.enqueued.first;
+
+      library.updateEnclosure(1, 'https://example.test/replacement.mp3');
+      expect(downloads.localFileOf(1), isNull);
+      await waitFor(() => !downloads.episodeIds.contains(1));
+      expect(await live.exists(), isFalse);
+      expect(downloader.database.records, isNot(contains(oldTask.taskId)));
+      final replacement = await saveDownload(1);
+      expect(downloader.enqueued.last.url, library.episode(1).enclosureUrl);
+
+      downloads.dispose();
+      library.updateEnclosure(2, 'https://example.test/new-server.mp3');
+      downloads = await open();
+      expect(downloads.localFileOf(2), isNull);
+      expect(await restored.exists(), isFalse);
+      expect(downloads.localFileOf(1), replacement.path);
+    },
+  );
+
+  test(
     'finished events delete played episodes only with the setting enabled',
     () async {
       settings.deleteAfterPlayed = false;
@@ -368,6 +392,7 @@ void main() {
 class _Library extends Library {
   final finished = StreamController<int>.broadcast(sync: true);
   final states = <int, EpisodeState>{};
+  final _enclosures = <int, String>{};
   List<int> _queued = [];
 
   @override
@@ -381,6 +406,11 @@ class _Library extends Library {
     notifyListeners();
   }
 
+  void updateEnclosure(int id, String url) {
+    _enclosures[id] = url;
+    notifyListeners();
+  }
+
   @override
   Stream<int> get finishedEpisodes => finished.stream;
 
@@ -389,7 +419,7 @@ class _Library extends Library {
     id: id,
     podcastId: 1,
     title: 'Field Notes $id',
-    enclosureUrl: 'https://example.test/$id.mp3',
+    enclosureUrl: _enclosures[id] ?? 'https://example.test/$id.mp3',
   );
 
   @override

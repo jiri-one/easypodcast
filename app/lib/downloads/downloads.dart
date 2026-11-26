@@ -121,7 +121,7 @@ class EpisodeDownloads extends DownloadService {
         service._window = service._queueWindow;
         service._autoEnabled = settings.keepQueueDownloaded;
         service._wifiOnly = settings.downloadOnWifiOnly;
-        service._library.addListener(service._onQueueChanged);
+        service._library.addListener(service._onLibraryChanged);
         service._settings.addListener(service._onSettingsChanged);
         service._wifiChanges = wifiChanges?.listen(service._onWifiChanged);
         await service._reconcile();
@@ -173,7 +173,9 @@ class EpisodeDownloads extends DownloadService {
   @override
   DownloadInfo statusOf(int episodeId) {
     final entry = _entries[episodeId];
-    if (entry == null) return DownloadInfo.none;
+    if (entry == null || _isStale(episodeId, entry.task)) {
+      return DownloadInfo.none;
+    }
     if (entry.completedAt != null) {
       return DownloadInfo(
         DownloadStatus.done,
@@ -196,7 +198,8 @@ class EpisodeDownloads extends DownloadService {
   }
 
   @override
-  String? localFileOf(int episodeId) => statusOf(episodeId).filePath;
+  String? localFileOf(int episodeId) =>
+      _library.episode(episodeId) == null ? null : statusOf(episodeId).filePath;
 
   @override
   List<int> get downloadedEpisodeIds {
@@ -227,6 +230,7 @@ class EpisodeDownloads extends DownloadService {
         if (id == null) continue;
         if (_entries.containsKey(id) ||
             record.status == TaskStatus.canceled ||
+            _isStale(id, task) ||
             _shouldDelete(id, downloadCreatedAt: task.creationTime)) {
           await _discard(task, cancel: record.status.isNotFinalState);
           continue;
@@ -256,8 +260,10 @@ class EpisodeDownloads extends DownloadService {
     if (episode == null || _library.stateOf(episodeId).isDismissed) return;
     if (_suppressed.remove(episodeId)) await _saveSuppressed();
     final existing = _entries[episodeId];
+    final status = statusOf(episodeId).status;
     if (existing != null &&
-        statusOf(episodeId).status != DownloadStatus.failed) {
+        status != DownloadStatus.none &&
+        status != DownloadStatus.failed) {
       if (_isAutomatic(existing.task) &&
           _manualCopies.add(existing.task.taskId)) {
         await _prefs.setStringList(_manualCopiesKey, _manualCopies.toList());
@@ -331,9 +337,19 @@ class EpisodeDownloads extends DownloadService {
         : task.metaData,
   );
 
-  void _onQueueChanged() {
+  bool _isStale(int id, DownloadTask task) {
+    final url = _library.episode(id)?.enclosureUrl;
+    return url != null && Uri.tryParse(url)?.toString() != task.url;
+  }
+
+  void _onLibraryChanged() {
     final window = _queueWindow;
-    if (listEquals(window, _window)) return;
+    if (listEquals(window, _window) &&
+        !_entries.entries.any(
+          (entry) => _isStale(entry.key, entry.value.task),
+        )) {
+      return;
+    }
     _window = window;
     background(
       _commands.run(() async {
@@ -388,10 +404,13 @@ class EpisodeDownloads extends DownloadService {
     await _pruneSuppressed(window);
     for (final entry in _entries.entries.toList()) {
       final id = entry.key;
-      if (_isAutomatic(entry.value.task) &&
-          id != _currentEpisodeId &&
-          _library.stateOf(id).positionMs == 0 &&
-          (!_autoEnabled || !window.contains(id) || _suppressed.contains(id))) {
+      if (_isStale(id, entry.value.task) ||
+          (_isAutomatic(entry.value.task) &&
+              id != _currentEpisodeId &&
+              _library.stateOf(id).positionMs == 0 &&
+              (!_autoEnabled ||
+                  !window.contains(id) ||
+                  _suppressed.contains(id)))) {
         await _delete(id);
       }
     }
@@ -541,7 +560,7 @@ class EpisodeDownloads extends DownloadService {
   void dispose() {
     unawaited(_commands.close());
     _storageRetry?.cancel();
-    _library.removeListener(_onQueueChanged);
+    _library.removeListener(_onLibraryChanged);
     _settings.removeListener(_onSettingsChanged);
     unawaited(_wifiChanges?.cancel());
     unawaited(_updates.cancel());

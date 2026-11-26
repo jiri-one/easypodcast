@@ -95,6 +95,7 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
   bool _loading = false;
   bool _advancing = false;
   bool _seeking = false;
+  (Duration, DateTime)? _pendingSeek;
   bool _exiting = false;
   int? _syncEpisode;
   int _focusRevision = 0;
@@ -205,11 +206,13 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
 
   Future<void> _resume(int? preferredEpisodeId) async {
     if (isPlaying) return;
-    final episode = _current;
-    if (episode != null) {
+    final current = _current;
+    if (current != null) {
+      final episode = _library.episode(current.id) ?? current;
       if (_loaded &&
           _failureAttempt == null &&
-          _engine.processingState != ProcessingState.idle) {
+          _engine.processingState != ProcessingState.idle &&
+          episode.enclosureUrl == current.enclosureUrl) {
         await _resumeLoaded();
       } else {
         await _loadEpisode(episode, propagateError: true);
@@ -306,6 +309,10 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
     await _checkPosition(id);
     if (_disposed || _exiting || eligible?.call() == false) return false;
 
+    episode = _library.episode(id) ?? episode;
+    if (_current?.id != id || _current?.enclosureUrl != episode.enclosureUrl) {
+      _pendingSeek = null;
+    }
     _current = episode;
     _loading = true;
     _loaded = false;
@@ -315,7 +322,7 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
     _playAttempt = null;
     _failureAttempt = null;
     _finishedSinceStart = false;
-    final initialPosition = _library.stateOf(id).resumePosition;
+    final initialPosition = _resumePosition(_library.stateOf(id));
     _position.value = initialPosition;
     _publish();
     var reason = PlaybackErrorReason.loadFailed;
@@ -337,7 +344,7 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
         }
         final state = _library.stateOf(id);
         final target = _positionBeforeEnd(
-          state.resumePosition,
+          _resumePosition(state),
           _measuredDuration,
         );
         if (target == applied) {
@@ -364,6 +371,15 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
       if (propagateError) rethrow;
       return true;
     }
+  }
+
+  Duration _resumePosition(EpisodeState state) {
+    if (_pendingSeek case (final target, final issuedAt)
+        when !state.isFinished && state.updatedAt.isBefore(issuedAt)) {
+      return target;
+    }
+    _pendingSeek = null;
+    return state.resumePosition;
   }
 
   Future<void> _checkPosition(int id) async {
@@ -396,7 +412,7 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
         return false;
       }
       final target = _positionBeforeEnd(
-        state.resumePosition,
+        _resumePosition(state),
         _measuredDuration,
       );
       if (target == applied) return true;
@@ -448,6 +464,11 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
     if (state.status != EpisodeStatus.none &&
         identical(_library.stateOf(id), state)) {
       await _library.prepareForPlayback(id);
+    }
+    if (_pendingSeek case (final target, _) when isPlaying) {
+      _pendingSeek = null;
+      await _report(position: _positionBeforeEnd(target, _measuredDuration));
+      _library.requestPendingSend();
     }
     _publish();
   }
@@ -534,7 +555,10 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
         _library.stateOf(_current!.id).updatedAt,
         _clock(),
       );
+      _pendingSeek = (target, issuedAt);
       await _seekEngine(target);
+      if (_failureAttempt != null) return;
+      _pendingSeek = null;
       await _report(position: target, updatedAt: issuedAt);
       _library.requestPendingSend();
       _publish();
@@ -616,6 +640,7 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
     _endObservedAt = null;
     _playAttempt = null;
     _failureAttempt = null;
+    _pendingSeek = null;
     _lastPlaybackError = null;
     _setSyncEpisode(null);
     try {
@@ -730,7 +755,9 @@ class EpisodePlayer extends PlayerController with WidgetsBindingObserver {
     _playAttempt = null;
     _failureAttempt = null;
     _setSyncEpisode(null);
-    if (sample != null && sample > Duration.zero) {
+    if (_pendingSeek case (final target, _)) {
+      _position.value = target;
+    } else if (sample != null && sample > Duration.zero) {
       _position.value = sample;
       if (!_finishedSinceStart) {
         await _library.recordPositionAt(
