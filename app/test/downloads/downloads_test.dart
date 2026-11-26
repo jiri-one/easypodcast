@@ -124,7 +124,7 @@ void main() {
       expect(await live.exists(), isFalse);
       expect(downloader.database.records, isNot(contains(oldTask.taskId)));
       final replacement = await saveDownload(1);
-      expect(downloader.enqueued.last.url, library.episode(1).enclosureUrl);
+      expect(downloader.enqueued.last.url, library.episode(1)!.enclosureUrl);
 
       downloads.dispose();
       library.updateEnclosure(2, 'https://example.test/new-server.mp3');
@@ -134,6 +134,31 @@ void main() {
       expect(downloads.localFileOf(1), replacement.path);
     },
   );
+
+  test('removes orphaned downloads once the catalogue is populated', () async {
+    final live = await saveDownload(1);
+    final restored = await saveDownload(2);
+
+    library.removeEpisode(1);
+    expect(downloads.statusOf(1), DownloadInfo.none);
+    await waitFor(() => !downloads.episodeIds.contains(1));
+    expect(await live.exists(), isFalse);
+
+    downloads.dispose();
+    library.removeEpisode(2);
+    final podcasts = library.podcasts;
+    library.podcasts = [];
+    downloads = await open();
+    expect(downloads.downloadedEpisodeIds, [2]);
+    expect(await restored.exists(), isTrue);
+
+    downloads.dispose();
+    library.podcasts = podcasts;
+    downloads = await open();
+    expect(downloads.episodeIds, isEmpty);
+    expect(downloader.database.records, isEmpty);
+    expect(await restored.exists(), isFalse);
+  });
 
   test(
     'finished events delete played episodes only with the setting enabled',
@@ -393,12 +418,18 @@ class _Library extends Library {
   final finished = StreamController<int>.broadcast(sync: true);
   final states = <int, EpisodeState>{};
   final _enclosures = <int, String>{};
+  final _removed = <int>{};
   List<int> _queued = [];
+
+  @override
+  List<Podcast> podcasts = const [
+    Podcast(id: 1, title: 'Field Notes', feedUrl: 'https://example.test/feed'),
+  ];
 
   @override
   List<Episode> get queue => [
     for (final id in _queued)
-      if (stateOf(id).status == EpisodeStatus.none) episode(id),
+      if (stateOf(id).status == EpisodeStatus.none) ?episode(id),
   ];
 
   void updateQueue(List<int> ids) {
@@ -411,16 +442,24 @@ class _Library extends Library {
     notifyListeners();
   }
 
+  void removeEpisode(int id) {
+    _removed.add(id);
+    notifyListeners();
+  }
+
   @override
   Stream<int> get finishedEpisodes => finished.stream;
 
   @override
-  Episode episode(int id) => Episode(
-    id: id,
-    podcastId: 1,
-    title: 'Field Notes $id',
-    enclosureUrl: _enclosures[id] ?? 'https://example.test/$id.mp3',
-  );
+  Episode? episode(int id) {
+    if (podcasts.isEmpty || _removed.contains(id)) return null;
+    return Episode(
+      id: id,
+      podcastId: 1,
+      title: 'Field Notes $id',
+      enclosureUrl: _enclosures[id] ?? 'https://example.test/$id.mp3',
+    );
+  }
 
   @override
   EpisodeState stateOf(int id) => states[id] ?? EpisodeState.initial(id);

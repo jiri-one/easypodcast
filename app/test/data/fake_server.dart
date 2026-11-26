@@ -413,6 +413,7 @@ class Device {
     FakeServer server, {
     Database? db,
     TestClock? deviceClock,
+    Stream<bool>? networkUp,
     bool observeLifecycle = false,
     Duration pullInterval = const Duration(minutes: 15),
     Duration initialBackoff = const Duration(milliseconds: 20),
@@ -439,6 +440,7 @@ class Device {
       api: api,
       library: library,
       store: store,
+      networkUp: networkUp,
       observeLifecycle: observeLifecycle,
       pullInterval: pullInterval,
       initialBackoff: initialBackoff,

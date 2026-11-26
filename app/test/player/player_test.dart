@@ -940,6 +940,38 @@ void main() {
     },
   );
 
+  testWidgets('Android Auto lists at most the newest 100 unfinished episodes', (
+    _,
+  ) async {
+    openPlayer();
+    library.podcastEpisodes = [
+      for (var id = 105; id >= 1; id--)
+        Episode(
+          id: id,
+          podcastId: 1,
+          title: 'Field Notes $id',
+          enclosureUrl: 'https://example.test/$id.mp3',
+        ),
+    ];
+    library.change(105, status: EpisodeStatus.played);
+    library.change(104, status: EpisodeStatus.dismissed);
+
+    final items = await handler.getChildren('podcast:1');
+    expect(items.map((item) => item.id), [
+      for (var id = 103; id >= 4; id--) 'episode:$id',
+    ]);
+  });
+
+  test('Android Auto requests lists for browsable and playable items', () {
+    expect(androidAudioConfig.androidBrowsableRootExtras, {
+      AndroidContentStyle.supportedKey: true,
+      AndroidContentStyle.browsableHintKey:
+          AndroidContentStyle.listItemHintValue,
+      AndroidContentStyle.playableHintKey:
+          AndroidContentStyle.listItemHintValue,
+    });
+  });
+
   testWidgets('Linux MPRIS publishes advancing position for relative seek', (
     tester,
   ) async {
@@ -1489,6 +1521,7 @@ class _Library extends Library {
   final reportedDurations = <Duration?>[];
   final _states = <int, EpisodeState>{};
   final queued = [_first, _second];
+  List<Episode> podcastEpisodes = [_third, _second, _first];
   int _revision = 0;
 
   static const _podcast = Podcast(
@@ -1504,7 +1537,7 @@ class _Library extends Library {
   Podcast? podcast(int id) => id == 1 ? _podcast : null;
 
   @override
-  List<Episode> episodesOf(int id) => id == 1 ? [_third, _second, _first] : [];
+  List<Episode> episodesOf(int id) => id == 1 ? podcastEpisodes : [];
 
   @override
   List<Episode> get inProgress => [

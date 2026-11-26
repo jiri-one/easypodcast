@@ -338,8 +338,9 @@ class EpisodeDownloads extends DownloadService {
   );
 
   bool _isStale(int id, DownloadTask task) {
-    final url = _library.episode(id)?.enclosureUrl;
-    return url != null && Uri.tryParse(url)?.toString() != task.url;
+    final episode = _library.episode(id);
+    if (episode == null) return _library.podcasts.isNotEmpty;
+    return Uri.tryParse(episode.enclosureUrl)?.toString() != task.url;
   }
 
   void _onLibraryChanged() {

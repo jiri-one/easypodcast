@@ -37,6 +37,7 @@ class DefaultSyncService extends SyncService with WidgetsBindingObserver {
     required this._api,
     required this._library,
     required this._store,
+    this._networkUp,
     this.observeLifecycle = true,
     this.initialBackoff = const Duration(seconds: 5),
     this.maxBackoff = const Duration(minutes: 5),
@@ -60,6 +61,7 @@ class DefaultSyncService extends SyncService with WidgetsBindingObserver {
   final ApiClient _api;
   final SqfliteLibrary _library;
   final LocalStore _store;
+  final Stream<bool>? _networkUp;
   final DateTime Function() _clock;
 
   /// Tests drive the lifecycle by calling [didChangeAppLifecycleState] themselves.
@@ -90,6 +92,7 @@ class DefaultSyncService extends SyncService with WidgetsBindingObserver {
   final _catalogue = _SyncOperation();
   _SyncOperation? _lastFailure;
   Timer? _pullTimer;
+  StreamSubscription<bool>? _networkSub;
 
   @override
   ValueListenable<SyncStatus> get status => _status;
@@ -176,6 +179,9 @@ class DefaultSyncService extends SyncService with WidgetsBindingObserver {
       WidgetsBinding.instance.addObserver(this);
       _observing = true;
     }
+    _networkSub ??= _networkUp?.listen((_) {
+      if (isLoggedIn && _library.hasPending) _request(force: true);
+    });
     if (!isLoggedIn) {
       _updateStatus();
       return;
@@ -188,6 +194,10 @@ class DefaultSyncService extends SyncService with WidgetsBindingObserver {
   @override
   Future<void> stop() async {
     if (!_started) return;
+    if (_networkSub case final sub?) {
+      _networkSub = null;
+      await sub.cancel();
+    }
     _cancelTimers();
     if (isLoggedIn && _library.hasPending) _request(force: true);
     await whenIdle();
@@ -629,6 +639,8 @@ class DefaultSyncService extends SyncService with WidgetsBindingObserver {
   }
 
   void dispose() {
+    unawaited(_networkSub?.cancel());
+    _networkSub = null;
     _endSessionWork();
     _library.onPendingSend = null;
     _library.refreshStatesAndQueue = null;

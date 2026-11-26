@@ -1,5 +1,18 @@
 part of 'player.dart';
 
+@visibleForTesting
+const androidAudioConfig = AudioServiceConfig(
+  androidNotificationChannelId: 'one.jiri.easypodcast.audio',
+  androidNotificationChannelName: 'EasyPodcast',
+  androidNotificationIcon: 'drawable/ic_stat_easypodcast',
+  androidStopForegroundOnPause: false,
+  androidBrowsableRootExtras: {
+    AndroidContentStyle.supportedKey: true,
+    AndroidContentStyle.browsableHintKey: AndroidContentStyle.listItemHintValue,
+    AndroidContentStyle.playableHintKey: AndroidContentStyle.listItemHintValue,
+  },
+);
+
 Future<void> _openAndroidAudio(
   EpisodePlayer player,
   Library library,
@@ -14,12 +27,7 @@ Future<void> _openAndroidAudio(
       settings,
       android: true,
     ),
-    config: const AudioServiceConfig(
-      androidNotificationChannelId: 'one.jiri.easypodcast.audio',
-      androidNotificationChannelName: 'EasyPodcast',
-      androidNotificationIcon: 'drawable/ic_stat_easypodcast',
-      androidStopForegroundOnPause: false,
-    ),
+    config: androidAudioConfig,
   );
 }
 
@@ -143,6 +151,7 @@ class EpisodeAudioHandler extends BaseAudioHandler {
         : _library
               .episodesOf(id)
               .where((episode) => _player._isUnfinished(episode.id))
+              .take(100)
               .map(_item)
               .toList();
   }

@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart' show databaseFactorySqflitePlugin;
@@ -35,7 +36,17 @@ Future<DataLayer> openDataLayer() async {
   api
     ..serverUrl = store.meta(MetaKey.serverUrl) ?? ''
     ..token = store.meta(MetaKey.token);
-  final sync = DefaultSyncService(api: api, library: library, store: store);
+  final sync = DefaultSyncService(
+    api: api,
+    library: library,
+    store: store,
+    networkUp: Platform.isAndroid
+        ? Connectivity().onConnectivityChanged
+              .map((results) => !results.contains(ConnectivityResult.none))
+              .distinct()
+              .where((up) => up)
+        : null,
+  );
   api.onUnauthorized = sync.handleUnauthorized;
   return (api: api, library: library, sync: sync);
 }

@@ -40,6 +40,7 @@ void main() {
   Future<Device> device(
     String name, {
     bool start = true,
+    Stream<bool>? networkUp,
     Duration initialBackoff = const Duration(milliseconds: 20),
     Duration maxBackoff = const Duration(milliseconds: 160),
     Duration freshStateTimeout = const Duration(milliseconds: 100),
@@ -48,6 +49,7 @@ void main() {
   }) async {
     final d = await Device.open(
       server,
+      networkUp: networkUp,
       initialBackoff: initialBackoff,
       maxBackoff: maxBackoff,
       freshStateTimeout: freshStateTimeout,
@@ -101,6 +103,34 @@ void main() {
       expect(phone.sync.status.value.phase, SyncPhase.idle);
     },
   );
+
+  test('a reconnect sends pending state during retry backoff', () async {
+    final networkUp = StreamController<bool>.broadcast(sync: true);
+    addTearDown(networkUp.close);
+    final phone = await device(
+      'phone',
+      networkUp: networkUp.stream,
+      initialBackoff: const Duration(minutes: 5),
+      maxBackoff: const Duration(minutes: 5),
+    );
+    final id = episodes.first;
+    phone.api.online = false;
+    later();
+    await phone.library.recordPosition(id, const Duration(minutes: 2));
+    await phone.sync.whenIdle();
+    expect(phone.sync.retryScheduled, isTrue);
+    expect(server.states[id], isNull);
+
+    phone.api.online = true;
+    networkUp.add(true);
+    await phone.sync.whenIdle();
+    expect(server.states[id]?.positionMs, 120000);
+    expect(phone.library.pendingCount, 0);
+    expect(phone.sync.retryScheduled, isFalse);
+
+    await phone.sync.stop();
+    expect(networkUp.hasListener, isFalse);
+  });
 
   test('state and queue travel in one request', () async {
     final phone = await device('phone');
