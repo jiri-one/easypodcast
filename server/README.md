@@ -22,7 +22,8 @@ export EASYPODCAST_DATABASE_URL='postgres://easypodcast@localhost/easypodcast?ss
 | `EASYPODCAST_REFRESH_INTERVAL` | `1h` (Go duration) |
 | `EASYPODCAST_USER_AGENT` | `EasyPodcast/<version> (+https://github.com/jiri-one/easypodcast)` |
 | `EASYPODCAST_TRUSTED_PROXIES` | Empty (comma-separated IPv4 or IPv6 addresses or CIDRs) |
-| `EASYPODCAST_ALLOW_PRIVATE_FEEDS` | `false` (set to `true` for local test feeds) |
+| `EASYPODCAST_ALLOW_PRIVATE_FEEDS` | `false` (set to `true` for local test feeds and directories) |
+| `EASYPODCAST_DIRECTORY_URL` | `https://itunes.apple.com/search` (Apple's US storefront; add `?country=CZ` or another country code, or set `off`) |
 
 ## Commands
 
@@ -62,6 +63,10 @@ episodes. A refresh that would
 exceed these limits records an error and preserves the stored episodes and their states.
 HTTP OPML imports use four workers and have 80 seconds to finish. The result lists feeds
 that need another import attempt.
+
+## Podcast directory
+
+`GET /api/directory?q=nocni+vlak` takes the usual bearer token and sends one request to the directory. The server sets `term`, `media=podcast`, `entity=podcast` and `limit=25` on the configured URL and keeps its other parameters, such as `country`. The response lists up to 25 `{"feed_url", "title", "author", "image_url", "subscribed"}` objects in directory order. `subscribed` is true when the feed URL is a known address of a subscribed podcast. Items without an HTTP(S) feed URL or a title and repeated feed URLs are dropped. A query with fewer than two characters after trimming returns 400, `EASYPODCAST_DIRECTORY_URL=off` returns 404, and a failed request, a non-200 answer, an invalid or oversized (over 1 MiB) body, or no answer within 8 seconds returns 502. The directory receives only the search text and the server's User-Agent. The server neither caches nor logs searches.
 
 ## Search and sync behavior
 

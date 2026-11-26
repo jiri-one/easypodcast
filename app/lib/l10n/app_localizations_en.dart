@@ -325,7 +325,37 @@ class AppLocalizationsEn extends AppLocalizations {
   String get addPodcast => 'Add podcast';
 
   @override
+  String get subscribeTitle => 'Add podcast?';
+
+  @override
   String get addingPodcast => 'Adding…';
+
+  @override
+  String get directorySearch => 'Find a podcast';
+
+  @override
+  String get searching => 'Searching…';
+
+  @override
+  String get directoryTooShort => 'Type at least two characters.';
+
+  @override
+  String get directoryEmpty => 'No podcasts match your search.';
+
+  @override
+  String get directoryOffline =>
+      'No connection to the server. Search works only online.';
+
+  @override
+  String get directoryOff =>
+      'This server doesn\'t offer directory search. Paste the feed address below.';
+
+  @override
+  String get directoryFailed =>
+      'Search didn\'t work. Try again or paste the feed address below.';
+
+  @override
+  String get subscribedMark => 'Subscribed';
 
   @override
   String get feedAddress => 'Feed address';

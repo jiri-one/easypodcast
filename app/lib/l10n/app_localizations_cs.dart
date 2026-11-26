@@ -324,7 +324,37 @@ class AppLocalizationsCs extends AppLocalizations {
   String get addPodcast => 'Přidat podcast';
 
   @override
+  String get subscribeTitle => 'Přidat podcast?';
+
+  @override
   String get addingPodcast => 'Přidávám…';
+
+  @override
+  String get directorySearch => 'Najít podcast';
+
+  @override
+  String get searching => 'Hledám…';
+
+  @override
+  String get directoryTooShort => 'Napiš aspoň dva znaky.';
+
+  @override
+  String get directoryEmpty => 'Žádný podcast neodpovídá hledání.';
+
+  @override
+  String get directoryOffline =>
+      'Bez spojení se serverem. Hledat jde jen online.';
+
+  @override
+  String get directoryOff =>
+      'Server hledání v adresáři nenabízí. Vlož adresu feedu níže.';
+
+  @override
+  String get directoryFailed =>
+      'Hledání se nepodařilo. Zkus to znovu nebo vlož adresu feedu níže.';
+
+  @override
+  String get subscribedMark => 'Odebíráš';
 
   @override
   String get feedAddress => 'Adresa feedu';

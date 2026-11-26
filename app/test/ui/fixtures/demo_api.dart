@@ -37,6 +37,37 @@ class DemoApiClient implements ApiClient {
       _library.subscribe(feedUrl);
 
   @override
+  Future<List<DirectoryPodcast>> searchDirectory(
+    String query, {
+    Duration? timeout,
+  }) async {
+    final podcast = _library.podcast(1)!;
+    return [
+      (
+        feedUrl: podcast.feedUrl,
+        title: podcast.title,
+        author: podcast.author,
+        imageUrl: 'https://podcast.example/1/cover.png',
+        subscribed: podcast.subscribed,
+      ),
+      const (
+        feedUrl: 'https://paper-planes.example/feed.xml',
+        title: 'Papírová letadla',
+        author: 'Tereza Vichrová',
+        imageUrl: null,
+        subscribed: false,
+      ),
+      const (
+        feedUrl: 'https://night-train.example/feed.xml',
+        title: 'Malý průvodce po zapomenutých nádražích a nočních vlacích',
+        author: 'Klára Červenková a Klub přátel dálkových vlaků',
+        imageUrl: null,
+        subscribed: false,
+      ),
+    ];
+  }
+
+  @override
   Future<void> unsubscribe(int podcastId, {Duration? timeout}) =>
       _library.unsubscribe(podcastId);
 

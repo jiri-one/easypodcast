@@ -47,6 +47,7 @@ func (a *api) routes() http.Handler {
 	mux.HandleFunc("GET /api/podcasts/{id}/episodes", a.authenticated(a.episodes))
 	mux.HandleFunc("GET /api/podcasts/{id}/search", a.authenticated(a.searchEpisodes))
 	mux.HandleFunc("GET /api/search", a.authenticated(a.searchEpisodes))
+	mux.HandleFunc("GET /api/directory", a.authenticated(a.searchDirectory))
 	mux.HandleFunc("GET /api/episodes/{id}", a.authenticated(a.episode))
 	mux.HandleFunc("GET /api/episodes/{id}/state", a.authenticated(a.episodeState))
 	mux.HandleFunc("GET /api/state", a.authenticated(a.state))

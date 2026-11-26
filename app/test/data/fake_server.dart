@@ -281,6 +281,12 @@ class FakeApiClient implements HttpApiClient {
   }
 
   @override
+  Future<List<DirectoryPodcast>> searchDirectory(
+    String query, {
+    Duration? timeout,
+  }) async => const [];
+
+  @override
   Future<void> unsubscribe(int podcastId, {Duration? timeout}) async {
     _check();
     server.setSubscribed(podcastId, false);

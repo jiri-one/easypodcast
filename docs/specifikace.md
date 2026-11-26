@@ -3,7 +3,7 @@
 Koncept z 26. 11. 2026. Vychází ze zkušeností s goPodderem, AntennaPodem, Kasts,
 Audiobookshelfem a PinePods a z rešerše alternativ z 25. 11. Technické rozhraní pro vývoj popisuje
 `docs/architecture.md`. Místa, o kterých je ještě potřeba rozhodnout, odkazují na otevřené otázky
-na konci (O5 a O7 až O21). Otázky O1 až O4 a O6 jsou rozhodnuté.
+na konci (O5, O7 až O12 a O15 až O21). Otázky O1 až O4, O6, O13 a O14 jsou rozhodnuté.
 
 Úpravy z 26. 11.: podle prvních poznámek jednodušší synchronizace s jediným časem ze zařízení,
 rozposlouchané díly odděleně od fronty a vyřazení dílu („už nechci poslouchat“). Po revizi
@@ -53,7 +53,7 @@ Aplikace se do telefonů instalují mimo Google Play, takže Android Auto vyžad
 
 ### 4.1 Odběry a díly
 
-- Nový podcast se přidá vložením adresy feedu (hledání v adresáři: O14).
+- Nový podcast se přidá hledáním podle názvu v adresáři Apple Podcasts nebo vložením adresy feedu. Ve výsledcích jsou označené podcasty, které už jsou v odběrech. Klepnutí na výsledek zobrazí potvrzení. Po potvrzení se přidá chybějící odběr a podcast se otevře (O14).
 - Import a export OPML. Import z PinePods: odběry, fronta, pozice a přehrané díly i s časy. Import
   lze spouštět opakovaně až do přechodu z PinePods. U každého dílu platí novější stav. Frontu
   import převezme, jen pokud je fronta v EasyPodcastu prázdná. Díly, které už ve feedu nejsou,
@@ -213,6 +213,7 @@ API (náčrt, JSON):
 | `GET /api/podcasts/{id}/episodes` | díly podcastu, s `ETag` |
 | `GET /api/episodes/{id}` | díl s popisem, až když se otevře |
 | `POST /api/podcasts`, `DELETE /api/podcasts/{id}` | přidat a zrušit odběr (díly i stav zůstanou) |
+| `GET /api/directory` | hledání podcastů v adresáři, odebírané označené (O14) |
 | `POST /api/refresh` | stáhnout feedy hned |
 | `GET` a `POST /api/opml` | export a import |
 | `GET /health` | pro Gatus |
@@ -273,7 +274,7 @@ položky s krátkými popisky, pátá už těžko (O7).
   token toho zařízení.
 - Omezený počet pokusů o přihlášení, žádná registrace.
 - Hesla ani tokeny se nikdy nedostanou do logu.
-- Žádná telemetrie. Navenek se server připojuje jen k adresám feedů (a k adresáři podcastů, O14).
+- Žádná telemetrie. Navenek se server připojuje jen k adresám feedů a při hledání podcastu k adresáři Apple Podcasts (O14). Apple dostane jen hledaný text, a to od serveru, ne od telefonu. Náhledy obrázků ve výsledcích načítá aplikace přímo ze serverů Applu, stejně jako obrázky podcastů načítá od vydavatelů.
 
 ## 10. Postup
 
@@ -347,7 +348,7 @@ jiném zařízení.
 - **O13 Přehráno (rozhodnuto):** až když přehrávač ohlásí skutečný konec. Původní návrh s 30 s
   před koncem usekával závěr dílu. Nové spuštění přehraného dílu zruší označení a díl hraje od
   začátku, po minutě poslechu je tedy znovu mezi rozposlouchanými.
-- **O14 Hledání podcastů:** v adresáři Apple (bez klíče), nebo stačí vložit adresu feedu?
+- **O14 Hledání podcastů** (rozhodnuto): v adresáři Apple Podcasts přes iTunes Search API, bez klíče a v českém obchodě (`country=CZ`), protože jen ten spolehlivě najde české podcasty. Hledá server, jedno volání na jedno odeslané hledání, nejvýš 25 výsledků. Vložení adresy feedu zůstává pro podcasty, které Apple nemá. Podcast Index najde české podcasty jen zčásti, fyyd je nenajde vůbec a gpodder.net už neindexuje.
 - **O15 Čas na e-inku:** jak často ho během přehrávání obnovovat?
 - **O16 Web:** stačí aplikace pro Linux, nebo i verze do prohlížeče (ze stejného kódu)?
 - **O17 Uživatelé:** opravdu jen jeden?

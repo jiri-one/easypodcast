@@ -75,6 +75,7 @@ export EASYPODCAST_LISTEN='127.0.0.1:18080'
 export EASYPODCAST_REFRESH_INTERVAL=1h
 export EASYPODCAST_TRUSTED_PROXIES=''
 export EASYPODCAST_ALLOW_PRIVATE_FEEDS=true
+export EASYPODCAST_DIRECTORY_URL=http://127.0.0.1:18081/directory.json
 export no_proxy="127.0.0.1${no_proxy:+,$no_proxy}"
 
 setup_log="$logs/setup.log"

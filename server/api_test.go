@@ -27,11 +27,25 @@ func TestHTTPAPI(t *testing.T) {
 	var calls atomic.Int32
 	var mode atomic.Int32
 	var conditional atomic.Bool
+	var directoryDown atomic.Bool
+	var czechStorefront atomic.Bool
 	feeds := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.UserAgent() != "EasyPodcast/test" {
 			t.Errorf("wrong User-Agent: %q", r.UserAgent())
 		}
 		switch r.URL.Path {
+		case "/directory":
+			czechStorefront.Store(r.URL.Query().Get("country") == "CZ")
+			if directoryDown.Load() {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+			base := "http://" + r.Host
+			_, _ = fmt.Fprintf(w, `{"results":[
+				{"feedUrl":%q,"collectionName":"Cloudberry alias"},
+				{"feedUrl":%q,"collectionName":"Cloudberry"},
+				{"feedUrl":"https://paper.example/feed","collectionName":"Paper Planes"}
+			]}`, base+"/old", base+"/feeds/cloudberry.xml")
 		case "/old":
 			http.Redirect(w, r, "/feeds/cloudberry.xml", http.StatusMovedPermanently)
 		case "/bad-json":
@@ -85,6 +99,7 @@ func TestHTTPAPI(t *testing.T) {
 		t.Fatal(got)
 	}
 	call("GET", "/api/podcasts", "", "", "", 401)
+	call("GET", "/api/directory?q=berry", "", "", "", 401)
 	call("DELETE", "/api/podcasts/1/new-episodes", "", "", "", 401)
 	for range 5 {
 		call("POST", "/api/login", `{"username":"listener","password":"wrong","device_name":"Test"}`, "", "", 401)
@@ -105,6 +120,44 @@ func TestHTTPAPI(t *testing.T) {
 	if err := uuid.Scan(tokens.ServerID); err != nil || uuid.Bytes[6]>>4 != 4 || uuid.Bytes[8]>>6 != 2 {
 		t.Fatalf("invalid server UUID in login reply: %v", err)
 	}
+	const directoryPath = "/api/directory?q=berry"
+	if got := call("GET", directoryPath, "", "", "", 404).Body.String(); got != `{"error":"podcast directory is off"}` {
+		t.Fatal(got)
+	}
+	directoryURL, urlErr := feedURL(feeds.URL + "/directory?country=CZ")
+	if urlErr != nil {
+		t.Fatal(urlErr)
+	}
+	refresh.directoryURL = directoryURL
+	for query, want := range map[string]string{
+		"a":    `{"error":"q must contain at least two characters"}`,
+		"a%FF": `{"error":"q must be valid text"}`,
+		"a%00": `{"error":"q must be valid text"}`,
+	} {
+		if got := call("GET", "/api/directory?q="+query, "", "", "", 400).Body.String(); got != want {
+			t.Errorf("q=%s: got %s, want %s", query, got, want)
+		}
+	}
+	checkDirectory := func(subscribed bool) {
+		t.Helper()
+		results := response[[]directoryPodcast](t, call("GET", directoryPath, "", "", "", 200))
+		if len(results) != 3 || results[0].FeedURL != feeds.URL+"/old" ||
+			results[1].FeedURL != feeds.URL+"/feeds/cloudberry.xml" ||
+			results[2].FeedURL != "https://paper.example/feed" ||
+			results[0].Subscribed != subscribed || results[1].Subscribed != subscribed ||
+			results[2].Subscribed {
+			t.Fatalf("directory subscribed = %t: %+v", subscribed, results)
+		}
+	}
+	checkDirectory(false)
+	if !czechStorefront.Load() {
+		t.Fatal("directory did not receive country=CZ")
+	}
+	directoryDown.Store(true)
+	if got := call("GET", directoryPath, "", "", "", 502).Body.String(); got != `{"error":"podcast directory unavailable"}` {
+		t.Fatal(got)
+	}
+	directoryDown.Store(false)
 
 	call("POST", "/api/state", strings.Repeat(" ", maxRequestBytes+1), "", "", 413)
 	call("POST", "/api/state", `{}{}`, "", "", 400)
@@ -129,6 +182,7 @@ func TestHTTPAPI(t *testing.T) {
 	if p.EpisodeCount != 2 || p.FeedURL != feeds.URL+"/feeds/cloudberry.xml" || !p.ShowInNewEpisodes {
 		t.Fatal(p)
 	}
+	checkDirectory(true)
 	call("POST", "/api/podcasts", input, "", "", 200)
 	if calls.Load() != 1 {
 		t.Fatal("existing subscription triggered a fetch")
@@ -162,6 +216,7 @@ func TestHTTPAPI(t *testing.T) {
 	queued := fmt.Sprintf(`{"queue":{"episode_ids":[%d],"updated_at":"2026-11-26T11:58:00.000Z"}}`, paper.ID)
 	call("POST", "/api/state", queued, "", "", 200)
 	call("DELETE", podcastPath, "", "", "", 204)
+	checkDirectory(false)
 	queueOnly := response[[]podcast](t, call("GET", "/api/podcasts", "", "", "", 200))
 	if len(queueOnly) != 1 || queueOnly[0].ID != p.ID || queueOnly[0].Subscribed {
 		t.Fatalf("podcast with only a queued episode was lost: %+v", queueOnly)
@@ -173,6 +228,7 @@ func TestHTTPAPI(t *testing.T) {
 	if !resubscribed.Subscribed || resubscribed.ShowInNewEpisodes {
 		t.Fatal("resubscribing lost the New episodes preference")
 	}
+	checkDirectory(true)
 	call("PUT", newEpisodesPath, "", "", "", 204)
 	if shown := response[[]podcast](t, call("GET", "/api/podcasts", "", "", "", 200)); !shown[0].ShowInNewEpisodes {
 		t.Fatalf("PUT did not show the podcast in New episodes: %+v", shown)

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -28,13 +29,14 @@ type feedTarget struct {
 }
 
 type refresher struct {
-	store     store
-	client    http.Client
-	userAgent string
-	interval  time.Duration
-	slots     chan struct{}
-	large     chan struct{}
-	force     chan struct{}
+	store        store
+	client       http.Client
+	userAgent    string
+	interval     time.Duration
+	directoryURL *url.URL
+	slots        chan struct{}
+	large        chan struct{}
+	force        chan struct{}
 }
 
 func newRefresher(s store, userAgent string, interval time.Duration) *refresher {

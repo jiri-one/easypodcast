@@ -4,6 +4,7 @@ import '../core/api.dart';
 import '../core/models.dart';
 import '../core/services.dart';
 import 'eink_widgets.dart';
+import 'library_views.dart' show PodcastThumbnail;
 import 'theme.dart';
 
 bool _validAddress(String address) {
@@ -204,39 +205,121 @@ class AddPodcastPage extends StatefulWidget {
 }
 
 class _AddPodcastPageState extends State<AddPodcastPage> {
+  final _query = TextEditingController();
   final _address = TextEditingController();
-  bool _busy = false;
-  String? _error;
+  List<DirectoryPodcast>? _results;
+  bool _searching = false;
+  bool _confirming = false;
+  bool _adding = false;
+  String? _addingResult;
+  String? _searchError;
+  String? _addressError;
+  final _resultErrors = <String, String>{};
 
-  Future<void> _add() async {
+  bool get _busy => _searching || _confirming || _adding;
+
+  Future<void> _search() async {
     if (_busy) return;
     final strings = context.strings;
-    final url = _address.text.trim();
-    if (!_validAddress(url)) {
-      setState(() => _error = strings.invalidFeedUrl);
+    final query = _query.text.trim();
+    if (query.runes.length < 2) {
+      setState(() => _searchError = strings.directoryTooShort);
       return;
     }
     FocusScope.of(context).unfocus();
     setState(() {
-      _busy = true;
-      _error = null;
+      _searching = true;
+      _results = null;
+      _searchError = null;
+      _resultErrors.clear();
+    });
+    try {
+      final results = await widget.services.api.searchDirectory(query);
+      if (mounted) _results = results;
+    } on Object catch (error) {
+      if (mounted) {
+        _searchError = switch (error) {
+          OfflineException() => strings.directoryOffline,
+          ApiException(statusCode: 404) => strings.directoryOff,
+          _ => strings.directoryFailed,
+        };
+      }
+    } finally {
+      if (mounted) setState(() => _searching = false);
+    }
+  }
+
+  Future<void> _addByAddress() async {
+    if (_busy) return;
+    final url = _address.text.trim();
+    if (!_validAddress(url)) {
+      setState(() => _addressError = context.strings.invalidFeedUrl);
+      return;
+    }
+    await _subscribe(url);
+  }
+
+  Future<void> _addResult(DirectoryPodcast result) async {
+    if (_busy) return;
+    final strings = context.strings;
+    _confirming = true;
+    final bool confirmed;
+    try {
+      confirmed = await confirmAction(
+        context,
+        title: strings.subscribeTitle,
+        message: result.author.isEmpty
+            ? result.title
+            : '${result.title}\n${result.author}',
+        action: strings.addPodcast,
+      );
+    } finally {
+      _confirming = false;
+    }
+    if (!mounted || !confirmed) return;
+    await _subscribe(result.feedUrl, fromDirectory: true);
+  }
+
+  Future<void> _subscribe(String url, {bool fromDirectory = false}) async {
+    final strings = context.strings;
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _adding = true;
+      if (fromDirectory) {
+        _addingResult = url;
+        _resultErrors.remove(url);
+      } else {
+        _addressError = null;
+      }
     });
     try {
       final podcast = await widget.services.library.subscribe(url);
       if (mounted) widget.onAdded(podcast);
-    } on ApiException catch (error) {
-      _error = error.statusCode == 422
-          ? strings.invalidFeed
-          : strings.subscribeFailed;
-    } on Exception {
-      _error = strings.subscribeFailed;
+    } on Exception catch (error) {
+      if (!mounted) return;
+      final unavailable = error is ApiException && error.statusCode == 422;
+      if (fromDirectory) {
+        _resultErrors[url] = unavailable
+            ? strings.feedUnavailable
+            : strings.subscribeFailed;
+      } else {
+        _addressError = unavailable
+            ? strings.invalidFeed
+            : strings.subscribeFailed;
+      }
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) {
+        setState(() {
+          _adding = false;
+          _addingResult = null;
+        });
+      }
     }
   }
 
   @override
   void dispose() {
+    _query.dispose();
     _address.dispose();
     super.dispose();
   }
@@ -244,9 +327,52 @@ class _AddPodcastPageState extends State<AddPodcastPage> {
   @override
   Widget build(BuildContext context) {
     final strings = context.strings;
+    final statusStyle = detailStyle.copyWith(fontWeight: FontWeight.w700);
     return PageList(
       inset: true,
       children: [
+        LabeledField(
+          label: strings.directorySearch,
+          controller: _query,
+          textInputAction: TextInputAction.search,
+          enabled: !_busy,
+          onSubmitted: (_) => _search(),
+        ),
+        EinkButton(
+          _searching ? strings.searching : strings.search,
+          primary: true,
+          minHeight: 52,
+          onPressed: _search,
+          alternatives: [strings.search, strings.searching],
+        ),
+        if (_searchError case final String error) ...[
+          const SizedBox(height: 8),
+          EinkError(error),
+        ] else if (_results?.isEmpty == true) ...[
+          const SizedBox(height: 8),
+          Text(strings.directoryEmpty, style: detailStyle),
+        ],
+        for (final result in _results ?? const <DirectoryPodcast>[])
+          EinkRow(
+            title: result.title,
+            leading: PodcastThumbnail(result.imageUrl),
+            topAligned: true,
+            details: [
+              if (result.author.isNotEmpty)
+                Text(result.author, style: detailStyle),
+              if (result.subscribed)
+                Text(strings.subscribedMark, style: statusStyle),
+              if (result.feedUrl == _addingResult)
+                Text(strings.addingPodcast, style: statusStyle),
+              if (_resultErrors[result.feedUrl] case final String error)
+                EinkError(error, liveRegion: false),
+            ],
+            trailing: result.subscribed
+                ? null
+                : Icon(Icons.add, semanticLabel: strings.addPodcast),
+            onPressed: () => _addResult(result),
+          ),
+        const SizedBox(height: 24),
         Text(strings.addPodcastHelp, style: buttonLabelStyle),
         const SizedBox(height: 16),
         LabeledField(
@@ -254,17 +380,19 @@ class _AddPodcastPageState extends State<AddPodcastPage> {
           controller: _address,
           keyboardType: TextInputType.url,
           enabled: !_busy,
-          onSubmitted: (_) => _add(),
+          onSubmitted: (_) => _addByAddress(),
         ),
-        if (_error case final String error) ...[
+        if (_addressError case final String error) ...[
           EinkError(error),
           const SizedBox(height: 8),
         ],
         EinkButton(
-          _busy ? strings.addingPodcast : strings.addPodcast,
+          _adding && _addingResult == null
+              ? strings.addingPodcast
+              : strings.addPodcast,
           primary: true,
           minHeight: 52,
-          onPressed: _add,
+          onPressed: _addByAddress,
           alternatives: [strings.addPodcast, strings.addingPodcast],
         ),
       ],

@@ -390,6 +390,9 @@ Future<void> tourPhone(UiHarness app, VisitScreen visit) async {
   await visit('10-podcasts');
   await app.row(l.addPodcast);
   await visit('19-add-podcast');
+  await app.tester.enterText(find.byType(TextField).first, 'noční vlak');
+  await app.tap(find.widgetWithText(EinkButton, l.search));
+  await visit('31-directory-results');
   await app.back();
   await app.scrollToRow(
     app.services.library.podcast(1)!.title,
@@ -489,6 +492,9 @@ Future<void> tourDesktop(
   await visit('pc-podcasts');
   await app.row(l.addPodcast);
   await visit('pc-add');
+  await app.tester.enterText(find.byType(TextField).first, 'noční vlak');
+  await app.tap(find.widgetWithText(EinkButton, l.search));
+  await visit('pc-directory-results');
   await app.back();
   await app.scrollToRow(
     app.services.library.podcast(1)!.title,

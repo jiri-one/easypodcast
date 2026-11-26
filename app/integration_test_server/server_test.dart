@@ -145,6 +145,34 @@ void main() {
       );
     });
 
+    test('directory results follow the current subscription', () async {
+      await login();
+      const query = 'papírová letadla';
+      final results = await api.searchDirectory(query);
+      wire.last.expectStatus(200);
+      expect(results, [
+        (
+          feedUrl: '$feedUrl?case=directory',
+          title: 'Papírová letadla',
+          author: 'Tereza Vichrová',
+          imageUrl: 'https://images.example/directory-100.jpg',
+          subscribed: false,
+        ),
+      ]);
+
+      final podcast = await api.subscribe(results.single.feedUrl);
+      try {
+        expect(wire.last.response.statusCode, anyOf(201, 200));
+        expect(podcast.episodeCount, 3);
+        expect((await api.episodes(podcast.id))!.value, hasLength(3));
+        expect((await api.searchDirectory(query)).single.subscribed, isTrue);
+      } finally {
+        await api.unsubscribe(podcast.id);
+      }
+      expect((await api.searchDirectory(query)).single.subscribed, isFalse);
+      await expectLater(api.searchDirectory('a'), throwsA(apiError(400)));
+    });
+
     test('search finds notes across subscribed podcasts', () async {
       await login();
       final first = (await subscribe('search-first')).first;

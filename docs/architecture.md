@@ -141,7 +141,7 @@ Derived values, the same everywhere:
 Base URL `https://easypodcast.jiri.one/api` in production, `http://localhost:8080/api` locally.
 JSON in UTF-8. Every endpoint except `POST /api/login` and `GET /health` needs
 `Authorization: Bearer <token>`. Requests without a valid token get 401. Errors include
-`{"error": "<message>"}` with status 400, 401, 404, 409, 413, 422, 429 or 500.
+`{"error": "<message>"}` with status 400, 401, 404, 409, 413, 422, 429, 500 or 502.
 
 | Method and path | Request | Response |
 |---|---|---|
@@ -154,6 +154,7 @@ JSON in UTF-8. Every endpoint except `POST /api/login` and `GET /health` needs
 | `GET /api/podcasts/{id}/episodes` | – | 200 `[Episode]`, newest first; `ETag` |
 | `GET /api/podcasts/{id}/search` | `q` (at least two characters after trimming whitespace) | 200 `{"episode_ids": [episode IDs]}` in episode list order, up to 200. Every whitespace-separated term must occur in the title or plain-text description, ignoring case and diacritics. 400 for a missing or short query, 404 for a missing podcast. |
 | `GET /api/search` | `q` (at least two characters after trimming whitespace) | 200 `{"episode_ids": [episode IDs]}` for subscribed podcasts, up to 100. Uses the same matching rules as podcast search. Sorts by publication date, newest first, with undated episodes last and higher IDs first when dates tie. 400 for a missing or short query. |
+| `GET /api/directory` | `q` (at least two characters after trimming whitespace) | 200 `[{"feed_url", "title", "author", "image_url", "subscribed"}]`: at most 25 podcasts from the configured directory in its order; `image_url` is nullable; `subscribed` is true when `feed_url` is a known address of a subscribed podcast. 404 when directory search is off, 400 for a missing or short query, 502 when the directory fails, times out or answers with something unusable. A result is subscribed with `POST /api/podcasts`. |
 | `GET /api/episodes/{id}` | – | 200 Episode plus `"description"` (plain text, links written as URLs) |
 | `GET /api/state` | Optional `If-None-Match` | 200 `{"episodes": [EpisodeState], "queue": Queue or null, "server_time", "server_id"}` with `ETag`, or 304 with an empty body when the validator matches |
 | `POST /api/state` | `{"server_id": "<stored UUID>", "episodes": [EpisodeState], "queue": Queue}`, all fields optional | 200 `{"episodes": [EpisodeState as stored], "queue": Queue or null, "unknown": [episode IDs], "future": [episode IDs or "queue"], "server_id": "<current UUID>"}`. 409 `{"error": "server identity changed", "server_id": "<current UUID>"}` when the supplied UUID differs. |
@@ -178,7 +179,8 @@ gets 413.
   `golang.org/x/net/html` to turn descriptions into plain text. Few other dependencies.
 - Configuration from the environment: `EASYPODCAST_DATABASE_URL` (required),
   `EASYPODCAST_LISTEN` (default `:8080`), `EASYPODCAST_REFRESH_INTERVAL` (default `1h`),
-  `EASYPODCAST_USER_AGENT` (default `EasyPodcast/<version> (+https://github.com/jiri-one/easypodcast)`).
+  `EASYPODCAST_USER_AGENT` (default `EasyPodcast/<version> (+https://github.com/jiri-one/easypodcast)`),
+  `EASYPODCAST_DIRECTORY_URL` (default `https://itunes.apple.com/search`; `off` turns directory search off; production adds `?country=CZ`).
 - Commands of the single binary `easypodcast`: `serve` (runs migrations first), `migrate`,
   `user set-password <name>` (asks twice without echo, creates the user if missing; nothing is
   generated), `devices list`, `devices revoke <id>`, `devices revoke --all`, `new-server-id`,
@@ -207,6 +209,7 @@ gets 413.
   GUID, without GUID by enclosure URL; changed fields are updated; episodes gone from the feed are
   marked `removed_from_feed`, never deleted. `episodes_version` changes with every change of the
   list. Feed order is stored per podcast to preserve the order of items with tied or missing dates.
+- Directory search: one GET per search to an iTunes-Search-compatible URL with `term`, `media=podcast`, `entity=podcast` and `limit=25` set and its other parameters (such as `country`) kept, through the feed HTTP client (public addresses only unless `EASYPODCAST_ALLOW_PRIVATE_FEEDS`, the server User-Agent, no feed slot), with an 8-second limit, a 1 MiB body limit and no caching. Items without a usable HTTP(S) feed URL or a title and repeated feed URLs are dropped. The search text is never logged.
 - Description: HTML turned into plain text, a link written as `text (url)` when the text differs
   from the URL, at most 20 000 characters.
 - Logs: plain text via `log/slog`. HTTP 500 logs include the method, route pattern, status and

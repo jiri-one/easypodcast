@@ -151,7 +151,13 @@ func configureRefresher(s store) (*refresher, error) {
 	if agent == "" {
 		agent = "EasyPodcast/" + version + " (+https://github.com/jiri-one/easypodcast)"
 	}
-	return newRefresher(s, agent, interval), nil
+	directoryURL, err := configuredDirectoryURL(os.Getenv("EASYPODCAST_DIRECTORY_URL"))
+	if err != nil {
+		return nil, err
+	}
+	r := newRefresher(s, agent, interval)
+	r.directoryURL = directoryURL
+	return r, nil
 }
 
 func listenAddress() string {

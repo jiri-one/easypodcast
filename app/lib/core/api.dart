@@ -84,6 +84,14 @@ class OpmlImportResult {
   final List<({String feedUrl, String error})> failed;
 }
 
+typedef DirectoryPodcast = ({
+  String feedUrl,
+  String title,
+  String author,
+  String? imageUrl,
+  bool subscribed,
+});
+
 /// One method per endpoint of the HTTP API v1 in docs/architecture.md.
 abstract interface class ApiClient {
   Future<LoginResult> login({
@@ -103,6 +111,11 @@ abstract interface class ApiClient {
   });
 
   Future<Podcast> subscribe(String feedUrl, {Duration? timeout});
+
+  Future<List<DirectoryPodcast>> searchDirectory(
+    String query, {
+    Duration? timeout,
+  });
 
   Future<void> unsubscribe(int podcastId, {Duration? timeout});
 

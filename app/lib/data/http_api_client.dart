@@ -199,6 +199,29 @@ class HttpApiClient implements ApiClient {
   }
 
   @override
+  Future<List<DirectoryPodcast>> searchDirectory(
+    String query, {
+    Duration? timeout,
+  }) async {
+    final params = Uri(queryParameters: {'q': query}).query;
+    final response = await _send(
+      'GET',
+      '/api/directory?$params',
+      timeout: timeout,
+    );
+    return [
+      for (final item in _list(_json(response)))
+        (
+          feedUrl: item['feed_url'] as String,
+          title: item['title'] as String,
+          author: item['author'] as String? ?? '',
+          imageUrl: item['image_url'] as String?,
+          subscribed: item['subscribed'] as bool,
+        ),
+    ];
+  }
+
+  @override
   Future<void> unsubscribe(int podcastId, {Duration? timeout}) async {
     await _send('DELETE', '/api/podcasts/$podcastId', timeout: timeout);
   }

@@ -10,6 +10,7 @@ The interface is built for e-ink screens: black and white, no animations or touc
 
 - **Single-listener authentication**: one account with Argon2id password hashing, per-device bearer tokens, CLI device listing and revocation, and per-IP and global login rate limits (with optional trusted-proxy `X-Forwarded-For` handling).
 - **Subscriptions and OPML**: subscribe by RSS, Atom, or JSON Feed URL; unsubscribing stops refreshes while keeping stored episodes and listening history. Import and export OPML via the API or `import-opml`.
+- **Podcast directory search**: find podcasts by name in Apple's podcast directory (iTunes Search API, no API key), with subscribed podcasts marked. The server sends only the search text; the storefront is configurable and the search can be turned off (`EASYPODCAST_DIRECTORY_URL`).
 - **Scheduled feed refresh and status**: fetches subscribed feeds on a schedule (default `1h`, with jitter, `ETag`/`Last-Modified`, and backoff up to 24 h on failures) or on demand, reports each feed's last successful fetch and last error, blocks non-public feed addresses by default, converts HTML descriptions to plain text with links kept as URLs, and archives episodes removed from feeds instead of deleting them.
 - **Cross-device sync**: stores positions, player-measured durations, played/dismissed states, and the queue; the newer device timestamp wins (including rewinding). Uses `ETag`/`If-None-Match` on state and episode lists, skips timestamps more than 24 h in the future, and tracks a server UUID (`new-server-id`) so clients reset cleanly after a backup restore.
 - **Episode search**: search within one podcast or across all subscribed podcasts, matching all words against titles and plain-text descriptions while ignoring case and diacritics.
@@ -25,7 +26,7 @@ See [server/README.md](server/README.md) for the full configuration, command, AP
   - **In progress**: unfinished episodes past one minute, most recently listened first, with remaining time.
   - **Queue**: manually ordered list with long-press drag reordering and menu actions (move up, move down, move to top); played and dismissed episodes are hidden automatically, and auto-advance to the next queued episode can be toggled in Settings.
   - **New episodes**: new episodes from the last 30 days grouped by day, with manual refresh. A switch on a podcast's About page leaves that podcast out on every device.
-  - **Podcasts**: sorted by played count or alphabetically, with feed status, add-by-URL, and unsubscribe/resubscribe.
+  - **Podcasts**: sorted by played count or alphabetically, with feed status, adding by directory search or feed URL, and unsubscribe/resubscribe.
   - **Downloads**: offline files and total storage used.
 - **Episode actions**: mark played or new, dismiss (hides from active lists and deletes downloads without counting as played), bulk "Dismiss older too" for new unqueued episodes, and plain-text episode descriptions with clickable links.
 - **Search**: search inside a podcast or across all subscribed podcasts; titles match offline at once and description matches from the server are added below them, ignoring case and diacritics.

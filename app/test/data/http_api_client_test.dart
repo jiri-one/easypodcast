@@ -145,6 +145,74 @@ void main() {
     }
   });
 
+  test('directory search encodes the query and parses the results', () async {
+    handler = (_) async => json([
+      {
+        'feed_url': 'https://railway.example/feed.xml',
+        'title': 'Noční vlak',
+        'author': 'Jana Hlaváčková',
+        'image_url': 'https://images.example/railway.jpg',
+        'subscribed': true,
+      },
+      {
+        'feed_url': 'https://planes.example/feed.xml',
+        'title': 'Papírová letadla',
+        'image_url': null,
+        'subscribed': false,
+      },
+    ]);
+    const query = 'Noční vlak & spol.';
+    expect(await api.searchDirectory(query), [
+      (
+        feedUrl: 'https://railway.example/feed.xml',
+        title: 'Noční vlak',
+        author: 'Jana Hlaváčková',
+        imageUrl: 'https://images.example/railway.jpg',
+        subscribed: true,
+      ),
+      (
+        feedUrl: 'https://planes.example/feed.xml',
+        title: 'Papírová letadla',
+        author: '',
+        imageUrl: null,
+        subscribed: false,
+      ),
+    ]);
+    final request = requests.single;
+    expect(request.method, 'GET');
+    expect(request.url.path, '/api/directory');
+    expect(request.url.queryParameters, {'q': query});
+    expect(request.headers['Authorization'], 'Bearer abc');
+  });
+
+  test('directory search preserves HTTP error status codes', () async {
+    for (final (status, body) in [
+      (404, '{"error":"podcast directory is off"}'),
+      (502, '<html>Bad gateway</html>'),
+    ]) {
+      handler = (_) async => http.Response(body, status);
+      await expectLater(
+        api.searchDirectory('vlak'),
+        throwsA(
+          isA<ApiException>().having((e) => e.statusCode, 'status', status),
+        ),
+      );
+    }
+  });
+
+  test('directory search maps socket errors and timeouts to offline', () async {
+    handler = (_) async => throw const SocketException('no route');
+    await expectLater(
+      api.searchDirectory('vlak'),
+      throwsA(isA<OfflineException>()),
+    );
+    handler = (_) => Completer<http.Response>().future;
+    await expectLater(
+      api.searchDirectory('vlak', timeout: const Duration(milliseconds: 20)),
+      throwsA(isA<OfflineException>()),
+    );
+  });
+
   test(
     'state parses measured duration, a missing queue and server time',
     () async {

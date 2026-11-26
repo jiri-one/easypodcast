@@ -452,7 +452,7 @@ class _PodcastHeader extends StatelessWidget {
       child: Row(
         spacing: 8,
         children: [
-          _PodcastThumbnail(podcast.imageUrl, side: 44),
+          PodcastThumbnail(podcast.imageUrl, side: 44),
           Expanded(child: name),
         ],
       ),
@@ -460,8 +460,8 @@ class _PodcastHeader extends StatelessWidget {
   }
 }
 
-class _PodcastThumbnail extends StatelessWidget {
-  const _PodcastThumbnail(this.imageUrl, {this.side = 52});
+class PodcastThumbnail extends StatelessWidget {
+  const PodcastThumbnail(this.imageUrl, {super.key, this.side = 52});
 
   final String? imageUrl;
   final double side;
@@ -548,7 +548,7 @@ class PodcastList extends StatelessWidget {
       return EinkRow(
         key: ValueKey(podcast.id),
         title: podcast.title,
-        leading: _PodcastThumbnail(podcast.imageUrl),
+        leading: PodcastThumbnail(podcast.imageUrl),
         topAligned: true,
         desktop: desktop,
         onPressed: () => onOpen(podcast),

@@ -705,11 +705,65 @@ abstract class AppLocalizations {
   /// **'Add podcast'**
   String get addPodcast;
 
+  /// No description provided for @subscribeTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Add podcast?'**
+  String get subscribeTitle;
+
   /// No description provided for @addingPodcast.
   ///
   /// In en, this message translates to:
   /// **'Adding…'**
   String get addingPodcast;
+
+  /// No description provided for @directorySearch.
+  ///
+  /// In en, this message translates to:
+  /// **'Find a podcast'**
+  String get directorySearch;
+
+  /// No description provided for @searching.
+  ///
+  /// In en, this message translates to:
+  /// **'Searching…'**
+  String get searching;
+
+  /// No description provided for @directoryTooShort.
+  ///
+  /// In en, this message translates to:
+  /// **'Type at least two characters.'**
+  String get directoryTooShort;
+
+  /// No description provided for @directoryEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No podcasts match your search.'**
+  String get directoryEmpty;
+
+  /// No description provided for @directoryOffline.
+  ///
+  /// In en, this message translates to:
+  /// **'No connection to the server. Search works only online.'**
+  String get directoryOffline;
+
+  /// No description provided for @directoryOff.
+  ///
+  /// In en, this message translates to:
+  /// **'This server doesn\'t offer directory search. Paste the feed address below.'**
+  String get directoryOff;
+
+  /// No description provided for @directoryFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Search didn\'t work. Try again or paste the feed address below.'**
+  String get directoryFailed;
+
+  /// No description provided for @subscribedMark.
+  ///
+  /// In en, this message translates to:
+  /// **'Subscribed'**
+  String get subscribedMark;
 
   /// No description provided for @feedAddress.
   ///
