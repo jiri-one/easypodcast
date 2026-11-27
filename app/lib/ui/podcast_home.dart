@@ -243,13 +243,6 @@ class _LibraryHomeState extends State<_LibraryHome> {
     _globalSearch.reset();
   }
 
-  // Title matches come first, so a full page leaves no room for the server's
-  // description matches.
-  Future<List<int>> _searchAll(String query) =>
-      _globalEpisodes().episodes.length < 100
-      ? widget.services.api.searchAll(query)
-      : Future.value(const []);
-
   EpisodeMatches _globalEpisodes() {
     final library = widget.services.library;
     return matchLibraryEpisodes(
@@ -764,7 +757,8 @@ class _LibraryHomeState extends State<_LibraryHome> {
         PodcastSearchField(
           search: _globalSearch,
           hint: strings.searchHint,
-          onChanged: (input) => _globalSearch.change(input, _searchAll),
+          onChanged: (input) =>
+              _globalSearch.change(input, widget.services.api.searchAll),
           onClose: () => setState(_closeGlobalSearch),
         ),
         Expanded(

@@ -92,8 +92,11 @@ class PodcastSearchField extends StatelessWidget {
     padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
     child: CallbackShortcuts(
       bindings: {const SingleActivator(LogicalKeyboardKey.escape): onClose},
-      child: Semantics(
-        label: hint,
+      child: ValueListenableBuilder(
+        valueListenable: search.text,
+        // Screen readers already hear the hint while it is shown.
+        builder: (context, value, field) =>
+            Semantics(label: value.text.isEmpty ? null : hint, child: field),
         child: TextField(
           controller: search.text,
           focusNode: search.focus,

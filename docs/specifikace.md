@@ -69,8 +69,9 @@ Aplikace se do telefonů instalují mimo Google Play, takže Android Auto vyžad
 - Detail podcastu ukazuje díly od nejnovějšího a u každého stav: nový, rozposlouchaný se
   zbývajícím časem, přehraný, vyřazený, stažený. Popis dílu je prostý text s klikacími odkazy.
 - Hledat jde v jednom podcastu nebo přes nabídku „Hledat“ ve všech odběrech. Hledání ve všech
-  odběrech ukáže podcasty podle názvu a až 100 odpovídajících dílů od nejnovějšího. Názvy fungují
-  i bez připojení, výsledky z popisů dílů doplní server pod nadpis „Nalezeno v popisu dílu“.
+  odběrech ukáže podcasty podle názvu a až 100 dílů s hledanými slovy v názvu, od nejnovějšího.
+  Názvy fungují i bez připojení. Až 100 dílů nalezených v popisu doplní server pod nadpis
+  „Nalezeno v popisu dílu“, takže je časté slovo v názvech nevytlačí.
   Když popisy prohledat nejde, hledání to řekne. Prázdné hledání vysvětlí, co prohledává, a odkaz
   „Hledat v Apple Podcasts“ předá zadaný text hledání nových podcastů.
 - **Rozposlouchané:** díly, které nejsou přehrané ani vyřazené a mají pozici aspoň jednu minutu,

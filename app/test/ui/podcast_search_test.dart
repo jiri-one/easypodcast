@@ -43,16 +43,16 @@ void main() {
   });
 
   test(
-    'global matching keeps at most 100 episodes, with undated ones last',
+    'global matching keeps 100 title and 100 description matches, undated last',
     () {
       final publishedAt = DateTime.utc(2026, 11, 26);
       final episodes = [
         const Episode(id: 200, podcastId: 1, title: 'Title', enclosureUrl: ''),
-        for (var id = 1; id <= 101; id++)
+        for (var id = 1; id <= 401; id++)
           Episode(
             id: id,
             podcastId: 2,
-            title: 'Title',
+            title: id <= 101 ? 'Title' : 'Other',
             enclosureUrl: '',
             publishedAt: publishedAt,
           ),
@@ -60,11 +60,12 @@ void main() {
       final matches = matchLibraryEpisodes(
         episodes,
         podcastSearchWords('title'),
-        const {},
+        {for (var id = 301; id <= 401; id++) id},
         {},
       );
       expect(matches.episodes.map((episode) => episode.id), [
         for (var id = 101; id >= 2; id--) id,
+        for (var id = 401; id >= 302; id--) id,
       ]);
       expect(matches.titleMatches, 100);
     },
@@ -150,6 +151,25 @@ void main() {
       );
       expect(EditableText.debugDeterministicCursor, isTrue);
     } finally {
+      await app.finish();
+    }
+  });
+
+  testWidgets('screen readers hear the search field name once', (tester) async {
+    final (app, _) = await _openPodcast(tester);
+    final semantics = tester.ensureSemantics();
+    final name = find.bySemanticsLabel(app.strings.searchThisPodcastHint);
+    try {
+      await app.row(app.strings.searchThisPodcast);
+      expect(name, findsOneWidget);
+      await tester.enterText(find.byType(TextField), 'vlak');
+      await tester.pump();
+      expect(
+        tester.getSemantics(name),
+        isSemantics(isTextField: true, value: 'vlak'),
+      );
+    } finally {
+      semantics.dispose();
       await app.finish();
     }
   });

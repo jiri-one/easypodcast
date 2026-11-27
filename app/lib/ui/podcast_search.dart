@@ -52,13 +52,13 @@ EpisodeMatches matchLibraryEpisodes(
       descriptions.add(episode);
     }
   }
+  titles.sort(_comparePublication);
+  descriptions.sort(_comparePublication);
   // Description matches arrive later; adding them below keeps the rows
-  // already drawn on e-ink in place.
+  // already drawn on e-ink in place. Their own limit keeps a common word's
+  // title matches from crowding them out.
   return (
-    episodes: [
-      ...(titles..sort(_comparePublication)),
-      ...(descriptions..sort(_comparePublication)),
-    ].take(100).toList(),
+    episodes: [...titles.take(100), ...descriptions.take(100)],
     titleMatches: math.min(titles.length, 100),
   );
 }
