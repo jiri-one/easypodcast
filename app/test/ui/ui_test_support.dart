@@ -399,13 +399,10 @@ Future<void> tourPhone(UiHarness app, VisitScreen visit) async {
   await visit('33-podcast-menu-unsubscribe');
   await app.dialog(l.cancel);
   library.beforeShowInNewEpisodes = (_, _) async => throw OfflineException();
-  try {
-    await app.dialog(l.showInNewEpisodes);
-    expect(find.text(l.actionFailed), findsOneWidget);
-    await visit('34-podcast-menu-error');
-  } finally {
-    library.beforeShowInNewEpisodes = null;
-  }
+  await app.dialog(l.showInNewEpisodes);
+  expect(find.text(l.actionFailed), findsOneWidget);
+  await visit('34-podcast-menu-error');
+  library.beforeShowInNewEpisodes = null;
   await app.dialog(l.close);
   await app.scrollToRow(l.addPodcast, find.byType(PodcastList), delta: -150);
   await visit('19-add-podcast');

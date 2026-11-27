@@ -206,7 +206,7 @@ void main() {
       expect(_menuText(app.strings.unsubscribeTitle), findsOneWidget);
       final calls = <int>[];
       library.beforeUnsubscribe = (id) async => calls.add(id);
-      await _confirmUnsubscribe(app);
+      await app.dialog(app.strings.unsubscribe);
       expect(calls, isEmpty);
       expect(_panel, findsNothing);
       expect(find.widgetWithText(EinkRow, podcast.title), findsNothing);
@@ -240,7 +240,7 @@ void main() {
       expect(_menuText(podcast.title), findsOneWidget);
 
       await app.dialog(l.unsubscribe);
-      await _confirmUnsubscribe(app);
+      await app.dialog(l.unsubscribe);
       expect(_menuText(l.unsubscribing), findsOneWidget);
       expect(library.podcast(podcast.id)!.subscribed, isTrue);
       await app.dialog(l.unsubscribing);
@@ -272,7 +272,7 @@ void main() {
     try {
       await app.holdRow(podcast.title);
       await app.dialog(l.unsubscribe);
-      await _confirmUnsubscribe(app);
+      await app.dialog(l.unsubscribe);
       expect(calls, [podcast.id]);
       expect(library.podcast(podcast.id)!.subscribed, isTrue);
       expect(find.widgetWithText(EinkRow, podcast.title), findsOneWidget);
@@ -292,17 +292,6 @@ Finder _showInNewEpisodes(UiHarness app) => find.descendant(
   of: _panel,
   matching: find.widgetWithText(EinkRow, app.strings.showInNewEpisodes),
 );
-
-Future<void> _confirmUnsubscribe(UiHarness app) async {
-  final l = app.strings;
-  await app.tester.pump(doubleTapGuard);
-  await app.tap(
-    find.descendant(
-      of: find.widgetWithText(EinkDialogPanel, l.unsubscribeTitle),
-      matching: find.widgetWithText(EinkButton, l.unsubscribe),
-    ),
-  );
-}
 
 Future<(UiHarness, Podcast)> _podcasts(
   WidgetTester tester, {

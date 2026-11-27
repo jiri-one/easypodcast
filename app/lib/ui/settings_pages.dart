@@ -2,7 +2,6 @@ import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../core/api.dart';
-import '../core/library.dart';
 import '../core/models.dart';
 import '../core/services.dart';
 import 'eink_widgets.dart';
@@ -378,85 +377,27 @@ class _ServerPageState extends State<ServerPage> {
   }
 }
 
-class AboutPodcastPage extends StatelessWidget {
+class AboutPodcastPage extends StatefulWidget {
   const AboutPodcastPage({
     super.key,
     required this.services,
     required this.podcast,
+    this.menu = false,
   });
 
   final AppServices services;
   final Podcast podcast;
+  final bool menu;
 
   @override
-  Widget build(BuildContext context) => _PodcastSubscription(
-    library: services.library,
-    podcast: podcast,
-    aboutDetails: [
-      Text(podcast.title, style: headingStyle),
-      if (podcast.author.isNotEmpty) Text(podcast.author, style: detailStyle),
-      if (podcast.description.isNotEmpty) ...[
-        const SizedBox(height: 12),
-        PlainLinks(podcast.description, style: buttonLabelStyle),
-      ],
-      const SizedBox(height: 12),
-      Text(context.strings.feedAddress, style: buttonLabelStyle),
-      PlainLinks(podcast.feedUrl),
-      const SizedBox(height: 8),
-      FeedStatusText(podcast),
-    ],
-  );
+  State<AboutPodcastPage> createState() => _AboutPodcastPageState();
 }
 
-Future<void> showPodcastMenu(
-  BuildContext context,
-  Library library,
-  Podcast podcast,
-) => showEinkDialog<void>(
-  context: context,
-  barrierDismissible: false,
-  builder: (context) {
-    final route = ModalRoute.of(context)!;
-    return Offstage(
-      // A taller menu would show around the confirmation above it.
-      offstage: !route.isCurrent,
-      child: ListenableBuilder(
-        listenable: library,
-        builder: (context, _) {
-          final current = library.podcast(podcast.id);
-          if (current != null && current.subscribed) {
-            return _PodcastSubscription(library: library, podcast: current);
-          }
-          // Wait for any confirmation above the menu to close.
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (route.isCurrent) route.navigator!.pop();
-          });
-          return const SizedBox.shrink();
-        },
-      ),
-    );
-  },
-);
-
-class _PodcastSubscription extends StatefulWidget {
-  const _PodcastSubscription({
-    required this.library,
-    required this.podcast,
-    this.aboutDetails,
-  });
-
-  final Library library;
-  final Podcast podcast;
-  final List<Widget>? aboutDetails;
-
-  @override
-  State<_PodcastSubscription> createState() => _PodcastSubscriptionState();
-}
-
-class _PodcastSubscriptionState extends State<_PodcastSubscription>
+class _AboutPodcastPageState extends State<AboutPodcastPage>
     with ActionTapGuard {
   String? _error;
   bool? _subscribing;
+  // The switch shows the requested value until the server answers.
   bool? _requestedShow;
 
   Future<void> _toggleShowInNewEpisodes() => guardAction(() async {
@@ -467,7 +408,7 @@ class _PodcastSubscriptionState extends State<_PodcastSubscription>
       _requestedShow = show;
     });
     try {
-      await widget.library.setShowInNewEpisodes(podcast.id, show);
+      await widget.services.library.setShowInNewEpisodes(podcast.id, show);
     } on Exception catch (error) {
       if (mounted) _error = actionError(context, error);
     } finally {
@@ -489,10 +430,10 @@ class _PodcastSubscriptionState extends State<_PodcastSubscription>
         );
         if (!confirmed || !mounted) return;
         setState(() => _subscribing = false);
-        await widget.library.unsubscribe(podcast.id);
+        await widget.services.library.unsubscribe(podcast.id);
       } else {
         setState(() => _subscribing = true);
-        await widget.library.subscribe(podcast.feedUrl);
+        await widget.services.library.subscribe(podcast.feedUrl);
       }
     } on Exception catch (error) {
       if (mounted) _error = actionError(context, error);
@@ -505,7 +446,7 @@ class _PodcastSubscriptionState extends State<_PodcastSubscription>
   Widget build(BuildContext context) {
     final strings = context.strings;
     final podcast = widget.podcast;
-    final aboutDetails = widget.aboutDetails;
+    final menu = widget.menu;
     final button = EinkButton(
       switch (_subscribing) {
         true => strings.addingPodcast,
@@ -521,21 +462,33 @@ class _PodcastSubscriptionState extends State<_PodcastSubscription>
       ],
     );
     final children = [
-      if (aboutDetails == null)
+      if (menu)
         button
       else
         Padding(
           padding: const EdgeInsets.all(12),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [...aboutDetails, const SizedBox(height: 16), button],
+            children: [
+              Text(podcast.title, style: headingStyle),
+              if (podcast.author.isNotEmpty)
+                Text(podcast.author, style: detailStyle),
+              if (podcast.description.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                PlainLinks(podcast.description, style: buttonLabelStyle),
+              ],
+              const SizedBox(height: 12),
+              Text(strings.feedAddress, style: buttonLabelStyle),
+              PlainLinks(podcast.feedUrl),
+              const SizedBox(height: 8),
+              FeedStatusText(podcast),
+              const SizedBox(height: 16),
+              button,
+            ],
           ),
         ),
       if (podcast.subscribed) ...[
-        if (aboutDetails == null)
-          const SizedBox(height: 6)
-        else
-          const Divider(height: 1),
+        if (menu) const SizedBox(height: 6) else const Divider(height: 1),
         _ToggleRow(
           title: strings.showInNewEpisodes,
           value: _requestedShow ?? podcast.showInNewEpisodes,
@@ -544,27 +497,56 @@ class _PodcastSubscriptionState extends State<_PodcastSubscription>
       ] else
         PageMessage(strings.notSubscribed),
       if (_error case final error?) ...[
-        if (aboutDetails == null) const SizedBox(height: 6),
-        EinkError(error, inset: aboutDetails != null),
+        if (menu) const SizedBox(height: 6),
+        EinkError(error, inset: !menu),
       ],
     ];
-    return aboutDetails == null
-        ? EinkDialogPanel(
-            title: podcast.title,
-            actions: [
-              TextButton(
-                // A double tap on the confirmation ends on this button.
-                onPressed: _subscribing == null
-                    ? () => Navigator.pop(context)
-                    : null,
-                child: Text(strings.close, style: buttonLabelStyle),
-              ),
-            ],
-            children: children,
-          )
-        : PageList(children: children);
+    if (!menu) return PageList(children: children);
+    return EinkDialogPanel(
+      title: podcast.title,
+      actions: [
+        TextButton(
+          // A double tap on the confirmation ends on this button.
+          onPressed: _subscribing == null ? () => Navigator.pop(context) : null,
+          child: Text(strings.close, style: buttonLabelStyle),
+        ),
+      ],
+      children: children,
+    );
   }
 }
+
+Future<void> showPodcastMenu(
+  BuildContext context,
+  AppServices services,
+  Podcast podcast,
+) => showEinkDialog<void>(
+  context: context,
+  barrierDismissible: false,
+  builder: (context) => ListenableBuilder(
+    listenable: services.library,
+    builder: (context, _) {
+      final route = ModalRoute.of(context)!;
+      final current = services.library.podcast(podcast.id);
+      if (current != null && current.subscribed) {
+        return Offstage(
+          // A taller menu would show around the confirmation above it.
+          offstage: !route.isCurrent,
+          child: AboutPodcastPage(
+            services: services,
+            podcast: current,
+            menu: true,
+          ),
+        );
+      }
+      // Wait for any confirmation above the menu to close.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (route.isCurrent) route.navigator!.pop();
+      });
+      return const SizedBox.shrink();
+    },
+  ),
+);
 
 class FeedStatusText extends StatelessWidget {
   const FeedStatusText(

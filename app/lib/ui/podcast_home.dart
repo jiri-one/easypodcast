@@ -183,7 +183,7 @@ class _LibraryHomeState extends State<_LibraryHome> {
     if (_rowMenuOpen) return;
     _rowMenuOpen = true;
     try {
-      await showPodcastMenu(context, widget.services.library, podcast);
+      await showPodcastMenu(context, widget.services, podcast);
     } finally {
       _rowMenuOpen = false;
     }
