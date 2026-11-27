@@ -35,8 +35,6 @@ const coverGrayscale = ui.ColorFilter.matrix([
   0,
 ]);
 
-const coverProviderAuthority = 'one.jiri.easypodcast.covers';
-
 String? validCoverUrl(String? url) {
   final trimmed = url?.trim();
   if (trimmed == null) return null;
@@ -49,8 +47,8 @@ String? validCoverUrl(String? url) {
 }
 
 /// The episode's own cover first, then the podcast's.
-List<String> coverUrls(Episode episode, Podcast? podcast) => {
-  ?validCoverUrl(episode.imageUrl),
+List<String> coverUrls(Episode? episode, Podcast? podcast) => {
+  ?validCoverUrl(episode?.imageUrl),
   ?validCoverUrl(podcast?.imageUrl),
 }.toList();
 
@@ -82,29 +80,29 @@ class CoverImage extends ImageProvider<CoverImage> {
     }
   }
 
-  static Future<Uri?> artwork(Episode episode, Podcast? podcast) async {
-    for (final url in coverUrls(episode, podcast)) {
-      final file = await prefetch(url);
-      if (file != null && await _isImage(file)) return file.uri;
-    }
-    return null;
+  static Future<Uri?> artwork(Episode episode, Podcast? podcast) async =>
+      (await _firstImage(coverUrls(episode, podcast), prefetch))?.uri;
+
+  // Browsing in the car never downloads.
+  static Future<Uri?> listArtwork(Episode? episode, Podcast? podcast) async {
+    final file = await _firstImage(
+      coverUrls(episode, podcast),
+      (url) => CoverImage(url)._cacheFile(),
+    );
+    return file == null
+        ? null
+        : Uri.parse(
+            'content://one.jiri.easypodcast.covers/${path.basename(file.path)}',
+          );
   }
 
-  // Android Auto opens list covers only through a content provider, and
-  // browsing in the car never downloads.
-  static Future<Uri?> listArtwork(Episode? episode, Podcast? podcast) async {
-    final urls = episode == null
-        ? [?validCoverUrl(podcast?.imageUrl)]
-        : coverUrls(episode, podcast);
+  static Future<File?> _firstImage(
+    List<String> urls,
+    Future<File?> Function(String url) find,
+  ) async {
     for (final url in urls) {
-      final file = await CoverImage(url)._cacheFile();
-      if (file != null && await _isImage(file)) {
-        return Uri(
-          scheme: 'content',
-          host: coverProviderAuthority,
-          path: '/${path.basename(file.path)}',
-        );
-      }
+      final file = await find(url);
+      if (file != null && await _isImage(file)) return file;
     }
     return null;
   }

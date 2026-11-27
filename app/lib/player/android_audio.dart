@@ -10,7 +10,7 @@ const androidAudioConfig = AudioServiceConfig(
   artDownscaleHeight: 256,
   androidBrowsableRootExtras: {
     AndroidContentStyle.supportedKey: true,
-    AndroidContentStyle.browsableHintKey: AndroidContentStyle.listItemHintValue,
+    AndroidContentStyle.browsableHintKey: AndroidContentStyle.gridItemHintValue,
     AndroidContentStyle.playableHintKey: AndroidContentStyle.listItemHintValue,
   },
 );
@@ -112,15 +112,7 @@ class EpisodeAudioHandler extends BaseAudioHandler {
       ),
       MediaItem(id: _queue, title: strings.queue, playable: false),
       MediaItem(id: _downloaded, title: strings.downloads, playable: false),
-      MediaItem(
-        id: _podcasts,
-        title: strings.podcasts,
-        playable: false,
-        extras: const {
-          AndroidContentStyle.browsableHintKey:
-              AndroidContentStyle.gridItemHintValue,
-        },
-      ),
+      MediaItem(id: _podcasts, title: strings.podcasts, playable: false),
     ];
   }
 
@@ -137,11 +129,7 @@ class EpisodeAudioHandler extends BaseAudioHandler {
       album: podcast?.title,
       artist: _android ? null : podcast?.author,
       artUri: artUri,
-      duration:
-          duration ??
-          (episode.durationS == null
-              ? null
-              : Duration(seconds: episode.durationS!)),
+      duration: duration ?? episode.feedDuration,
       extras: extras,
     );
   }
@@ -159,17 +147,18 @@ class EpisodeAudioHandler extends BaseAudioHandler {
   Future<MediaItem> _listItem(Episode episode) async {
     final podcast = _library.podcast(episode.podcastId);
     final state = _library.stateOf(episode.id);
-    final duration = episodeDuration(episode, state)?.inMilliseconds;
+    final duration = episodeDuration(episode, state);
     return _item(
       episode,
+      duration: duration,
       artUri: await _listArtwork?.call(episode, podcast),
       extras: state.isInProgress
           ? {
               _completionStatus: _partiallyPlayed,
               if (duration != null)
-                _completionPercentage: (state.positionMs / duration).clamp(
-                  0.0,
-                  1.0,
+                _completionPercentage: playedFraction(
+                  state.resumePosition,
+                  duration,
                 ),
             }
           : null,

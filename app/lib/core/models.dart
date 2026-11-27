@@ -159,6 +159,11 @@ Duration? episodeDuration(Episode episode, EpisodeState state) {
       : episode.feedDuration;
 }
 
+double playedFraction(Duration elapsed, Duration? duration) =>
+    duration == null || duration <= Duration.zero
+    ? 0
+    : (elapsed.inMilliseconds / duration.inMilliseconds).clamp(0.0, 1.0);
+
 class EpisodeState {
   const EpisodeState({
     required this.episodeId,

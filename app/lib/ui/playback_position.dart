@@ -114,11 +114,6 @@ class _PlaybackPositionViewState extends State<PlaybackPositionView>
   }
 }
 
-double playedFraction(Duration elapsed, Duration? duration) =>
-    duration == null || duration <= Duration.zero
-    ? 0
-    : (elapsed.inMilliseconds / duration.inMilliseconds).clamp(0.0, 1.0);
-
 class PlaybackTimeline extends StatefulWidget {
   const PlaybackTimeline({
     super.key,

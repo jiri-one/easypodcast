@@ -61,21 +61,7 @@ void main() {
       'empty.png': Uint8List(0),
     };
     Future<List<int>> shown(String episodeCover) async {
-      final art = await CoverImage.artwork(
-        Episode(
-          id: 1,
-          podcastId: 1,
-          title: 'Episode',
-          enclosureUrl: 'https://podcast.example/1.mp3',
-          imageUrl: 'https://podcast.example/$episodeCover',
-        ),
-        const Podcast(
-          id: 1,
-          feedUrl: 'https://podcast.example/feed.xml',
-          title: 'Podcast',
-          imageUrl: 'https://podcast.example/podcast.png',
-        ),
-      );
+      final art = await CoverImage.artwork(_episode(episodeCover), _podcast);
       return File.fromUri(art!).readAsBytes();
     }
 
@@ -93,58 +79,43 @@ void main() {
   });
 
   test('list artwork points the provider at cached images only', () async {
-    final cache = await coverCache(binding);
-    const podcast = Podcast(
-      id: 1,
-      feedUrl: 'https://podcast.example/feed.xml',
-      title: 'Podcast',
-      imageUrl: 'https://podcast.example/podcast.png',
-    );
-    Episode episode(String cover) => Episode(
-      id: 1,
-      podcastId: 1,
-      title: 'Episode',
-      enclosureUrl: 'https://podcast.example/1.mp3',
-      imageUrl: 'https://podcast.example/$cover',
-    );
-    var requests = 0;
+    await coverCache(binding);
+    final image = await _coverBytes();
     final bodies = {
-      'podcast.png': await _coverBytes(),
-      'episode.png': await _coverBytes(),
+      'podcast.png': image,
+      'episode.png': image,
       'page.png': utf8.encode('<html></html>'),
     };
-
+    var requests = 0;
     await http.runWithClient(
       () async {
-        expect(await CoverImage.listArtwork(null, podcast), isNull);
-        expect(requests, 0);
-        for (final cover in bodies.keys) {
-          await CoverImage.prefetch('https://podcast.example/$cover');
-        }
-        Future<String?> listed(Episode? episode) async {
-          final uri = await CoverImage.listArtwork(episode, podcast);
-          if (uri == null) return null;
-          expect(uri.scheme, 'content');
-          expect(uri.host, coverProviderAuthority);
-          final name = uri.pathSegments.single;
-          expect(await File(path.join(cache.path, name)).exists(), isTrue);
-          return name;
+        expect(await CoverImage.listArtwork(null, _podcast), isNull);
+        Future<Uri> provided(String cover) async {
+          final file = await CoverImage.prefetch(
+            'https://podcast.example/$cover',
+          );
+          return Uri.parse(
+            'content://one.jiri.easypodcast.covers/${path.basename(file!.path)}',
+          );
         }
 
-        final podcastFile = await listed(null);
-        expect(podcastFile, isNotNull);
-        expect(await listed(episode('page.png')), podcastFile);
-        expect(await listed(episode('missing.png')), podcastFile);
-        final episodeFile = await listed(episode('episode.png'));
-        expect(episodeFile, isNot(podcastFile));
-        expect(episodeFile, isNotNull);
+        final podcastCover = await provided('podcast.png');
+        final episodeCover = await provided('episode.png');
+        await provided('page.png');
+
+        Future<Uri?> listed(Episode? episode) =>
+            CoverImage.listArtwork(episode, _podcast);
+        expect(await listed(null), podcastCover);
+        expect(await listed(_episode('episode.png')), episodeCover);
+        expect(await listed(_episode('page.png')), podcastCover);
+        expect(await listed(_episode('missing.png')), podcastCover);
       },
       () => MockClient((request) async {
         requests++;
-        final body = bodies[request.url.pathSegments.single];
-        return body == null
-            ? http.Response('', 404)
-            : http.Response.bytes(body, 200);
+        return http.Response.bytes(
+          bodies[request.url.pathSegments.single]!,
+          200,
+        );
       }),
     );
     expect(requests, 3);
@@ -288,6 +259,21 @@ void main() {
     },
   );
 }
+
+const _podcast = Podcast(
+  id: 1,
+  feedUrl: 'https://podcast.example/feed.xml',
+  title: 'Podcast',
+  imageUrl: 'https://podcast.example/podcast.png',
+);
+
+Episode _episode(String cover) => Episode(
+  id: 1,
+  podcastId: 1,
+  title: 'Episode',
+  enclosureUrl: 'https://podcast.example/1.mp3',
+  imageUrl: 'https://podcast.example/$cover',
+);
 
 Future<Uint8List> _coverBytes() async {
   final recorder = ui.PictureRecorder();

@@ -538,9 +538,7 @@ class DesktopPlayer extends StatelessWidget {
     final labelScale =
         MediaQuery.textScalerOf(context).scale(einkButtonFontSize) /
         einkButtonFontSize;
-    final covers = episode == null
-        ? const <String>[]
-        : coverUrls(episode, podcast);
+    final covers = coverUrls(episode, podcast);
     final buttons = [
       EinkButton(
         strings.skipBackValue(settings.skipBackSeconds),

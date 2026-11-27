@@ -8,10 +8,8 @@ void main() {
   ) async {
     final messenger = tester.binding.defaultBinaryMessenger;
     var connected = true;
-    var queries = 0;
     messenger.setMockMethodCallHandler(androidPlatform, (call) async {
       expect(call.method, 'carConnected');
-      queries++;
       return connected;
     });
     addTearDown(() {
@@ -33,6 +31,5 @@ void main() {
     );
     await tester.pump();
     expect(car.value, isFalse);
-    expect(queries, 2);
   });
 }

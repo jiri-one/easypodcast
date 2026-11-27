@@ -1014,12 +1014,7 @@ void main() {
         started,
         {'android.media.extra.PLAYBACK_STATUS': 1},
       ]);
-      final root = await handler.getChildren(AudioService.browsableRootId);
-      expect(root.last.extras, {
-        AndroidContentStyle.browsableHintKey:
-            AndroidContentStyle.gridItemHintValue,
-      });
-      final podcasts = await handler.getChildren(root.last.id);
+      final podcasts = await handler.getChildren('podcasts');
       expect(podcasts.single.artUri, Uri.parse('content://covers/podcast-1'));
 
       await handler.play();
@@ -1044,11 +1039,11 @@ void main() {
     expect(labels(), ['Skip back', 'Pause', 'Skip forward']);
   });
 
-  test('Android Auto requests lists for browsable and playable items', () {
+  test('Android Auto shows podcasts as a grid and episodes as lists', () {
     expect(androidAudioConfig.androidBrowsableRootExtras, {
       AndroidContentStyle.supportedKey: true,
       AndroidContentStyle.browsableHintKey:
-          AndroidContentStyle.listItemHintValue,
+          AndroidContentStyle.gridItemHintValue,
       AndroidContentStyle.playableHintKey:
           AndroidContentStyle.listItemHintValue,
     });

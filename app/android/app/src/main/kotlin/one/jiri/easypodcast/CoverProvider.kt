@@ -8,17 +8,17 @@ import android.os.ParcelFileDescriptor
 import java.io.File
 import java.io.FileNotFoundException
 
-// Android Auto loads list covers in its own process, so it needs content URIs.
 class CoverProvider : ContentProvider() {
     override fun onCreate() = true
 
     override fun openFile(uri: Uri, mode: String): ParcelFileDescriptor {
-        val name = uri.pathSegments.singleOrNull()
-        if (mode != "r" || name == null || !coverName.matches(name)) {
-            throw FileNotFoundException(uri.toString())
-        }
         val covers = File(requireNotNull(context).cacheDir, "podcast-covers")
-        return ParcelFileDescriptor.open(File(covers, name), ParcelFileDescriptor.MODE_READ_ONLY)
+        val cover = uri.pathSegments.singleOrNull()
+            ?.takeIf { it.endsWith(".img") }
+            ?.let { File(covers, it) }
+            ?.takeIf { it.parentFile == covers }
+            ?: throw FileNotFoundException(uri.toString())
+        return ParcelFileDescriptor.open(cover, ParcelFileDescriptor.MODE_READ_ONLY)
     }
 
     // ImageDecoder opens content URIs only as a matching "image/*" type.
@@ -42,9 +42,4 @@ class CoverProvider : ContentProvider() {
         selection: String?,
         selectionArgs: Array<out String>?,
     ) = 0
-
-    private companion object {
-        // CoverImage names files by a signed 64-bit hash of the cover address.
-        val coverName = Regex("-?[0-9a-f]{1,16}\\.img")
-    }
 }
