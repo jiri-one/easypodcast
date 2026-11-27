@@ -362,6 +362,33 @@ void main() {
   );
 
   testWidgets(
+    'global search asks the server when title matches fill their 100 places',
+    (tester) async {
+      final (app, api) = await _openHarness(tester);
+      final library = app.services.library;
+      const query = 'díl';
+      final untitled = library
+          .episodesOf(1)
+          .firstWhere(
+            (episode) =>
+                !podcastTitleMatches(episode.title, podcastSearchWords(query)),
+          );
+      try {
+        await app.section(LibrarySection.search);
+        await tester.enterText(find.byType(TextField), query);
+        await tester.pump(const Duration(milliseconds: 400));
+        final titled = _episodeIds(tester);
+        expect(titled, hasLength(100));
+        api.globalRequests.single.$2.complete([untitled.id]);
+        await tester.pumpAndSettle();
+        expect(_episodeIds(tester), [...titled, untitled.id]);
+      } finally {
+        await app.finish();
+      }
+    },
+  );
+
+  testWidgets(
     'editing a scrolled global search shows the newest results first',
     (tester) async {
       final (app, _) = await _openHarness(tester);

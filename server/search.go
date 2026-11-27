@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -73,13 +74,27 @@ func (s store) searchEpisodes(ctx context.Context, podcastID int64, words []stri
 	return pgx.CollectRows(rows, pgx.RowTo[int64])
 }
 
+// The app matches titles itself, so title matches would only use up the limit.
 func (s store) searchAllEpisodes(ctx context.Context, words []string) ([]int64, error) {
-	rows, err := s.db.Query(ctx, `SELECT id FROM episodes
+	rows, err := s.db.Query(ctx, `SELECT id, title FROM episodes
 		WHERE podcast_id IN (SELECT id FROM podcasts WHERE subscribed)
 		AND NOT EXISTS (SELECT FROM unnest($1::text[]) AS term(word) WHERE strpos(search_text, term.word) = 0)
-		ORDER BY published_at DESC NULLS LAST, id DESC LIMIT 100`, words)
+		ORDER BY published_at DESC NULLS LAST, id DESC`, words)
 	if err != nil {
 		return nil, err
 	}
-	return pgx.CollectRows(rows, pgx.RowTo[int64])
+	defer rows.Close()
+	ids := []int64{}
+	for len(ids) < 100 && rows.Next() {
+		var id int64
+		var title string
+		if err := rows.Scan(&id, &title); err != nil {
+			return nil, err
+		}
+		title = normalizeSearchText(title)
+		if slices.ContainsFunc(words, func(word string) bool { return !strings.Contains(title, word) }) {
+			ids = append(ids, id)
+		}
+	}
+	return ids, rows.Err()
 }

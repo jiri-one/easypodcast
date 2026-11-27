@@ -29,7 +29,7 @@ func TestEpisodeSearch(t *testing.T) {
 	testExec(t, s.db, `INSERT INTO podcasts (feed_url, subscribed)
 		VALUES ('https://fixture.invalid/other', true), ('https://fixture.invalid/unsubscribed', false)`)
 	testExec(t, s.db, `INSERT INTO episodes (podcast_id, guid, title, enclosure_url, published_at, description, search_text)
-		SELECT $1, '', 'Tech Guys', '/archive/' || n, timestamptz '2020-01-01 UTC', '', 'tech guys'
+		SELECT $1, '', 'Archive', '/archive/' || n, timestamptz '2020-01-01 UTC', 'Tech Guys', 'archive tech guys'
 		FROM generate_series(1, 201) n
 		UNION ALL SELECT id, '', 'Tech Guys', '/other.mp3', timestamptz '2030-01-01 UTC', 'Tomáš Roud', 'tech guys tomas roud'
 		FROM podcasts WHERE id <> $1`, podcastID)
@@ -93,7 +93,8 @@ func TestEpisodeSearch(t *testing.T) {
 	get(global+"?q=tech", "", http.StatusUnauthorized)
 	get(global+"?q=t", token, http.StatusBadRequest)
 	search(global, " ROUD\tTOMÁŠ ", []int64{otherID, items[1].ID})
-	search(global, "tech guys", append([]int64{otherID, items[1].ID, items[0].ID}, ordered[2:99]...))
+	search(global, "tech guys", ordered[1:101])
+	search(global, "interview", nil)
 	search(global, "tech roud missing", nil)
 	var undated, dated int64
 	for _, row := range []struct {
@@ -101,11 +102,14 @@ func TestEpisodeSearch(t *testing.T) {
 		published any
 	}{{&undated, nil}, {&dated, "2021-01-01T00:00:00Z"}} {
 		if err := s.db.QueryRow(ctx, `INSERT INTO episodes (podcast_id, guid, title, enclosure_url, published_at, description, search_text)
-			SELECT id, '', 'Zebra', '/zebra/' || gen_random_uuid(), $1::timestamptz, '', 'zebra'
+			SELECT id, '', 'Stripes', '/zebra/' || gen_random_uuid(), $1::timestamptz, 'Zebra', 'stripes zebra'
 			FROM podcasts WHERE feed_url = 'https://fixture.invalid/other' RETURNING id`, row.published).Scan(row.id); err != nil {
 			t.Fatal(err)
 		}
 	}
+	testExec(t, s.db, `INSERT INTO episodes (podcast_id, guid, title, enclosure_url, published_at, description, search_text)
+		SELECT id, '', 'Zébra', '/titled/' || n, timestamptz '2031-01-01 UTC', '', 'zebra'
+		FROM podcasts, generate_series(1, 101) n WHERE feed_url = 'https://fixture.invalid/other'`)
 	search(global, "zebra", []int64{dated, undated})
 
 	target, err := s.feedTarget(ctx, podcastID)
