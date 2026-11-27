@@ -357,6 +357,15 @@ void main() {
       await expectLater(player.play(failed.id), throwsStateError);
       await tester.pumpAndSettle();
       expect(problem(l.playbackLoadFailed), findsOneWidget);
+      await app.section(LibrarySection.newEpisodes);
+      await app.openEpisode(failed.id);
+      expect(
+        find.text(
+          '${failed.title}\n${l.playbackLoadFailed}',
+          skipOffstage: false,
+        ),
+        findsOneWidget,
+      );
 
       engine.loadError = null;
       await app.mini(failed.title);

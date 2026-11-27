@@ -149,6 +149,16 @@ class _LibraryHomeState extends State<_LibraryHome> {
   void _open(_Screen screen, [int? id]) =>
       setState(() => _pages.add((screen: screen, id: id)));
 
+  void _openPlayer() {
+    // A page the player opened leads back to it, not to a second player.
+    if (_pages.length > 1 &&
+        _pages[_pages.length - 2].screen == _Screen.player) {
+      _back();
+    } else {
+      _open(_Screen.player);
+    }
+  }
+
   void _openEpisode(Episode episode) {
     final wide = _wide;
     setState(() {
@@ -191,8 +201,14 @@ class _LibraryHomeState extends State<_LibraryHome> {
 
   void _openPodcast(Podcast podcast) => setState(() {
     _closePodcastSearch();
-    _pages.removeWhere((page) => page.screen == _Screen.add);
-    _pages.add((screen: _Screen.podcast, id: podcast.id));
+    final _Page page = (screen: _Screen.podcast, id: podcast.id);
+    // An Add page under the player turns into its podcast there.
+    final add = _pages.indexWhere((page) => page.screen == _Screen.add);
+    if (add < 0) {
+      _pages.add(page);
+    } else {
+      _pages[add] = page;
+    }
   });
 
   void _openPodcastSearch(int podcastId) {
@@ -352,26 +368,23 @@ class _LibraryHomeState extends State<_LibraryHome> {
   }
 
   Widget _phoneBody(BuildContext context) {
-    final page = _pages.lastOrNull;
-    final playerPage = page?.screen == _Screen.player ? page : null;
-    final contentPage = playerPage == null
-        ? page
-        : _pages.reversed.skip(1).firstOrNull;
+    final top = _pages.lastOrNull;
+    final player = top?.screen == _Screen.player ? top : null;
+    final page = player == null ? top : _pages.reversed.skip(1).firstOrNull;
     final switcher = page == null && _section != LibrarySection.search;
     final menu = switcher && _menuOpen;
     final content = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Expanded(
-          child: contentPage == null
+          child: page == null
               ? _sectionBody(context)
-              : _pageBody(context, contentPage),
+              : _pageBody(context, page),
         ),
-        if (playerPage == null)
-          MiniPlayer(playback: _playback, onOpen: () => _open(_Screen.player)),
+        MiniPlayer(playback: _playback, onOpen: _openPlayer),
       ],
     );
-    return Column(
+    final screen = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _header(
@@ -387,15 +400,10 @@ class _LibraryHomeState extends State<_LibraryHome> {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              Visibility(
-                visible: playerPage == null,
-                maintainState: true,
-                child: ExcludeFocus(
-                  excluding: menu,
-                  child: ExcludeSemantics(excluding: menu, child: content),
-                ),
+              ExcludeFocus(
+                excluding: menu,
+                child: ExcludeSemantics(excluding: menu, child: content),
               ),
-              if (playerPage != null) _pageBody(context, playerPage),
               if (menu) ...[
                 GestureDetector(
                   behavior: HitTestBehavior.opaque,
@@ -432,6 +440,22 @@ class _LibraryHomeState extends State<_LibraryHome> {
             ],
           ),
         ),
+      ],
+    );
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        // Hidden with its header and mini player, so its lists keep their
+        // size and Back shows the screen as it was.
+        Visibility(visible: player == null, maintainState: true, child: screen),
+        if (player != null)
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _header(context, player, onBack: _back),
+              Expanded(child: _pageBody(context, player)),
+            ],
+          ),
       ],
     );
   }

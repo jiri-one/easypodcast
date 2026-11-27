@@ -6,6 +6,7 @@ import 'package:easypodcast/core/services.dart';
 import 'package:easypodcast/ui/account_pages.dart';
 import 'package:easypodcast/ui/eink_widgets.dart';
 import 'package:easypodcast/ui/library_views.dart';
+import 'package:easypodcast/ui/player_views.dart';
 import 'package:easypodcast/ui/theme.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
@@ -394,6 +395,41 @@ void main() {
       await tester.pumpAndSettle();
       expect(_page, findsNothing);
       expect(find.widgetWithText(EinkHeader, 'pasted.example'), findsWidgets);
+    } finally {
+      await app.finish();
+    }
+  });
+
+  testWidgets('Back from the player keeps the search and its results', (
+    tester,
+  ) async {
+    final (app, api, _) = await _open(tester);
+    final result = find.widgetWithText(EinkRow, _planes.title);
+    try {
+      await _showResults(app, api, [_railway, _planes]);
+      await app.mini(app.episode(101));
+      expect(_page, findsNothing);
+      await app.back();
+      expect(result, findsOneWidget);
+      expect(tester.widget<TextField>(_fields.first).controller!.text, 'vlak');
+    } finally {
+      await app.finish();
+    }
+  });
+
+  testWidgets('a podcast added under the player opens on Back', (tester) async {
+    final (app, _, library) = await _open(tester);
+    try {
+      await tester.enterText(_fields.last, 'https://pasted.example/feed.xml');
+      await app.tap(_button(app.strings.addPodcast), within: _page);
+      await app.mini(app.episode(101));
+      library.adds.single.response.complete();
+      await tester.pumpAndSettle();
+      expect(find.byType(PlayerPage), findsOneWidget);
+      await app.back();
+      expect(find.widgetWithText(EinkHeader, 'pasted.example'), findsWidgets);
+      await app.back();
+      expect(find.byType(PodcastList), findsOneWidget);
     } finally {
       await app.finish();
     }

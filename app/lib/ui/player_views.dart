@@ -143,20 +143,16 @@ class MiniPlayer extends StatelessWidget {
 }
 
 class PlaybackProblem extends StatelessWidget {
-  const PlaybackProblem({super.key, required this.playback, this.episodeId});
+  const PlaybackProblem({super.key, required this.playback});
 
   final PlaybackActions playback;
-  final int? episodeId;
 
   @override
   Widget build(BuildContext context) {
     final services = playback.services;
     final error = services.player.lastPlaybackError;
     final id = error?.episode.id ?? playback.failedEpisodeId;
-    if ((error == null && !playback.failed) ||
-        (episodeId != null && episodeId != id)) {
-      return const SizedBox.shrink();
-    }
+    if (error == null && !playback.failed) return const SizedBox.shrink();
     final strings = context.strings;
     final offline =
         id != null &&

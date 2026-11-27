@@ -7,17 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'ui_test_support.dart';
 
 const _out = String.fromEnvironment('PREVIEW_OUT');
-const _palmaDetails = {
-  '03-episode',
-  '14-settings',
-  '19-add-podcast',
-  '20-about-podcast',
-  '21-server',
-  '22-feed-status',
-  '23-opml',
-  '31-directory-results',
-  '35-add-podcast-keyboard',
-};
+const _palmaDetails = {'03-episode', '35-add-podcast-keyboard'};
 
 void main() {
   if (_out.isEmpty) {

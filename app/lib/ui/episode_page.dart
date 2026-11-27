@@ -9,7 +9,6 @@ import 'episode_actions.dart';
 import 'episode_text.dart';
 import 'plain_links.dart';
 import 'playback_actions.dart';
-import 'player_views.dart';
 import 'theme.dart';
 
 class EpisodePage extends StatefulWidget {
@@ -179,7 +178,6 @@ class _EpisodePageState extends State<EpisodePage> with ActionTapGuard {
           ),
         ),
         if (_error case final String error) EinkError(error, inset: true),
-        PlaybackProblem(playback: playback, episodeId: id),
         Padding(
           padding: EdgeInsets.fromLTRB(
             widget.desktopPanel ? 12 : 0,

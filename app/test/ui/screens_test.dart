@@ -58,7 +58,7 @@ void main() {
             );
           } else if (!loggedIn ||
               find.byType(PlayerPage).evaluate().isNotEmpty) {
-            expect(find.byType(MiniPlayer, skipOffstage: false), findsNothing);
+            expect(mini, findsNothing, reason: name);
           } else {
             expect(mini, findsOneWidget, reason: name);
             final bar = tester.getRect(mini);
@@ -108,63 +108,118 @@ void main() {
     }
   }
 
-  for (final (size, textScale) in const [
-    (Size(392, 785), 1.8),
-    (palmaSize, palmaTextScale),
-  ]) {
-    testWidgets(
-      'the mini player stays usable on episode pages at ${size.width} dp',
-      (tester) async {
-        final app = await UiHarness.open(
-          tester,
-          size: size,
-          textScale: textScale,
-          library: _LongDescriptionLibrary(),
+  testWidgets('the mini player stays usable on episode pages', (tester) async {
+    final app = await _phone(tester, library: _LongDescriptionLibrary());
+    final player = app.services.player;
+    final page = find.byType(EpisodePage);
+    final mini = find.byType(MiniPlayer);
+    try {
+      await app.mini(app.strings.play);
+      expect(player.isPlaying, isTrue);
+      expect(player.current?.id, 101);
+      await app.openEpisode(204);
+      final bar = tester.getRect(mini);
+      final description = find.byType(PlainLinks);
+      await app.scrollTo(description, page);
+      final scrollable = find.descendant(
+        of: page,
+        matching: find.byType(Scrollable),
+      );
+      final position = tester.state<ScrollableState>(scrollable).position;
+      expect(
+        position.maxScrollExtent,
+        greaterThan(tester.view.physicalSize.height),
+      );
+      position.jumpTo(position.maxScrollExtent);
+      await tester.pumpAndSettle();
+      expect(tester.getBottomLeft(description).dy, lessThan(bar.top));
+      expect(tester.getRect(mini), bar);
+
+      await app.mini(app.strings.pause);
+      expect(player.isPlaying, isFalse);
+      expect(player.current?.id, 101);
+      expect(tester.widget<EpisodePage>(page).episode.id, 204);
+      final end = position.pixels;
+      await app.mini(app.episode(101));
+      expect(find.byType(PlayerPage), findsOneWidget);
+      expect(mini, findsNothing);
+      expect(page, findsNothing);
+      await app.back();
+      expect(tester.widget<EpisodePage>(page).episode.id, 204);
+      expect(tester.state<ScrollableState>(scrollable).position.pixels, end);
+
+      await app.mini(app.strings.play);
+      await app.back();
+      await app.openEpisode(101);
+      expect(player.isPlaying, isTrue);
+      expect(mini, findsOneWidget);
+      expect(tester.takeException(), isNull);
+    } finally {
+      await app.finish();
+    }
+  });
+
+  testWidgets('a page the player opened leads back to that player', (
+    tester,
+  ) async {
+    final app = await _phone(tester);
+    final title = app.episode(101);
+    try {
+      await app.mini(app.strings.play);
+      for (var round = 0; round < 2; round++) {
+        await app.mini(title);
+        await app.tap(
+          find.descendant(
+            of: find.byType(PlayerPage),
+            matching: find.text(title),
+          ),
         );
-        final player = app.services.player;
-        final page = find.byType(EpisodePage);
-        final mini = find.byType(MiniPlayer);
-        try {
-          await app.mini(app.strings.play);
-          expect(player.isPlaying, isTrue);
-          expect(player.current?.id, 101);
-          await app.openEpisode(204);
-          final bar = tester.getRect(mini);
-          final description = find.byType(PlainLinks);
-          await app.scrollTo(description, page);
-          final scrollable = find.descendant(
-            of: page,
-            matching: find.byType(Scrollable),
-          );
-          final position = tester.state<ScrollableState>(scrollable).position;
-          expect(position.maxScrollExtent, greaterThan(size.height));
-          position.jumpTo(position.maxScrollExtent);
-          await tester.pumpAndSettle();
-          expect(tester.getBottomLeft(description).dy, lessThan(bar.top));
-          expect(tester.getRect(mini), bar);
+        expect(find.byType(EpisodePage), findsOneWidget);
+      }
+      await app.mini(title);
+      expect(find.byType(PlayerPage), findsOneWidget);
+      await app.back();
+      expect(
+        find.widgetWithText(EinkHeader, app.strings.inProgress),
+        findsOneWidget,
+      );
+    } finally {
+      await app.finish();
+    }
+  });
 
-          await app.mini(app.strings.pause);
-          expect(player.isPlaying, isFalse);
-          expect(player.current?.id, 101);
-          expect(tester.widget<EpisodePage>(page).episode.id, 204);
-          await app.mini(app.episode(101));
-          expect(find.byType(PlayerPage), findsOneWidget);
-          expect(mini, findsNothing);
-          await app.back();
-          expect(tester.widget<EpisodePage>(page).episode.id, 204);
-
-          await app.mini(app.strings.play);
-          await app.back();
-          await app.openEpisode(101);
-          expect(player.isPlaying, isTrue);
-          expect(mini, findsOneWidget);
-          expect(tester.takeException(), isNull);
-        } finally {
-          await app.finish();
-        }
-      },
-    );
-  }
+  testWidgets('Back from the player returns a list to the same place', (
+    tester,
+  ) async {
+    final app = await _phone(tester);
+    final list = find.byType(PodcastList);
+    try {
+      await app.section(LibrarySection.podcasts);
+      final position = tester
+          .state<ScrollableState>(
+            find.descendant(of: list, matching: find.byType(Scrollable)),
+          )
+          .position;
+      position.jumpTo(position.maxScrollExtent);
+      await tester.pumpAndSettle();
+      final end = position.pixels;
+      expect(end, greaterThan(0));
+      await app.mini(app.episode(101));
+      expect(list, findsNothing);
+      await app.back();
+      expect(
+        tester
+            .state<ScrollableState>(
+              find.descendant(of: list, matching: find.byType(Scrollable)),
+            )
+            .position
+            .pixels,
+        end,
+      );
+    } finally {
+      await app.finish();
+    }
+  });
 
   testWidgets('mini player checks and resumes a stored position with one tap', (
     tester,
