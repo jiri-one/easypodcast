@@ -107,6 +107,24 @@ void main() {
     }
   });
 
+  testWidgets('a second menu cannot open over the first', (tester) async {
+    final semantics = tester.ensureSemantics();
+    final (app, _) = await _podcasts(tester);
+    try {
+      for (final podcast in app.services.library.podcasts.take(2)) {
+        final node = tester.getSemantics(
+          find.widgetWithText(EinkRow, podcast.title),
+        );
+        node.owner!.performAction(node.id, SemanticsAction.longPress);
+      }
+      await tester.pumpAndSettle();
+      expect(find.byType(EinkDialogPanel, skipOffstage: false), findsOneWidget);
+    } finally {
+      semantics.dispose();
+      await app.finish();
+    }
+  });
+
   testWidgets('global search podcast rows open the same menu', (tester) async {
     final app = await UiHarness.open(tester, size: const Size(392, 785));
     final podcast = app.services.library.podcast(1)!;
@@ -213,6 +231,7 @@ void main() {
     try {
       await app.holdRow(podcast.title);
       await app.dialog(l.unsubscribe);
+      expect(_panel, findsOneWidget);
       expect(_menuText(l.unsubscribeHelp), findsOneWidget);
       await app.dialog(l.cancel);
       expect(calls, isEmpty);
@@ -226,6 +245,8 @@ void main() {
       expect(library.podcast(podcast.id)!.subscribed, isTrue);
       await app.dialog(l.unsubscribing);
       expect(calls, [podcast.id]);
+      await app.dialog(l.close);
+      expect(_menuText(l.unsubscribing), findsOneWidget);
 
       reply.complete();
       await tester.pumpAndSettle();
