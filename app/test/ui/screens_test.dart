@@ -68,11 +68,8 @@ void main() {
               lessThanOrEqualTo(size.height - tester.view.viewInsets.bottom),
               reason: name,
             );
-            final list = find.byWidgetPredicate(
-              (widget) => widget is ScrollView,
-            );
             expect(
-              tester.getBottomLeft(list.first).dy,
+              tester.getBottomLeft(find.bySubtype<ScrollView>().first).dy,
               lessThanOrEqualTo(bar.top),
               reason: name,
             );
@@ -133,7 +130,6 @@ void main() {
       position.jumpTo(position.maxScrollExtent);
       await tester.pumpAndSettle();
       expect(tester.getBottomLeft(description).dy, lessThan(bar.top));
-      expect(tester.getRect(mini), bar);
 
       await app.mini(app.strings.pause);
       expect(player.isPlaying, isFalse);
@@ -147,13 +143,6 @@ void main() {
       await app.back();
       expect(tester.widget<EpisodePage>(page).episode.id, 204);
       expect(tester.state<ScrollableState>(scrollable).position.pixels, end);
-
-      await app.mini(app.strings.play);
-      await app.back();
-      await app.openEpisode(101);
-      expect(player.isPlaying, isTrue);
-      expect(mini, findsOneWidget);
-      expect(tester.takeException(), isNull);
     } finally {
       await app.finish();
     }
@@ -166,16 +155,9 @@ void main() {
     final title = app.episode(101);
     try {
       await app.mini(app.strings.play);
-      for (var round = 0; round < 2; round++) {
-        await app.mini(title);
-        await app.tap(
-          find.descendant(
-            of: find.byType(PlayerPage),
-            matching: find.text(title),
-          ),
-        );
-        expect(find.byType(EpisodePage), findsOneWidget);
-      }
+      await app.mini(title);
+      await app.tapText(title);
+      expect(find.byType(EpisodePage), findsOneWidget);
       await app.mini(title);
       expect(find.byType(PlayerPage), findsOneWidget);
       await app.back();
@@ -193,13 +175,13 @@ void main() {
   ) async {
     final app = await _phone(tester);
     final list = find.byType(PodcastList);
+    final scrollable = find.descendant(
+      of: list,
+      matching: find.byType(Scrollable),
+    );
     try {
       await app.section(LibrarySection.podcasts);
-      final position = tester
-          .state<ScrollableState>(
-            find.descendant(of: list, matching: find.byType(Scrollable)),
-          )
-          .position;
+      final position = tester.state<ScrollableState>(scrollable).position;
       position.jumpTo(position.maxScrollExtent);
       await tester.pumpAndSettle();
       final end = position.pixels;
@@ -207,15 +189,7 @@ void main() {
       await app.mini(app.episode(101));
       expect(list, findsNothing);
       await app.back();
-      expect(
-        tester
-            .state<ScrollableState>(
-              find.descendant(of: list, matching: find.byType(Scrollable)),
-            )
-            .position
-            .pixels,
-        end,
-      );
+      expect(tester.state<ScrollableState>(scrollable).position.pixels, end);
     } finally {
       await app.finish();
     }

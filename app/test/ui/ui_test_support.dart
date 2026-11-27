@@ -121,6 +121,7 @@ class UiHarness {
       tester.platformDispatcher.clearTextScaleFactorTestValue();
       tester.view.resetPhysicalSize();
       tester.view.resetDevicePixelRatio();
+      tester.view.resetViewInsets();
       debugDefaultTargetPlatformOverride = null;
       services.player.dispose();
       services.downloads.dispose();
@@ -406,18 +407,13 @@ Future<void> tourPhone(UiHarness app, VisitScreen visit) async {
   await app.dialog(l.close);
   await app.scrollToRow(l.addPodcast, find.byType(PodcastList), delta: -150);
   await visit('19-add-podcast');
-  final tester = app.tester;
-  await tester.enterText(find.byType(TextField).first, 'noční vlak');
-  tester.view.viewInsets = const FakeViewPadding(bottom: 320);
-  try {
-    await tester.pumpAndSettle();
-    expect(tester.testTextInput.isVisible, isTrue);
-    await visit('35-add-podcast-keyboard');
-    await tester.testTextInput.receiveAction(TextInputAction.search);
-  } finally {
-    tester.view.resetViewInsets();
-  }
-  await tester.pumpAndSettle();
+  await app.tester.enterText(find.byType(TextField).first, 'noční vlak');
+  app.tester.view.viewInsets = const FakeViewPadding(bottom: 320);
+  await app.tester.pumpAndSettle();
+  expect(app.tester.testTextInput.isVisible, isTrue);
+  await visit('35-add-podcast-keyboard');
+  app.tester.view.resetViewInsets();
+  await app.tap(find.widgetWithText(EinkButton, l.search));
   await visit('31-directory-results');
   await app.back();
   await app.scrollToRow(
@@ -436,7 +432,7 @@ Future<void> tourPhone(UiHarness app, VisitScreen visit) async {
   await app.dialog(l.unsubscribe);
   final unsubscribed = find.text(l.notSubscribed);
   await app.scrollTo(unsubscribed, find.byType(AboutPodcastPage));
-  await tester.pumpAndSettle();
+  await app.tester.pumpAndSettle();
   expect(unsubscribed.hitTestable(), findsOneWidget);
   await visit('25-unsubscribe');
   await app.back();

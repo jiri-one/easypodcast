@@ -151,8 +151,7 @@ class _LibraryHomeState extends State<_LibraryHome> {
 
   void _openPlayer() {
     // A page the player opened leads back to it, not to a second player.
-    if (_pages.length > 1 &&
-        _pages[_pages.length - 2].screen == _Screen.player) {
+    if (_pages.reversed.elementAtOrNull(1)?.screen == _Screen.player) {
       _back();
     } else {
       _open(_Screen.player);
@@ -202,7 +201,7 @@ class _LibraryHomeState extends State<_LibraryHome> {
   void _openPodcast(Podcast podcast) => setState(() {
     _closePodcastSearch();
     final _Page page = (screen: _Screen.podcast, id: podcast.id);
-    // An Add page under the player turns into its podcast there.
+    // Keeps the player on top when an add finishes under it.
     final add = _pages.indexWhere((page) => page.screen == _Screen.add);
     if (add < 0) {
       _pages.add(page);
@@ -370,7 +369,7 @@ class _LibraryHomeState extends State<_LibraryHome> {
   Widget _phoneBody(BuildContext context) {
     final top = _pages.lastOrNull;
     final player = top?.screen == _Screen.player ? top : null;
-    final page = player == null ? top : _pages.reversed.skip(1).firstOrNull;
+    final page = player == null ? top : _pages.reversed.elementAtOrNull(1);
     final switcher = page == null && _section != LibrarySection.search;
     final menu = switcher && _menuOpen;
     final content = Column(
@@ -445,8 +444,7 @@ class _LibraryHomeState extends State<_LibraryHome> {
     return Stack(
       fit: StackFit.expand,
       children: [
-        // Hidden with its header and mini player, so its lists keep their
-        // size and Back shows the screen as it was.
+        // Kept whole so its lists keep their size and Back shows it as it was.
         Visibility(visible: player == null, maintainState: true, child: screen),
         if (player != null)
           Column(
