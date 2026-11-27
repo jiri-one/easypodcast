@@ -7,6 +7,7 @@ import 'package:material_ui/material_ui.dart';
 import '../l10n/app_localizations.dart';
 import 'eink_widgets.dart';
 import 'podcast_search.dart';
+import 'theme.dart';
 
 class EpisodeSearch extends ChangeNotifier {
   final text = TextEditingController();
@@ -19,10 +20,10 @@ class EpisodeSearch extends ChangeNotifier {
   List<String> get words => _words;
   Set<int> get matches => _matches ?? const {};
 
-  String? descriptionStatus(AppLocalizations strings) => _matches == null
-      ? strings.searchingDescriptions
+  Widget? descriptionStatus(AppLocalizations strings) => _matches == null
+      ? PageMessage(strings.searchingDescriptions)
       : _failed
-      ? strings.descriptionSearchFailed
+      ? EinkError(strings.descriptionSearchFailed, inset: true)
       : null;
 
   void change(String input, Future<List<int>> Function(String) request) {

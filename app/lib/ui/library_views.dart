@@ -126,6 +126,7 @@ class EpisodeList extends StatelessWidget {
     this.actions = const [],
     this.headerSlivers = const [],
     this.footer = const [],
+    this.status,
     this.descriptionMatchesFrom,
     this.desktop = false,
     this.selectedId,
@@ -142,6 +143,7 @@ class EpisodeList extends StatelessWidget {
   final List<Widget> actions;
   final List<Widget> headerSlivers;
   final List<Widget> footer;
+  final Widget? status;
   final int? descriptionMatchesFrom;
   final bool desktop;
   final int? selectedId;
@@ -180,7 +182,7 @@ class EpisodeList extends StatelessWidget {
         SliverToBoxAdapter(child: problem),
         for (final action in actions) SliverToBoxAdapter(child: action),
         ...headerSlivers,
-        if (episodes.isEmpty)
+        if (episodes.isEmpty && status == null)
           SliverToBoxAdapter(
             child: PageMessage(
               emptyMessage ??
@@ -206,14 +208,16 @@ class EpisodeList extends StatelessWidget {
               index,
               queued: queued.contains(episode.id),
             );
+            final newDay =
+                kind == EpisodeListKind.newEpisodes &&
+                (index == 0 ||
+                    !DateUtils.isSameDay(
+                      episode.publishedAt?.toLocal(),
+                      episodes[index - 1].publishedAt?.toLocal(),
+                    ));
             final heading = index == descriptionMatchesFrom
                 ? strings.foundInDescription
-                : kind == EpisodeListKind.newEpisodes &&
-                      (index == 0 ||
-                          !DateUtils.isSameDay(
-                            episode.publishedAt?.toLocal(),
-                            episodes[index - 1].publishedAt?.toLocal(),
-                          ))
+                : newDay
                 ? dayGroup(strings, episode.publishedAt)
                 : null;
             if (heading != null) {
@@ -229,6 +233,7 @@ class EpisodeList extends StatelessWidget {
           SliverToBoxAdapter(
             child: PageMessage(strings.olderEpisodesInPodcasts),
           ),
+        if (status case final Widget status) SliverToBoxAdapter(child: status),
         for (final widget in footer) SliverToBoxAdapter(child: widget),
       ],
     );

@@ -97,26 +97,14 @@ class DemoApiClient implements ApiClient {
     int podcastId,
     String query, {
     Duration? timeout,
-  }) => _search(_library.episodesOf(podcastId), query, 200);
+  }) => _search(_library.episodesOf(podcastId), query);
 
   @override
-  Future<List<int>> searchAll(String query, {Duration? timeout}) => _search(
-    [
-      for (final podcast in _library.podcasts)
-        ..._library.episodesOf(podcast.id),
-    ]..sort(
-      (a, b) =>
-          (b.publishedAt ?? oldestTime).compareTo(a.publishedAt ?? oldestTime),
-    ),
-    query,
-    100,
-  );
+  Future<List<int>> searchAll(String query, {Duration? timeout}) => _search([
+    for (final podcast in _library.podcasts) ..._library.episodesOf(podcast.id),
+  ], query);
 
-  Future<List<int>> _search(
-    List<Episode> episodes,
-    String query,
-    int limit,
-  ) async {
+  Future<List<int>> _search(List<Episode> episodes, String query) async {
     final words = podcastSearchWords(query);
     return [
       for (final episode in episodes)
@@ -125,7 +113,7 @@ class DemoApiClient implements ApiClient {
           words,
         ))
           episode.id,
-    ].take(limit).toList();
+    ];
   }
 
   @override

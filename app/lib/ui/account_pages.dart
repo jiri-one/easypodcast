@@ -219,16 +219,17 @@ class _AddPodcastPageState extends State<AddPodcastPage> with ActionTapGuard {
   String? _addressError;
   final _resultErrors = <String, String>{};
 
+  bool _queried = false;
+
   bool get _busy => _searching || _adding;
 
+  // Searching before the first build draws the page once, already busy.
   @override
-  void initState() {
-    super.initState();
-    if (widget.query.isNotEmpty) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) unawaited(_search());
-      });
-    }
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_queried) return;
+    _queried = true;
+    if (widget.query.isNotEmpty) unawaited(_search());
   }
 
   Future<void> _search() async {
