@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -399,6 +401,13 @@ class _AboutPodcastPageState extends State<AboutPodcastPage>
   bool? _subscribing;
   // The switch shows the requested value until the server answers.
   bool? _requestedShow;
+  Timer? _closeGuard;
+
+  @override
+  void dispose() {
+    _closeGuard?.cancel();
+    super.dispose();
+  }
 
   Future<void> _toggleShowInNewEpisodes() => guardAction(() async {
     final podcast = widget.podcast;
@@ -428,7 +437,9 @@ class _AboutPodcastPageState extends State<AboutPodcastPage>
           message: strings.unsubscribeHelp,
           action: strings.unsubscribe,
         );
-        if (!confirmed || !mounted) return;
+        if (!mounted) return;
+        _closeGuard = Timer(doubleTapGuard, () {});
+        if (!confirmed) return;
         setState(() => _subscribing = false);
         await widget.services.library.unsubscribe(podcast.id);
       } else {
@@ -506,8 +517,12 @@ class _AboutPodcastPageState extends State<AboutPodcastPage>
       title: podcast.title,
       actions: [
         TextButton(
-          // A double tap on the confirmation ends on this button.
-          onPressed: _subscribing == null ? () => Navigator.pop(context) : null,
+          // A double tap on the confirmation would otherwise end on this button.
+          onPressed: _subscribing == null
+              ? () {
+                  if (_closeGuard?.isActive != true) Navigator.pop(context);
+                }
+              : null,
           child: Text(strings.close, style: buttonLabelStyle),
         ),
       ],

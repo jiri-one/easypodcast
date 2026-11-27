@@ -91,11 +91,13 @@ class EpisodeRowKey extends GlobalObjectKey {
 }
 
 Widget _withRowMenu({
+  Key? key,
   required VoidCallback onMenu,
   required String hint,
   required Widget child,
   bool holdToOpen = true,
 }) => CallbackShortcuts(
+  key: key,
   bindings: {
     const SingleActivator(LogicalKeyboardKey.f10, shift: true): onMenu,
     const SingleActivator(LogicalKeyboardKey.contextMenu): onMenu,
@@ -567,10 +569,10 @@ class PodcastList extends StatelessWidget {
       final podcast = podcasts[index];
       final strings = context.strings;
       return _withRowMenu(
+        key: ValueKey(podcast.id),
         onMenu: () => onMenu(podcast),
         hint: strings.podcastActions,
         child: EinkRow(
-          key: ValueKey(podcast.id),
           title: podcast.title,
           leading: PodcastThumbnail(podcast.imageUrl),
           topAligned: true,

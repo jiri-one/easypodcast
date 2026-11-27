@@ -210,6 +210,30 @@ void main() {
       expect(calls, isEmpty);
       expect(_panel, findsNothing);
       expect(find.widgetWithText(EinkRow, podcast.title), findsNothing);
+      final next = library.podcasts.first;
+      await app.holdRow(next.title);
+      expect(_menuText(next.title), findsOneWidget);
+    } finally {
+      await app.finish();
+    }
+  });
+
+  testWidgets('cancel after an unsubscribe elsewhere closes the menu', (
+    tester,
+  ) async {
+    final library = DemoLibrary();
+    final (app, podcast) = await _podcasts(tester, library: library);
+    final l = app.strings;
+    try {
+      await app.holdRow(podcast.title);
+      await app.dialog(l.unsubscribe);
+      await library.unsubscribe(podcast.id);
+      await tester.pumpAndSettle();
+      await app.dialog(l.cancel);
+      expect(_panel, findsNothing);
+      final next = library.podcasts.first;
+      await app.holdRow(next.title);
+      expect(_menuText(next.title), findsOneWidget);
     } finally {
       await app.finish();
     }
@@ -253,6 +277,10 @@ void main() {
       expect(library.podcast(podcast.id)!.subscribed, isFalse);
       expect(_panel, findsNothing);
       expect(row, findsNothing);
+      expect(
+        Navigator.of(tester.element(find.byType(PodcastList))).canPop(),
+        isFalse,
+      );
     } finally {
       await app.finish();
     }
@@ -279,6 +307,36 @@ void main() {
       expect(_menuText(podcast.title), findsOneWidget);
       expect(_menuText(l.actionFailed), findsOneWidget);
       expect(_menuText(l.unsubscribe), findsOneWidget);
+    } finally {
+      await app.finish();
+    }
+  });
+
+  testWidgets('the second tap of a double tap on the confirmation is ignored', (
+    tester,
+  ) async {
+    final library = DemoLibrary()
+      ..beforeUnsubscribe = (_) async => throw OfflineException();
+    final (app, podcast) = await _podcasts(tester, library: library);
+    final l = app.strings;
+    final close = _menuText(l.close);
+    try {
+      await app.holdRow(podcast.title);
+      await app.dialog(l.unsubscribe);
+      await app.dialog(l.cancel);
+      await tester.tap(close);
+      await tester.pumpAndSettle();
+      expect(_menuText(podcast.title), findsOneWidget);
+
+      await app.dialog(l.unsubscribe);
+      await app.dialog(l.unsubscribe);
+      expect(_menuText(l.actionFailed), findsOneWidget);
+      await tester.tap(close);
+      await tester.pumpAndSettle();
+      expect(_menuText(l.actionFailed), findsOneWidget);
+
+      await app.dialog(l.close);
+      expect(_panel, findsNothing);
     } finally {
       await app.finish();
     }
