@@ -1,5 +1,6 @@
 import 'package:easypodcast/core/api.dart';
 import 'package:easypodcast/core/models.dart';
+import 'package:easypodcast/ui/podcast_search.dart';
 
 import 'demo_library.dart';
 
@@ -96,11 +97,36 @@ class DemoApiClient implements ApiClient {
     int podcastId,
     String query, {
     Duration? timeout,
-  }) async => const [];
+  }) => _search(_library.episodesOf(podcastId), query, 200);
 
   @override
-  Future<List<int>> searchAll(String query, {Duration? timeout}) async =>
-      const [];
+  Future<List<int>> searchAll(String query, {Duration? timeout}) => _search(
+    [
+      for (final podcast in _library.podcasts)
+        ..._library.episodesOf(podcast.id),
+    ]..sort(
+      (a, b) =>
+          (b.publishedAt ?? oldestTime).compareTo(a.publishedAt ?? oldestTime),
+    ),
+    query,
+    100,
+  );
+
+  Future<List<int>> _search(
+    List<Episode> episodes,
+    String query,
+    int limit,
+  ) async {
+    final words = podcastSearchWords(query);
+    return [
+      for (final episode in episodes)
+        if (podcastTitleMatches(
+          '${episode.title} ${await _library.description(episode.id)}',
+          words,
+        ))
+          episode.id,
+    ].take(limit).toList();
+  }
 
   @override
   Future<({Episode episode, String description})> episode(

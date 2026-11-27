@@ -378,8 +378,20 @@ abstract class AppLocalizations {
   /// No description provided for @searchHint.
   ///
   /// In en, this message translates to:
-  /// **'Title or description'**
+  /// **'Podcast or episode'**
   String get searchHint;
+
+  /// No description provided for @searchScope.
+  ///
+  /// In en, this message translates to:
+  /// **'Searches only your subscriptions: podcast and episode titles and episode descriptions.'**
+  String get searchScope;
+
+  /// No description provided for @searchApplePodcasts.
+  ///
+  /// In en, this message translates to:
+  /// **'Search Apple Podcasts'**
+  String get searchApplePodcasts;
 
   /// No description provided for @episodes.
   ///
@@ -387,11 +399,35 @@ abstract class AppLocalizations {
   /// **'Episodes'**
   String get episodes;
 
+  /// No description provided for @foundInDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Found in the episode description'**
+  String get foundInDescription;
+
+  /// No description provided for @searchingDescriptions.
+  ///
+  /// In en, this message translates to:
+  /// **'Also searching episode descriptions…'**
+  String get searchingDescriptions;
+
+  /// No description provided for @descriptionSearchFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t search episode descriptions.'**
+  String get descriptionSearchFailed;
+
   /// No description provided for @searchThisPodcast.
   ///
   /// In en, this message translates to:
   /// **'Search this podcast'**
   String get searchThisPodcast;
+
+  /// No description provided for @searchThisPodcastHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Episode title or description'**
+  String get searchThisPodcastHint;
 
   /// No description provided for @clearSearch.
   ///
@@ -726,7 +762,7 @@ abstract class AppLocalizations {
   /// No description provided for @directorySearch.
   ///
   /// In en, this message translates to:
-  /// **'Find a podcast'**
+  /// **'Find a podcast on Apple Podcasts'**
   String get directorySearch;
 
   /// No description provided for @searching.

@@ -155,13 +155,33 @@ class AppLocalizationsEn extends AppLocalizations {
   String get search => 'Search';
 
   @override
-  String get searchHint => 'Title or description';
+  String get searchHint => 'Podcast or episode';
+
+  @override
+  String get searchScope =>
+      'Searches only your subscriptions: podcast and episode titles and episode descriptions.';
+
+  @override
+  String get searchApplePodcasts => 'Search Apple Podcasts';
 
   @override
   String get episodes => 'Episodes';
 
   @override
+  String get foundInDescription => 'Found in the episode description';
+
+  @override
+  String get searchingDescriptions => 'Also searching episode descriptions…';
+
+  @override
+  String get descriptionSearchFailed =>
+      'Couldn\'t search episode descriptions.';
+
+  @override
   String get searchThisPodcast => 'Search this podcast';
+
+  @override
+  String get searchThisPodcastHint => 'Episode title or description';
 
   @override
   String get clearSearch => 'Clear search';
@@ -334,7 +354,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get addingPodcast => 'Adding…';
 
   @override
-  String get directorySearch => 'Find a podcast';
+  String get directorySearch => 'Find a podcast on Apple Podcasts';
 
   @override
   String get searching => 'Searching…';

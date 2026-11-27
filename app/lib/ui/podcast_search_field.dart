@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../l10n/app_localizations.dart';
 import 'eink_widgets.dart';
 import 'podcast_search.dart';
 
@@ -13,10 +14,16 @@ class EpisodeSearch extends ChangeNotifier {
   Timer? _timer;
   List<String> _words = const [];
   Set<int>? _matches = const {};
+  bool _failed = false;
 
   List<String> get words => _words;
   Set<int> get matches => _matches ?? const {};
-  bool get loading => _matches == null;
+
+  String? descriptionStatus(AppLocalizations strings) => _matches == null
+      ? strings.searchingDescriptions
+      : _failed
+      ? strings.descriptionSearchFailed
+      : null;
 
   void change(String input, Future<List<int>> Function(String) request) {
     final words = podcastSearchWords(input);
@@ -26,17 +33,20 @@ class EpisodeSearch extends ChangeNotifier {
     _timer?.cancel();
     _words = words;
     _matches = askServer ? null : const {};
+    _failed = false;
     notifyListeners();
     if (!askServer) return;
     _timer = Timer(const Duration(milliseconds: 400), () async {
       var matches = const <int>{};
+      var failed = false;
       try {
         matches = (await request(input.trim())).toSet();
       } on Exception {
-        // Keep local results if the server is unavailable.
+        failed = true;
       }
       if (identical(_words, words)) {
         _matches = matches;
+        _failed = failed;
         notifyListeners();
       }
     });
@@ -46,6 +56,7 @@ class EpisodeSearch extends ChangeNotifier {
     _timer?.cancel();
     _words = const [];
     _matches = const {};
+    _failed = false;
     focus.unfocus();
     text.clear();
     notifyListeners();

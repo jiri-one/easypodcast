@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:material_ui/material_ui.dart';
 
 import '../core/api.dart';
@@ -195,17 +197,19 @@ class AddPodcastPage extends StatefulWidget {
     super.key,
     required this.services,
     required this.onAdded,
+    this.query = '',
   });
 
   final AppServices services;
   final ValueChanged<Podcast> onAdded;
+  final String query;
 
   @override
   State<AddPodcastPage> createState() => _AddPodcastPageState();
 }
 
 class _AddPodcastPageState extends State<AddPodcastPage> with ActionTapGuard {
-  final _query = TextEditingController();
+  late final _query = TextEditingController(text: widget.query);
   final _address = TextEditingController();
   List<DirectoryPodcast>? _results;
   bool _searching = false;
@@ -216,6 +220,16 @@ class _AddPodcastPageState extends State<AddPodcastPage> with ActionTapGuard {
   final _resultErrors = <String, String>{};
 
   bool get _busy => _searching || _adding;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.query.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_search());
+      });
+    }
+  }
 
   Future<void> _search() async {
     if (_busy) return;

@@ -125,6 +125,8 @@ class EpisodeList extends StatelessWidget {
     this.onRefresh,
     this.actions = const [],
     this.headerSlivers = const [],
+    this.footer = const [],
+    this.descriptionMatchesFrom,
     this.desktop = false,
     this.selectedId,
     this.emptyMessage,
@@ -139,6 +141,8 @@ class EpisodeList extends StatelessWidget {
   final VoidCallback? onRefresh;
   final List<Widget> actions;
   final List<Widget> headerSlivers;
+  final List<Widget> footer;
+  final int? descriptionMatchesFrom;
   final bool desktop;
   final int? selectedId;
   final String? emptyMessage;
@@ -202,18 +206,20 @@ class EpisodeList extends StatelessWidget {
               index,
               queued: queued.contains(episode.id),
             );
-            if (kind == EpisodeListKind.newEpisodes &&
-                (index == 0 ||
-                    !DateUtils.isSameDay(
-                      episode.publishedAt?.toLocal(),
-                      episodes[index - 1].publishedAt?.toLocal(),
-                    ))) {
+            final heading = index == descriptionMatchesFrom
+                ? strings.foundInDescription
+                : kind == EpisodeListKind.newEpisodes &&
+                      (index == 0 ||
+                          !DateUtils.isSameDay(
+                            episode.publishedAt?.toLocal(),
+                            episodes[index - 1].publishedAt?.toLocal(),
+                          ))
+                ? dayGroup(strings, episode.publishedAt)
+                : null;
+            if (heading != null) {
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  listHeading(dayGroup(strings, episode.publishedAt)),
-                  row,
-                ],
+                children: [listHeading(heading), row],
               );
             }
             return row;
@@ -223,6 +229,7 @@ class EpisodeList extends StatelessWidget {
           SliverToBoxAdapter(
             child: PageMessage(strings.olderEpisodesInPodcasts),
           ),
+        for (final widget in footer) SliverToBoxAdapter(child: widget),
       ],
     );
     return refresh == null

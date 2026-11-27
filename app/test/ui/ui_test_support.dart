@@ -391,6 +391,14 @@ Future<void> tourPhone(UiHarness app, VisitScreen visit) async {
   await app.back();
   await app.back();
 
+  await app.section(LibrarySection.search);
+  await visit('36-search');
+  await app.tester.enterText(find.byType(TextField), 'noční');
+  await app.tester.pump(const Duration(milliseconds: 400));
+  await app.scrollTo(find.text(l.foundInDescription), find.byType(EpisodeList));
+  await visit('37-search-descriptions');
+  await app.back();
+
   await app.section(LibrarySection.podcasts);
   await visit('10-podcasts');
   final library = app.services.library as DemoLibrary;
@@ -513,6 +521,8 @@ Future<void> tourDesktop(
   await app.tapText(l.dismissOlder);
   await visit('pc-dismiss-older');
   await app.dialog(l.cancel);
+  await app.section(LibrarySection.search);
+  await visit('pc-search');
   await app.section(LibrarySection.podcasts);
   await visit('pc-podcasts');
   await app.row(l.addPodcast);

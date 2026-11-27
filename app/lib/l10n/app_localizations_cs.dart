@@ -155,13 +155,32 @@ class AppLocalizationsCs extends AppLocalizations {
   String get search => 'Hledat';
 
   @override
-  String get searchHint => 'Název nebo popis';
+  String get searchHint => 'Podcast nebo díl';
+
+  @override
+  String get searchScope =>
+      'Prohledává jen tvé odběry: názvy podcastů a dílů a popisy dílů.';
+
+  @override
+  String get searchApplePodcasts => 'Hledat v Apple Podcasts';
 
   @override
   String get episodes => 'Díly';
 
   @override
+  String get foundInDescription => 'Nalezeno v popisu dílu';
+
+  @override
+  String get searchingDescriptions => 'Hledám i v popisech dílů…';
+
+  @override
+  String get descriptionSearchFailed => 'Popisy dílů se nepodařilo prohledat.';
+
+  @override
   String get searchThisPodcast => 'Hledat v podcastu';
+
+  @override
+  String get searchThisPodcastHint => 'Název nebo popis dílu';
 
   @override
   String get clearSearch => 'Zrušit hledání';
@@ -333,7 +352,7 @@ class AppLocalizationsCs extends AppLocalizations {
   String get addingPodcast => 'Přidávám…';
 
   @override
-  String get directorySearch => 'Najít podcast';
+  String get directorySearch => 'Najít podcast v Apple Podcasts';
 
   @override
   String get searching => 'Hledám…';

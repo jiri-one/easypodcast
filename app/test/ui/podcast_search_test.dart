@@ -3,10 +3,12 @@ import 'dart:async';
 import 'package:easypodcast/core/api.dart';
 import 'package:easypodcast/core/models.dart';
 import 'package:easypodcast/core/services.dart';
+import 'package:easypodcast/ui/account_pages.dart';
 import 'package:easypodcast/ui/eink_widgets.dart';
 import 'package:easypodcast/ui/episode_page.dart';
 import 'package:easypodcast/ui/library_views.dart';
 import 'package:easypodcast/ui/podcast_search.dart';
+import 'package:easypodcast/ui/podcast_search_field.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
@@ -33,8 +35,9 @@ void main() {
     ];
 
     final words = podcastSearchWords('  ROUD\tTOMAS  ');
-    final matches = matchPodcastEpisodes(episodes, words, const {});
-    expect(matches.map((episode) => episode.id), [1, 3]);
+    final matches = matchPodcastEpisodes(episodes, words, const {2});
+    expect(matches.episodes.map((episode) => episode.id), [1, 3, 2]);
+    expect(matches.titleMatches, 2);
     expect(podcastSearchWords('Španělské PIÑATA'), ['spanelske', 'pinata']);
   });
 
@@ -53,15 +56,16 @@ void main() {
             publishedAt: publishedAt,
           ),
       ];
-      expect(
-        matchLibraryEpisodes(
-          episodes,
-          podcastSearchWords('title'),
-          const {},
-          {},
-        ).map((episode) => episode.id),
-        [for (var id = 101; id >= 2; id--) id],
+      final matches = matchLibraryEpisodes(
+        episodes,
+        podcastSearchWords('title'),
+        const {},
+        {},
       );
+      expect(matches.episodes.map((episode) => episode.id), [
+        for (var id = 101; id >= 2; id--) id,
+      ]);
+      expect(matches.titleMatches, 100);
     },
   );
 
@@ -90,6 +94,7 @@ void main() {
       api.requests.single.$3.completeError(OfflineException());
       await tester.pump();
       expect(_episodeIds(tester), [102, 108, 114, 120]);
+      await _expectBelowResults(app, l.descriptionSearchFailed);
 
       await app.tap(find.byTooltip(l.clearSearch));
       expect(field, findsNothing);
@@ -98,7 +103,7 @@ void main() {
       await tester.enterText(field, 'no such episode');
       await tester.pump();
       expect(_episodeIds(tester), isEmpty);
-      expect(find.text(l.syncLoading), findsOneWidget);
+      expect(find.text(l.searchingDescriptions), findsOneWidget);
       expect(find.text(l.noMatchingEpisodes), findsNothing);
       await tester.pump(const Duration(milliseconds: 400));
       api.requests.last.$3.complete(const []);
@@ -154,6 +159,7 @@ void main() {
       api.requests.single.$3.complete([115, 108, 103, 115, 999]);
       await tester.pumpAndSettle();
       expect(_episodeIds(tester), [102, 108, 114, 120, 103, 115]);
+      await _expectDescriptionHeadingAbove(app, app.episode(103));
     } finally {
       await app.finish();
     }
@@ -177,6 +183,8 @@ void main() {
       api.requests.last.$3.completeError(OfflineException());
       await tester.pump();
       expect(_episodeIds(tester), [101, 107, 113, 119]);
+      expect(find.text(app.strings.foundInDescription), findsNothing);
+      await _expectBelowResults(app, app.strings.descriptionSearchFailed);
     } finally {
       await app.finish();
     }
@@ -231,13 +239,15 @@ void main() {
               .every((id) => app.services.library.episode(id)!.podcastId != 4),
           isTrue,
         );
-        expect(find.text(app.strings.syncLoading), findsNothing);
         expect(api.globalRequests, isEmpty);
+        final first = _titledRow(app.episode(101));
+        final top = tester.getTopLeft(first).dy;
         await tester.pump(const Duration(milliseconds: 400));
         api.globalRequests.single.$2.completeError(OfflineException());
         await tester.pumpAndSettle();
-        expect(find.text(app.strings.syncLoading), findsNothing);
+        expect(tester.getTopLeft(first).dy, top);
         expect(_episodeIds(tester).take(3), [101, 203, 107]);
+        await _expectBelowResults(app, app.strings.descriptionSearchFailed);
       } finally {
         await app.finish();
       }
@@ -255,7 +265,7 @@ void main() {
         await tester.enterText(field, 'no such episode');
         await tester.pump(const Duration(milliseconds: 400));
         expect(_episodeIds(tester), isEmpty);
-        expect(find.text(app.strings.syncLoading), findsOneWidget);
+        expect(find.text(app.strings.searchingDescriptions), findsOneWidget);
         api.globalRequests.single.$2.complete(const []);
         await tester.pump();
         expect(find.text(app.strings.noMatchingEpisodes), findsOneWidget);
@@ -271,6 +281,8 @@ void main() {
         final matched = _episodeIds(tester);
         expect(matched.take(3), [101, 203, 406]);
         expect(matched.skipWhile((id) => id != 201), [201, 104]);
+        expect(find.text(app.strings.searchingDescriptions), findsNothing);
+        await _expectDescriptionHeadingAbove(app, app.episode(201));
 
         final title = app.services.library.podcast(1)!.title;
         await app.tap(_titledRow(title));
@@ -325,6 +337,78 @@ void main() {
       }
     },
   );
+
+  testWidgets(
+    'global search explains what it searches and hands the text to Apple Podcasts',
+    (tester) async {
+      final (app, api) = await _openHarness(tester);
+      final l = app.strings;
+      final field = find.byType(TextField);
+      final apple = find.widgetWithText(EinkRow, l.searchApplePodcasts);
+      try {
+        await app.section(LibrarySection.search);
+        expect(find.text(l.searchScope), findsOneWidget);
+        expect(apple, findsOneWidget);
+
+        await tester.enterText(field, '  Papírová letadla ');
+        await tester.pump(const Duration(milliseconds: 400));
+        api.globalRequests.single.$2.complete(const []);
+        await tester.pumpAndSettle();
+        expect(find.text(l.searchScope), findsNothing);
+        expect(find.text(l.noMatchingEpisodes), findsOneWidget);
+        await app.tap(apple);
+        expect(find.byType(AddPodcastPage), findsOneWidget);
+        expect(api.directoryQueries, ['Papírová letadla']);
+        expect(
+          tester.widget<TextField>(field.first).controller!.text,
+          'Papírová letadla',
+        );
+        expect(_titledRow('Papírová letadla'), findsOneWidget);
+
+        await app.back();
+        expect(find.byType(AddPodcastPage), findsNothing);
+        expect(
+          tester.widget<TextField>(field).controller!.text,
+          '  Papírová letadla ',
+        );
+        await app.back();
+        await app.section(LibrarySection.podcasts);
+        await app.row(l.addPodcast);
+        expect(tester.widget<TextField>(field.first).controller!.text, isEmpty);
+        expect(api.directoryQueries, hasLength(1));
+      } finally {
+        await app.finish();
+      }
+    },
+  );
+
+  testWidgets('a new query replaces the Apple Podcasts search on Linux', (
+    tester,
+  ) async {
+    final (app, api) = await _openHarness(tester, desktopFont: font);
+    final l = app.strings;
+    final apple = find.widgetWithText(EinkRow, l.searchApplePodcasts);
+    final search = find.descendant(
+      of: find.byType(PodcastSearchField),
+      matching: find.byType(TextField),
+    );
+    try {
+      await app.section(LibrarySection.search);
+      await tester.enterText(search, 'vlak');
+      await tester.pump();
+      await app.tap(apple, within: find.byType(EpisodeList));
+      await tester.enterText(search, 'noční vlak');
+      await tester.pump();
+      await app.tap(apple, within: find.byType(EpisodeList));
+      expect(find.byType(AddPodcastPage), findsOneWidget);
+      expect(api.directoryQueries, ['vlak', 'noční vlak']);
+      await app.back();
+      expect(find.byType(AddPodcastPage), findsNothing);
+      expect(tester.widget<TextField>(search).controller!.text, 'noční vlak');
+    } finally {
+      await app.finish();
+    }
+  });
 
   testWidgets(
     'Escape closes global search and restores the previous list on Linux',
@@ -397,6 +481,36 @@ Finder _titledRow(String title) => find.byWidgetPredicate(
   (widget) => widget is EinkRow && widget.title == title,
 );
 
+Future<void> _expectDescriptionHeadingAbove(UiHarness app, String title) =>
+    _expectBelowResults(app, app.strings.foundInDescription, (heading) {
+      expect(
+        find.descendant(
+          of: find.ancestor(of: heading, matching: find.byType(Column)).first,
+          matching: _titledRow(title),
+        ),
+        findsOneWidget,
+      );
+    });
+
+Future<void> _expectBelowResults(
+  UiHarness app,
+  String text, [
+  void Function(Finder found)? check,
+]) async {
+  final found = find.text(text);
+  final list = find.byType(EpisodeList);
+  await app.scrollTo(found, list);
+  expect(found, findsOneWidget);
+  check?.call(found);
+  app.tester
+      .state<ScrollableState>(
+        find.descendant(of: list, matching: find.byType(Scrollable)).first,
+      )
+      .position
+      .jumpTo(0);
+  await app.tester.pumpAndSettle();
+}
+
 List<int> _episodeIds(WidgetTester tester) => [
   for (final episode
       in tester.widget<EpisodeList>(find.byType(EpisodeList)).episodes)
@@ -408,6 +522,16 @@ class _SearchApi extends DemoApiClient {
 
   final requests = <(int, String, Completer<List<int>>)>[];
   final globalRequests = <(String, Completer<List<int>>)>[];
+  final directoryQueries = <String>[];
+
+  @override
+  Future<List<DirectoryPodcast>> searchDirectory(
+    String query, {
+    Duration? timeout,
+  }) {
+    directoryQueries.add(query);
+    return super.searchDirectory(query, timeout: timeout);
+  }
 
   @override
   Future<List<int>> searchPodcast(

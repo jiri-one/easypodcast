@@ -80,6 +80,7 @@ class _LibraryHomeState extends State<_LibraryHome> {
   final _scrollPositions = PageStorageBucket();
   int? _searchPodcastId;
   final _searchTitles = <String, String>{};
+  String _directoryQuery = '';
 
   LibrarySection _section = LibrarySection.inProgress;
   LibrarySection _searchOrigin = LibrarySection.inProgress;
@@ -209,6 +210,13 @@ class _LibraryHomeState extends State<_LibraryHome> {
     ));
   });
 
+  void _openAddPodcast(String query) => setState(() {
+    _directoryQuery = query;
+    if (_pages.lastOrNull?.screen != _Screen.add) {
+      _pages.add((screen: _Screen.add, id: null));
+    }
+  });
+
   void _openPodcastSearch(int podcastId) {
     setState(() => _searchPodcastId = podcastId);
     _podcastSearch.focus.requestFocus();
@@ -237,11 +245,12 @@ class _LibraryHomeState extends State<_LibraryHome> {
 
   // Title matches come first, so a full page leaves no room for the server's
   // description matches.
-  Future<List<int>> _searchAll(String query) => _globalEpisodes().length < 100
+  Future<List<int>> _searchAll(String query) =>
+      _globalEpisodes().episodes.length < 100
       ? widget.services.api.searchAll(query)
       : Future.value(const []);
 
-  List<Episode> _globalEpisodes() {
+  EpisodeMatches _globalEpisodes() {
     final library = widget.services.library;
     return matchLibraryEpisodes(
       library.podcasts.expand((podcast) => library.episodesOf(podcast.id)),
@@ -251,7 +260,7 @@ class _LibraryHomeState extends State<_LibraryHome> {
     );
   }
 
-  List<Episode> _podcastEpisodes(int id) {
+  EpisodeMatches _podcastEpisodes(int id) {
     final episodes = widget.services.library.episodesOf(id);
     return _searchPodcastId == id
         ? matchPodcastEpisodes(
@@ -259,13 +268,15 @@ class _LibraryHomeState extends State<_LibraryHome> {
             _podcastSearch.words,
             _podcastSearch.matches,
           )
-        : episodes;
+        : (episodes: episodes, titleMatches: episodes.length);
   }
 
   List<Episode> _activeEpisodeList() {
     if (_settingsPage != null) return const [];
     final podcast = _podcastPage;
-    return podcast == null ? _sectionEpisodes() : _podcastEpisodes(podcast.id!);
+    return podcast == null
+        ? _sectionEpisodes()
+        : _podcastEpisodes(podcast.id!).episodes;
   }
 
   List<Episode> _sectionEpisodes() {
@@ -274,7 +285,7 @@ class _LibraryHomeState extends State<_LibraryHome> {
       LibrarySection.inProgress => library.inProgress,
       LibrarySection.queue => library.projectedQueue,
       LibrarySection.newEpisodes => _recentNewEpisodes(),
-      LibrarySection.search => _globalEpisodes(),
+      LibrarySection.search => _globalEpisodes().episodes,
       _ => const [],
     };
   }
@@ -715,7 +726,7 @@ class _LibraryHomeState extends State<_LibraryHome> {
         playback: _playback,
         onOpen: _openPodcast,
         onMenu: _openPodcastMenu,
-        onAdd: () => _open(_Screen.add),
+        onAdd: () => _openAddPodcast(''),
         desktop: desktop,
       ),
       LibrarySection.search => _searchBody(context, desktop: desktop),
@@ -739,12 +750,20 @@ class _LibraryHomeState extends State<_LibraryHome> {
     final strings = context.strings;
     final words = _globalSearch.words;
     final library = widget.services.library;
-    final episodes = _globalEpisodes();
+    final results = _globalEpisodes();
+    final status = _globalSearch.descriptionStatus(strings);
     final podcasts = [
       if (words.isNotEmpty)
         for (final podcast in library.podcasts)
           if (podcastTitleMatches(podcast.title, words)) podcast,
     ];
+    final directory = EinkRow(
+      title: strings.searchApplePodcasts,
+      leading: const Icon(Icons.search),
+      underlined: true,
+      compact: true,
+      onPressed: () => _openAddPodcast(_globalSearch.text.text.trim()),
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -754,33 +773,42 @@ class _LibraryHomeState extends State<_LibraryHome> {
           onChanged: (input) => _globalSearch.change(input, _searchAll),
           onClose: () => setState(_closeGlobalSearch),
         ),
-        if (words.isNotEmpty)
-          Expanded(
-            // A new query starts at the top; Back from a result keeps its place.
-            child: EpisodeList(
-              key: PageStorageKey(('search', words.join(' '))),
-              kind: EpisodeListKind.search,
-              episodes: episodes,
-              playback: _playback,
-              onOpen: _openEpisode,
-              onMenu: _openEpisodeMenu,
-              desktop: desktop,
-              selectedId: _selectedEpisodeId,
-              emptyMessage: _globalSearch.loading ? strings.syncLoading : null,
-              headerSlivers: [
-                if (podcasts.isNotEmpty) ...[
-                  SliverToBoxAdapter(child: listHeading(strings.podcasts)),
-                  PodcastList.rows(
-                    podcasts,
-                    onOpen: _openPodcast,
-                    onMenu: _openPodcastMenu,
-                    desktop: desktop,
-                  ),
-                ],
-                SliverToBoxAdapter(child: listHeading(strings.episodes)),
-              ],
-            ),
-          ),
+        Expanded(
+          child: words.isEmpty
+              ? PageList(
+                  children: [PageMessage(strings.searchScope), directory],
+                )
+              // A new query starts at the top; Back from a result keeps its place.
+              : EpisodeList(
+                  key: PageStorageKey(('search', words.join(' '))),
+                  kind: EpisodeListKind.search,
+                  episodes: results.episodes,
+                  descriptionMatchesFrom: results.titleMatches,
+                  playback: _playback,
+                  onOpen: _openEpisode,
+                  onMenu: _openEpisodeMenu,
+                  desktop: desktop,
+                  selectedId: _selectedEpisodeId,
+                  emptyMessage: status,
+                  footer: [
+                    if (status != null && results.episodes.isNotEmpty)
+                      PageMessage(status),
+                    directory,
+                  ],
+                  headerSlivers: [
+                    if (podcasts.isNotEmpty) ...[
+                      SliverToBoxAdapter(child: listHeading(strings.podcasts)),
+                      PodcastList.rows(
+                        podcasts,
+                        onOpen: _openPodcast,
+                        onMenu: _openPodcastMenu,
+                        desktop: desktop,
+                      ),
+                    ],
+                    SliverToBoxAdapter(child: listHeading(strings.episodes)),
+                  ],
+                ),
+        ),
       ],
     );
   }
@@ -791,10 +819,13 @@ class _LibraryHomeState extends State<_LibraryHome> {
     final strings = context.strings;
     if (podcast == null) return PageMessage(strings.podcastMissing);
     final searching = _searchPodcastId == id;
+    final results = _podcastEpisodes(id);
+    final status = searching ? _podcastSearch.descriptionStatus(strings) : null;
     return EpisodeList(
       key: PageStorageKey(('podcast', id)),
       kind: EpisodeListKind.podcast,
-      episodes: _podcastEpisodes(id),
+      episodes: results.episodes,
+      descriptionMatchesFrom: results.titleMatches,
       playback: _playback,
       onOpen: _openEpisode,
       onMenu: _openEpisodeMenu,
@@ -804,15 +835,16 @@ class _LibraryHomeState extends State<_LibraryHome> {
       desktop: desktop,
       selectedId: _selectedEpisodeId,
       emptyMessage: searching && _podcastSearch.words.isNotEmpty
-          ? (_podcastSearch.loading
-                ? strings.syncLoading
-                : strings.noMatchingEpisodes)
+          ? status ?? strings.noMatchingEpisodes
           : null,
+      footer: [
+        if (status != null && results.episodes.isNotEmpty) PageMessage(status),
+      ],
       actions: [
         if (searching)
           PodcastSearchField(
             search: _podcastSearch,
-            hint: strings.searchThisPodcast,
+            hint: strings.searchThisPodcastHint,
             onChanged: (input) => _podcastSearch.change(
               input,
               (query) => widget.services.api.searchPodcast(id, query),
@@ -870,7 +902,12 @@ class _LibraryHomeState extends State<_LibraryHome> {
           sleepAvailable: !_linux,
         );
       case _Screen.add:
-        return AddPodcastPage(services: services, onAdded: _openPodcast);
+        return AddPodcastPage(
+          key: ValueKey(_directoryQuery),
+          services: services,
+          onAdded: _openPodcast,
+          query: _directoryQuery,
+        );
       case _Screen.settings:
         return _settingsBody();
       case _Screen.server:

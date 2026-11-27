@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import '../core/models.dart';
 
 final _whitespace = RegExp(r'\p{White_Space}+', unicode: true);
@@ -11,12 +13,14 @@ List<String> podcastSearchWords(String query) => [
 bool podcastTitleMatches(String title, List<String> words) =>
     words.every(_fold(title).contains);
 
-List<Episode> matchPodcastEpisodes(
+typedef EpisodeMatches = ({List<Episode> episodes, int titleMatches});
+
+EpisodeMatches matchPodcastEpisodes(
   List<Episode> episodes,
   List<String> words,
   Set<int> descriptionMatches,
 ) {
-  if (words.isEmpty) return episodes;
+  if (words.isEmpty) return (episodes: episodes, titleMatches: episodes.length);
   final titles = <Episode>[];
   final descriptions = <Episode>[];
   for (final episode in episodes) {
@@ -27,16 +31,16 @@ List<Episode> matchPodcastEpisodes(
       descriptions.add(episode);
     }
   }
-  return [...titles, ...descriptions];
+  return (episodes: [...titles, ...descriptions], titleMatches: titles.length);
 }
 
-List<Episode> matchLibraryEpisodes(
+EpisodeMatches matchLibraryEpisodes(
   Iterable<Episode> episodes,
   List<String> words,
   Set<int> descriptionMatches,
   Map<String, String> foldedTitles,
 ) {
-  if (words.isEmpty) return const [];
+  if (words.isEmpty) return (episodes: const [], titleMatches: 0);
   final titles = <Episode>[];
   final descriptions = <Episode>[];
   for (final episode in episodes) {
@@ -50,10 +54,13 @@ List<Episode> matchLibraryEpisodes(
   }
   // Description matches arrive later; adding them below keeps the rows
   // already drawn on e-ink in place.
-  return [
-    ...(titles..sort(_comparePublication)),
-    ...(descriptions..sort(_comparePublication)),
-  ].take(100).toList();
+  return (
+    episodes: [
+      ...(titles..sort(_comparePublication)),
+      ...(descriptions..sort(_comparePublication)),
+    ].take(100).toList(),
+    titleMatches: math.min(titles.length, 100),
+  );
 }
 
 int _comparePublication(Episode a, Episode b) {
