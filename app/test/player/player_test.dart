@@ -1026,6 +1026,18 @@ void main() {
       final podcasts = await handler.getChildren('podcasts');
       expect(podcasts.single.artUri, Uri.parse('content://covers/podcast-1'));
 
+      library.change(
+        2,
+        position: const Duration(seconds: 90),
+        duration: const Duration(seconds: 180),
+      );
+      final measured = (await handler.getChildren('in-progress')).first;
+      expect(measured.duration, const Duration(seconds: 180));
+      expect(measured.extras, {
+        'android.media.extra.PLAYBACK_STATUS': 1,
+        'androidx.media.MediaItem.Extras.COMPLETION_PERCENTAGE': 0.5,
+      });
+
       await handler.play();
       expect(handler.mediaItem.value?.extras, isNull);
     },
@@ -1047,6 +1059,9 @@ void main() {
     car.value = true;
     expect(labels(), ['Skip back', 'Pause', 'Skip forward']);
     await handler.pause();
+    expect(labels(), ['Skip back', 'Play', 'Skip forward']);
+    engine.onLoad = () => throw Exception('offline');
+    await expectLater(player.play(2), throwsException);
     expect(labels(), ['Skip back', 'Play', 'Skip forward']);
   });
 
@@ -1659,11 +1674,13 @@ class _Library extends Library {
   void change(
     int id, {
     Duration position = Duration.zero,
+    Duration? duration,
     EpisodeStatus status = EpisodeStatus.none,
   }) {
     _states[id] = EpisodeState(
       episodeId: id,
       positionMs: position.inMilliseconds,
+      durationMs: duration?.inMilliseconds,
       status: status,
       updatedAt: DateTime.utc(2026).add(Duration(milliseconds: _revision++)),
     );
