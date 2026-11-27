@@ -84,7 +84,7 @@ class _LibraryHomeState extends State<_LibraryHome> {
   LibrarySection _section = LibrarySection.inProgress;
   LibrarySection _searchOrigin = LibrarySection.inProgress;
   bool _menuOpen = false;
-  bool _episodeMenuOpen = false;
+  bool _rowMenuOpen = false;
   bool get _linux => !kIsWeb && defaultTargetPlatform == TargetPlatform.linux;
   bool get _wide => _linux && MediaQuery.sizeOf(context).width >= 760;
   bool get _atHome =>
@@ -158,8 +158,8 @@ class _LibraryHomeState extends State<_LibraryHome> {
   }
 
   Future<void> _openEpisodeMenu(Episode episode) async {
-    if (_episodeMenuOpen) return;
-    _episodeMenuOpen = true;
+    if (_rowMenuOpen) return;
+    _rowMenuOpen = true;
     try {
       await EpisodeActions(episode: episode, playback: _playback).showMenu(
         context,
@@ -175,7 +175,17 @@ class _LibraryHomeState extends State<_LibraryHome> {
         builder: (_) => EinkDialogPanel(title: actionError(context, error)),
       );
     } finally {
-      _episodeMenuOpen = false;
+      _rowMenuOpen = false;
+    }
+  }
+
+  Future<void> _openPodcastMenu(Podcast podcast) async {
+    if (_rowMenuOpen) return;
+    _rowMenuOpen = true;
+    try {
+      await showPodcastMenu(context, widget.services.library, podcast);
+    } finally {
+      _rowMenuOpen = false;
     }
   }
 
@@ -669,6 +679,7 @@ class _LibraryHomeState extends State<_LibraryHome> {
       LibrarySection.podcasts => PodcastList(
         playback: _playback,
         onOpen: _openPodcast,
+        onMenu: _openPodcastMenu,
         onAdd: () => _open(_Screen.add),
         desktop: desktop,
       ),
@@ -727,6 +738,7 @@ class _LibraryHomeState extends State<_LibraryHome> {
                   PodcastList.rows(
                     podcasts,
                     onOpen: _openPodcast,
+                    onMenu: _openPodcastMenu,
                     desktop: desktop,
                   ),
                 ],

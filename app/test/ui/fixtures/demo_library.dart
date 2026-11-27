@@ -22,6 +22,8 @@ class DemoLibrary extends Library {
   final _finished = StreamController<int>.broadcast();
   QueueState _queue;
   int? playingEpisodeId;
+  Future<void> Function(int podcastId)? beforeUnsubscribe;
+  Future<void> Function(int podcastId, bool show)? beforeShowInNewEpisodes;
 
   List<Podcast> get allPodcasts =>
       List.unmodifiable(_podcasts.values.map(_podcastWith));
@@ -159,6 +161,7 @@ class DemoLibrary extends Library {
 
   @override
   Future<void> unsubscribe(int podcastId) async {
+    if (beforeUnsubscribe case final request?) await request(podcastId);
     final show = _podcasts[podcastId];
     if (show == null || !show.subscribed) return;
     _podcasts[podcastId] = _podcastWith(show, subscribed: false);
@@ -167,6 +170,9 @@ class DemoLibrary extends Library {
 
   @override
   Future<void> setShowInNewEpisodes(int podcastId, bool show) async {
+    if (beforeShowInNewEpisodes case final request?) {
+      await request(podcastId, show);
+    }
     _podcasts[podcastId] = _podcasts[podcastId]!.copyWith(
       showInNewEpisodes: show,
     );

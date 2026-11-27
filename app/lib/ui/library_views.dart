@@ -90,6 +90,28 @@ class EpisodeRowKey extends GlobalObjectKey {
   const EpisodeRowKey(super.value);
 }
 
+Widget _withRowMenu({
+  required VoidCallback onMenu,
+  required String hint,
+  required Widget child,
+  bool holdToOpen = true,
+}) => CallbackShortcuts(
+  bindings: {
+    const SingleActivator(LogicalKeyboardKey.f10, shift: true): onMenu,
+    const SingleActivator(LogicalKeyboardKey.contextMenu): onMenu,
+  },
+  child: Semantics(
+    onLongPress: onMenu,
+    onLongPressHint: hint,
+    child: GestureDetector(
+      excludeFromSemantics: true,
+      onLongPress: holdToOpen ? onMenu : null,
+      onSecondaryTap: onMenu,
+      child: child,
+    ),
+  ),
+);
+
 class EpisodeList extends StatelessWidget {
   const EpisodeList({
     super.key,
@@ -295,22 +317,11 @@ class EpisodeList extends StatelessWidget {
             rowError(strings.stateDownloadFailed),
         ],
       );
-      void showMenu() => onMenu(episode);
-      return CallbackShortcuts(
-        bindings: {
-          const SingleActivator(LogicalKeyboardKey.f10, shift: true): showMenu,
-          const SingleActivator(LogicalKeyboardKey.contextMenu): showMenu,
-        },
-        child: Semantics(
-          onLongPress: showMenu,
-          onLongPressHint: strings.episodeActions,
-          child: GestureDetector(
-            excludeFromSemantics: true,
-            onLongPress: kind == EpisodeListKind.queue ? null : showMenu,
-            onSecondaryTap: showMenu,
-            child: content,
-          ),
-        ),
+      return _withRowMenu(
+        onMenu: () => onMenu(episode),
+        hint: strings.episodeActions,
+        holdToOpen: kind != EpisodeListKind.queue,
+        child: content,
       );
     }
 
@@ -499,12 +510,14 @@ class PodcastList extends StatelessWidget {
     super.key,
     required this.playback,
     required this.onOpen,
+    required this.onMenu,
     required this.onAdd,
     this.desktop = false,
   });
 
   final PlaybackActions playback;
   final ValueChanged<Podcast> onOpen;
+  final ValueChanged<Podcast> onMenu;
   final VoidCallback onAdd;
   final bool desktop;
 
@@ -538,7 +551,7 @@ class PodcastList extends StatelessWidget {
                   : strings.podcastsEmpty,
             ),
           ),
-        rows(sorted, onOpen: onOpen, desktop: desktop),
+        rows(sorted, onOpen: onOpen, onMenu: onMenu, desktop: desktop),
       ],
     );
   }
@@ -546,24 +559,32 @@ class PodcastList extends StatelessWidget {
   static Widget rows(
     List<Podcast> podcasts, {
     required ValueChanged<Podcast> onOpen,
+    required ValueChanged<Podcast> onMenu,
     required bool desktop,
   }) => SliverList.builder(
     itemCount: podcasts.length,
     itemBuilder: (context, index) {
       final podcast = podcasts[index];
       final strings = context.strings;
-      return EinkRow(
-        key: ValueKey(podcast.id),
-        title: podcast.title,
-        leading: PodcastThumbnail(podcast.imageUrl),
-        topAligned: true,
-        desktop: desktop,
-        onPressed: () => onOpen(podcast),
-        details: [
-          Text(strings.playedCount(podcast.playedCount), style: metadataStyle),
-          if (podcast.lastError?.isNotEmpty ?? false)
-            rowError(strings.feedUnavailable),
-        ],
+      return _withRowMenu(
+        onMenu: () => onMenu(podcast),
+        hint: strings.podcastActions,
+        child: EinkRow(
+          key: ValueKey(podcast.id),
+          title: podcast.title,
+          leading: PodcastThumbnail(podcast.imageUrl),
+          topAligned: true,
+          desktop: desktop,
+          onPressed: () => onOpen(podcast),
+          details: [
+            Text(
+              strings.playedCount(podcast.playedCount),
+              style: metadataStyle,
+            ),
+            if (podcast.lastError?.isNotEmpty ?? false)
+              rowError(strings.feedUnavailable),
+          ],
+        ),
       );
     },
   );

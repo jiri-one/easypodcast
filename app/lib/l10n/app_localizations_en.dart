@@ -182,6 +182,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get episodeActions => 'Episode actions';
 
   @override
+  String get podcastActions => 'Podcast actions';
+
+  @override
   String get addToQueue => 'Add to queue';
 
   @override

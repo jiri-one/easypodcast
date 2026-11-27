@@ -2,6 +2,7 @@ import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../core/api.dart';
+import '../core/library.dart';
 import '../core/models.dart';
 import '../core/services.dart';
 import 'eink_widgets.dart';
@@ -377,7 +378,7 @@ class _ServerPageState extends State<ServerPage> {
   }
 }
 
-class AboutPodcastPage extends StatefulWidget {
+class AboutPodcastPage extends StatelessWidget {
   const AboutPodcastPage({
     super.key,
     required this.services,
@@ -388,14 +389,76 @@ class AboutPodcastPage extends StatefulWidget {
   final Podcast podcast;
 
   @override
-  State<AboutPodcastPage> createState() => _AboutPodcastPageState();
+  Widget build(BuildContext context) => _PodcastSubscription(
+    library: services.library,
+    podcast: podcast,
+    aboutDetails: [
+      Text(podcast.title, style: headingStyle),
+      if (podcast.author.isNotEmpty) Text(podcast.author, style: detailStyle),
+      if (podcast.description.isNotEmpty) ...[
+        const SizedBox(height: 12),
+        PlainLinks(podcast.description, style: buttonLabelStyle),
+      ],
+      const SizedBox(height: 12),
+      Text(context.strings.feedAddress, style: buttonLabelStyle),
+      PlainLinks(podcast.feedUrl),
+      const SizedBox(height: 8),
+      FeedStatusText(podcast),
+    ],
+  );
 }
 
-class _AboutPodcastPageState extends State<AboutPodcastPage>
+Future<void> showPodcastMenu(
+  BuildContext context,
+  Library library,
+  Podcast podcast,
+) async {
+  final id = podcast.id;
+  if (library.podcast(id)?.subscribed != true) return;
+  await showEinkDialog<void>(
+    context: context,
+    barrierDismissible: false,
+    builder: (context) => ListenableBuilder(
+      listenable: library,
+      builder: (context, _) {
+        final current = library.podcast(id);
+        if (current != null && current.subscribed) {
+          return _PodcastSubscription(library: library, podcast: current);
+        }
+        final route = ModalRoute.of(context)!;
+        // Wait for any confirmation above the menu to close.
+        if (route.isCurrent) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (route.isCurrent && library.podcast(id)?.subscribed != true) {
+              route.navigator!.pop();
+            }
+          });
+        }
+        return EinkDialogPanel(title: current?.title ?? podcast.title);
+      },
+    ),
+  );
+}
+
+class _PodcastSubscription extends StatefulWidget {
+  const _PodcastSubscription({
+    required this.library,
+    required this.podcast,
+    this.aboutDetails,
+  });
+
+  final Library library;
+  final Podcast podcast;
+  final List<Widget>? aboutDetails;
+
+  @override
+  State<_PodcastSubscription> createState() => _PodcastSubscriptionState();
+}
+
+class _PodcastSubscriptionState extends State<_PodcastSubscription>
     with ActionTapGuard {
   String? _error;
   bool? _subscribing;
-  // The switch shows the requested value until the server answers.
   bool? _requestedShow;
 
   Future<void> _toggleShowInNewEpisodes() => guardAction(() async {
@@ -406,7 +469,7 @@ class _AboutPodcastPageState extends State<AboutPodcastPage>
       _requestedShow = show;
     });
     try {
-      await widget.services.library.setShowInNewEpisodes(podcast.id, show);
+      await widget.library.setShowInNewEpisodes(podcast.id, show);
     } on Exception catch (error) {
       if (mounted) _error = actionError(context, error);
     } finally {
@@ -416,6 +479,7 @@ class _AboutPodcastPageState extends State<AboutPodcastPage>
 
   Future<void> _changeSubscription() => guardAction(() async {
     final podcast = widget.podcast;
+    final library = widget.library;
     final strings = context.strings;
     if (_error != null) setState(() => _error = null);
     try {
@@ -427,11 +491,15 @@ class _AboutPodcastPageState extends State<AboutPodcastPage>
           action: strings.unsubscribe,
         );
         if (!confirmed || !mounted) return;
+        if (widget.aboutDetails == null &&
+            library.podcast(podcast.id)?.subscribed != true) {
+          return;
+        }
         setState(() => _subscribing = false);
-        await widget.services.library.unsubscribe(podcast.id);
+        await library.unsubscribe(podcast.id);
       } else {
         setState(() => _subscribing = true);
-        await widget.services.library.subscribe(podcast.feedUrl);
+        await library.subscribe(podcast.feedUrl);
       }
     } on Exception catch (error) {
       if (mounted) _error = actionError(context, error);
@@ -444,58 +512,52 @@ class _AboutPodcastPageState extends State<AboutPodcastPage>
   Widget build(BuildContext context) {
     final strings = context.strings;
     final podcast = widget.podcast;
-    return PageList(
-      children: [
+    final aboutDetails = widget.aboutDetails;
+    final button = EinkButton(
+      switch (_subscribing) {
+        true => strings.addingPodcast,
+        false => strings.unsubscribing,
+        null => podcast.subscribed ? strings.unsubscribe : strings.resubscribe,
+      },
+      onPressed: _changeSubscription,
+      alternatives: [
+        strings.unsubscribe,
+        strings.unsubscribing,
+        strings.resubscribe,
+        strings.addingPodcast,
+      ],
+    );
+    final children = [
+      if (aboutDetails == null)
+        button
+      else
         Padding(
           padding: const EdgeInsets.all(12),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(podcast.title, style: headingStyle),
-              if (podcast.author.isNotEmpty)
-                Text(podcast.author, style: detailStyle),
-              if (podcast.description.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                PlainLinks(podcast.description, style: buttonLabelStyle),
-              ],
-              const SizedBox(height: 12),
-              Text(strings.feedAddress, style: buttonLabelStyle),
-              PlainLinks(podcast.feedUrl),
-              const SizedBox(height: 8),
-              FeedStatusText(podcast),
-              const SizedBox(height: 16),
-              EinkButton(
-                switch (_subscribing) {
-                  true => strings.addingPodcast,
-                  false => strings.unsubscribing,
-                  null =>
-                    podcast.subscribed
-                        ? strings.unsubscribe
-                        : strings.resubscribe,
-                },
-                onPressed: _changeSubscription,
-                alternatives: [
-                  strings.unsubscribe,
-                  strings.unsubscribing,
-                  strings.resubscribe,
-                  strings.addingPodcast,
-                ],
-              ),
-            ],
+            children: [...aboutDetails, const SizedBox(height: 16), button],
           ),
         ),
-        if (podcast.subscribed) ...[
+      if (podcast.subscribed) ...[
+        if (aboutDetails == null)
+          const SizedBox(height: 6)
+        else
           const Divider(height: 1),
-          _ToggleRow(
-            title: strings.showInNewEpisodes,
-            value: _requestedShow ?? podcast.showInNewEpisodes,
-            onPressed: _toggleShowInNewEpisodes,
-          ),
-        ] else
-          PageMessage(strings.notSubscribed),
-        if (_error case final error?) EinkError(error, inset: true),
+        _ToggleRow(
+          title: strings.showInNewEpisodes,
+          value: _requestedShow ?? podcast.showInNewEpisodes,
+          onPressed: _toggleShowInNewEpisodes,
+        ),
+      ] else
+        PageMessage(strings.notSubscribed),
+      if (_error case final error?) ...[
+        if (aboutDetails == null) const SizedBox(height: 6),
+        EinkError(error, inset: aboutDetails != null),
       ],
-    );
+    ];
+    return aboutDetails == null
+        ? EinkDialogPanel(title: podcast.title, children: children)
+        : PageList(children: children);
   }
 }
 

@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'package:easypodcast/core/api.dart';
 import 'package:easypodcast/core/downloads.dart';
 import 'package:easypodcast/core/services.dart';
 import 'package:easypodcast/l10n/app_localizations.dart';
@@ -391,7 +392,22 @@ Future<void> tourPhone(UiHarness app, VisitScreen visit) async {
 
   await app.section(LibrarySection.podcasts);
   await visit('10-podcasts');
-  await app.row(l.addPodcast);
+  final library = app.services.library as DemoLibrary;
+  await app.holdRow(library.podcasts.first.title);
+  await visit('32-podcast-menu');
+  await app.dialog(l.unsubscribe);
+  await visit('33-podcast-menu-unsubscribe');
+  await app.dialog(l.cancel);
+  library.beforeShowInNewEpisodes = (_, _) async => throw OfflineException();
+  try {
+    await app.dialog(l.showInNewEpisodes);
+    expect(find.text(l.actionFailed), findsOneWidget);
+    await visit('34-podcast-menu-error');
+  } finally {
+    library.beforeShowInNewEpisodes = null;
+  }
+  await app.dialog(l.close);
+  await app.scrollToRow(l.addPodcast, find.byType(PodcastList), delta: -150);
   await visit('19-add-podcast');
   await app.tester.enterText(find.byType(TextField).first, 'noční vlak');
   await app.tap(find.widgetWithText(EinkButton, l.search));

@@ -91,6 +91,8 @@ Aplikace se do telefonů instalují mimo Google Play, takže Android Auto vyžad
   „Zobrazovat v Nových dílech“ na stránce „O podcastu“ lze jednotlivý podcast ze seznamu skrýt.
   Volba je uložená na serveru u odběru, takže platí na všech zařízeních, a stejně jako odběr se
   mění jen online.
+  Podržením podcastu v seznamu (na PC kliknutím pravým tlačítkem) se zobrazí stejné volby
+  „Zrušit odběr“ a „Zobrazovat v Nových dílech“ jako na stránce „O podcastu“.
 
 ### 4.2 Přehrávání
 

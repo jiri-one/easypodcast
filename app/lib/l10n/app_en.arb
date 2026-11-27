@@ -57,6 +57,7 @@
   "podcastMissing": "This podcast is no longer available.",
   "selectEpisode": "Select an episode from the list.",
   "episodeActions": "Episode actions",
+  "podcastActions": "Podcast actions",
   "addToQueue": "Add to queue",
   "removeFromQueue": "Remove from queue",
   "queueDragHint": "Hold an episode and drag it.",

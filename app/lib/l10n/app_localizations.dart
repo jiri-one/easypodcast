@@ -429,6 +429,12 @@ abstract class AppLocalizations {
   /// **'Episode actions'**
   String get episodeActions;
 
+  /// No description provided for @podcastActions.
+  ///
+  /// In en, this message translates to:
+  /// **'Podcast actions'**
+  String get podcastActions;
+
   /// No description provided for @addToQueue.
   ///
   /// In en, this message translates to:

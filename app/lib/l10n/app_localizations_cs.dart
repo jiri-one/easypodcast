@@ -182,6 +182,9 @@ class AppLocalizationsCs extends AppLocalizations {
   String get episodeActions => 'Akce dílu';
 
   @override
+  String get podcastActions => 'Akce podcastu';
+
+  @override
   String get addToQueue => 'Přidat do fronty';
 
   @override

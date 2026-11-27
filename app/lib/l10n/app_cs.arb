@@ -55,6 +55,7 @@
   "podcastMissing": "Tento podcast už není k dispozici.",
   "selectEpisode": "Vyber díl v seznamu.",
   "episodeActions": "Akce dílu",
+  "podcastActions": "Akce podcastu",
   "addToQueue": "Přidat do fronty",
   "removeFromQueue": "Odebrat z fronty",
   "queueDragHint": "Podrž díl a přetáhni ho.",
