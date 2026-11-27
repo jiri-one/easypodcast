@@ -417,6 +417,44 @@ void main() {
     }
   });
 
+  testWidgets('opening a podcast closes every Add page on Linux', (
+    tester,
+  ) async {
+    final (app, _, _) = await _open(tester, desktopFont: font);
+    try {
+      await app.row(app.strings.addPodcast);
+      await app.row(app.services.library.podcasts.first.title);
+      expect(_page, findsNothing);
+      expect(find.byType(EpisodeList), findsOneWidget);
+    } finally {
+      await app.finish();
+    }
+  });
+
+  testWidgets('a playback error steps aside for the keyboard', (tester) async {
+    final (app, _, _) = await _open(tester);
+    final failed = app.services.library.episode(201)!;
+    final problem = find.text(
+      '${failed.title}\n${app.strings.playbackLoadFailed}',
+    );
+    try {
+      app.engine.loadError = StateError('Playback failed');
+      await expectLater(app.services.player.play(failed.id), throwsStateError);
+      await tester.pumpAndSettle();
+      expect(problem, findsOneWidget);
+      tester.view.viewInsets = const FakeViewPadding(bottom: 320);
+      await tester.pumpAndSettle();
+      expect(problem, findsNothing);
+      expect(find.byType(MiniPlayer), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      tester.view.resetViewInsets();
+      await tester.pumpAndSettle();
+      expect(problem, findsOneWidget);
+    } finally {
+      await app.finish();
+    }
+  });
+
   testWidgets('a podcast added under the player opens on Back', (tester) async {
     final (app, _, library) = await _open(tester);
     try {

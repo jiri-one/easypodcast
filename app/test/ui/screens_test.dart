@@ -108,13 +108,19 @@ void main() {
   testWidgets('the mini player stays usable on episode pages', (tester) async {
     final app = await _phone(tester, library: _LongDescriptionLibrary());
     final player = app.services.player;
+    final library = app.services.library;
     final page = find.byType(EpisodePage);
     final mini = find.byType(MiniPlayer);
     try {
       await app.mini(app.strings.play);
       expect(player.isPlaying, isTrue);
       expect(player.current?.id, 101);
-      await app.openEpisode(204);
+      await app.section(LibrarySection.podcasts);
+      await app.scrollToRow(
+        library.podcast(library.episode(204)!.podcastId)!.title,
+        find.byType(PodcastList),
+      );
+      await app.scrollToRow(app.episode(204), find.byType(EpisodeList));
       final bar = tester.getRect(mini);
       final description = find.byType(PlainLinks);
       await app.scrollTo(description, page);
@@ -165,6 +171,27 @@ void main() {
         find.widgetWithText(EinkHeader, app.strings.inProgress),
         findsOneWidget,
       );
+    } finally {
+      await app.finish();
+    }
+  });
+
+  testWidgets('a double tap on the mini player opens one player', (
+    tester,
+  ) async {
+    final app = await _phone(tester);
+    final title = find.descendant(
+      of: find.byType(MiniPlayer),
+      matching: find.text(app.episode(101)),
+    );
+    try {
+      await app.mini(app.strings.play);
+      await tester.tap(title);
+      await tester.tap(title);
+      await tester.pumpAndSettle();
+      expect(find.byType(PlayerPage), findsOneWidget);
+      await app.back();
+      expect(find.byType(PlayerPage), findsNothing);
     } finally {
       await app.finish();
     }

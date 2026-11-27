@@ -153,7 +153,7 @@ class _LibraryHomeState extends State<_LibraryHome> {
     // A page the player opened leads back to it, not to a second player.
     if (_pages.reversed.elementAtOrNull(1)?.screen == _Screen.player) {
       _back();
-    } else {
+    } else if (_pages.lastOrNull?.screen != _Screen.player) {
       _open(_Screen.player);
     }
   }
@@ -200,14 +200,13 @@ class _LibraryHomeState extends State<_LibraryHome> {
 
   void _openPodcast(Podcast podcast) => setState(() {
     _closePodcastSearch();
-    final _Page page = (screen: _Screen.podcast, id: podcast.id);
     // Keeps the player on top when an add finishes under it.
     final add = _pages.indexWhere((page) => page.screen == _Screen.add);
-    if (add < 0) {
-      _pages.add(page);
-    } else {
-      _pages[add] = page;
-    }
+    _pages.removeWhere((page) => page.screen == _Screen.add);
+    _pages.insert(add < 0 ? _pages.length : add, (
+      screen: _Screen.podcast,
+      id: podcast.id,
+    ));
   });
 
   void _openPodcastSearch(int podcastId) {
@@ -380,7 +379,12 @@ class _LibraryHomeState extends State<_LibraryHome> {
               ? _sectionBody(context)
               : _pageBody(context, page),
         ),
-        MiniPlayer(playback: _playback, onOpen: _openPlayer),
+        MiniPlayer(
+          playback: _playback,
+          onOpen: _openPlayer,
+          // With the keyboard up, an error box would leave the page no room.
+          showProblem: MediaQuery.viewInsetsOf(context).bottom == 0,
+        ),
       ],
     );
     final screen = Column(

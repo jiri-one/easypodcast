@@ -13,15 +13,22 @@ import 'playback_position.dart';
 import 'theme.dart';
 
 class MiniPlayer extends StatelessWidget {
-  const MiniPlayer({super.key, required this.playback, required this.onOpen});
+  const MiniPlayer({
+    super.key,
+    required this.playback,
+    required this.onOpen,
+    this.showProblem = true,
+  });
 
   final PlaybackActions playback;
   final VoidCallback onOpen;
+  final bool showProblem;
 
   @override
   Widget build(BuildContext context) {
+    final problem = showProblem ? PlaybackProblem(playback: playback) : null;
     final episode = playback.target;
-    if (episode == null) return PlaybackProblem(playback: playback);
+    if (episode == null) return problem ?? const SizedBox.shrink();
     final strings = context.strings;
     final playing = playback.playing(episode.id);
     final checking =
@@ -52,7 +59,7 @@ class MiniPlayer extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        PlaybackProblem(playback: playback),
+        ?problem,
         RepaintBoundary(
           child: Stack(
             children: [
