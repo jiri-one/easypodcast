@@ -426,7 +426,7 @@ abstract class AppLocalizations {
   /// No description provided for @searchThisPodcastHint.
   ///
   /// In en, this message translates to:
-  /// **'Episode title or description'**
+  /// **'Title or description'**
   String get searchThisPodcastHint;
 
   /// No description provided for @clearSearch.

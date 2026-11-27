@@ -159,7 +159,7 @@ class AppLocalizationsCs extends AppLocalizations {
 
   @override
   String get searchScope =>
-      'Prohledává jen tvé odběry: názvy podcastů a dílů a popisy dílů.';
+      'Prohledávám jen tvé odběry: názvy podcastů, názvy a popisy dílů.';
 
   @override
   String get searchApplePodcasts => 'Hledat v Apple Podcasts';
@@ -186,7 +186,7 @@ class AppLocalizationsCs extends AppLocalizations {
   String get clearSearch => 'Zrušit hledání';
 
   @override
-  String get noMatchingEpisodes => 'Žádné díly neodpovídají hledání.';
+  String get noMatchingEpisodes => 'Žádný díl nenalezen.';
 
   @override
   String get episodeMissing => 'Tento díl už není k dispozici.';

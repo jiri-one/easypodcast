@@ -42,7 +42,7 @@ class EpisodeSearch extends ChangeNotifier {
       var failed = false;
       try {
         matches = (await request(input.trim())).toSet();
-      } on Exception {
+      } on Object {
         failed = true;
       }
       if (identical(_words, words)) {

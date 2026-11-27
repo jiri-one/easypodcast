@@ -87,6 +87,10 @@ void main() {
             .hasFocus,
         isTrue,
       );
+      expect(
+        tester.widget<TextField>(field).decoration!.hintText,
+        l.searchThisPodcastHint,
+      );
       await tester.enterText(field, '  NADRAZI nocni ');
       await tester.pump();
       expect(_episodeIds(tester), [102, 108, 114, 120]);
@@ -95,6 +99,12 @@ void main() {
       await tester.pump();
       expect(_episodeIds(tester), [102, 108, 114, 120]);
       await _expectBelowResults(app, l.descriptionSearchFailed);
+      await tester.enterText(field, 'n');
+      await tester.pump();
+      expect(
+        tester.widget<EpisodeList>(find.byType(EpisodeList)).status,
+        isNull,
+      );
 
       await app.tap(find.byTooltip(l.clearSearch));
       expect(field, findsNothing);
@@ -184,6 +194,13 @@ void main() {
       await tester.pump();
       expect(_episodeIds(tester), [101, 107, 113, 119]);
       expect(find.text(app.strings.foundInDescription), findsNothing);
+      await _expectBelowResults(app, app.strings.descriptionSearchFailed);
+
+      await tester.enterText(field, 'nocni');
+      await tester.pump(const Duration(milliseconds: 400));
+      api.requests.last.$3.completeError(StateError('malformed answer'));
+      await tester.pump();
+      expect(_episodeIds(tester), [102, 108, 114, 120]);
       await _expectBelowResults(app, app.strings.descriptionSearchFailed);
     } finally {
       await app.finish();
@@ -348,7 +365,10 @@ void main() {
       try {
         await app.section(LibrarySection.search);
         expect(find.text(l.searchScope), findsOneWidget);
-        expect(apple, findsOneWidget);
+        await app.tap(apple);
+        expect(find.byType(AddPodcastPage), findsOneWidget);
+        expect(api.directoryQueries, isEmpty);
+        await app.back();
 
         await tester.enterText(field, '  Papírová letadla ');
         await tester.pump(const Duration(milliseconds: 400));
@@ -356,7 +376,10 @@ void main() {
         await tester.pumpAndSettle();
         expect(find.text(l.searchScope), findsNothing);
         expect(find.text(l.noMatchingEpisodes), findsOneWidget);
-        await app.tap(apple);
+        await tester.tap(apple);
+        await tester.pump();
+        expect(find.widgetWithText(EinkButton, l.searching), findsOneWidget);
+        await tester.pumpAndSettle();
         expect(find.byType(AddPodcastPage), findsOneWidget);
         expect(api.directoryQueries, ['Papírová letadla']);
         expect(
@@ -381,6 +404,37 @@ void main() {
       }
     },
   );
+
+  for (final (phone, size, textScale) in const [
+    ('HiBreak', Size(392, 785), 1.8),
+    ('Palma', Size(440, 879), 1.3),
+  ]) {
+    testWidgets('an empty answer leaves the Apple Podcasts row in place on '
+        '$phone', (tester) async {
+      final (app, api) = await _openHarness(
+        tester,
+        size: size,
+        textScale: textScale,
+      );
+      final apple = find.widgetWithText(
+        EinkRow,
+        app.strings.searchApplePodcasts,
+      );
+      try {
+        await app.section(LibrarySection.search);
+        await tester.enterText(find.byType(TextField), 'lex fridman');
+        await tester.pump();
+        final top = tester.getTopLeft(apple).dy;
+        await tester.pump(const Duration(milliseconds: 400));
+        api.globalRequests.single.$2.complete(const []);
+        await tester.pumpAndSettle();
+        expect(find.text(app.strings.noMatchingEpisodes), findsOneWidget);
+        expect(tester.getTopLeft(apple).dy, top);
+      } finally {
+        await app.finish();
+      }
+    });
+  }
 
   testWidgets('a new query replaces the Apple Podcasts search on Linux', (
     tester,
@@ -459,11 +513,16 @@ Future<(UiHarness, _SearchApi)> _openPodcast(
 Future<(UiHarness, _SearchApi)> _openHarness(
   WidgetTester tester, {
   String? desktopFont,
+  Size? size,
+  double textScale = 1.8,
 }) async {
   late _SearchApi api;
   final app = await UiHarness.open(
     tester,
-    size: desktopFont == null ? const Size(360, 720) : const Size(1000, 700),
+    size:
+        size ??
+        (desktopFont == null ? const Size(360, 720) : const Size(1000, 700)),
+    textScale: textScale,
     desktopFont: desktopFont,
     configure: (demo) => AppServices(
       settings: demo.settings,

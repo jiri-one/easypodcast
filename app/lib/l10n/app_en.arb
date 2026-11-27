@@ -56,7 +56,7 @@
   "searchingDescriptions": "Also searching episode descriptions…",
   "descriptionSearchFailed": "Couldn't search episode descriptions.",
   "searchThisPodcast": "Search this podcast",
-  "searchThisPodcastHint": "Episode title or description",
+  "searchThisPodcastHint": "Title or description",
   "clearSearch": "Clear search",
   "noMatchingEpisodes": "No episodes match your search.",
   "episodeMissing": "This episode is no longer available.",

@@ -181,7 +181,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get searchThisPodcast => 'Search this podcast';
 
   @override
-  String get searchThisPodcastHint => 'Episode title or description';
+  String get searchThisPodcastHint => 'Title or description';
 
   @override
   String get clearSearch => 'Clear search';
