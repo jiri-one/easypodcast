@@ -54,7 +54,7 @@
   "searchingDescriptions": "Hledám i v popisech dílů…",
   "descriptionSearchFailed": "Popisy dílů se nepodařilo prohledat.",
   "searchThisPodcast": "Hledat v podcastu",
-  "searchThisPodcastHint": "Název nebo popis dílu",
+  "searchThisPodcastHint": "Název nebo popis",
   "clearSearch": "Zrušit hledání",
   "noMatchingEpisodes": "Žádný díl nenalezen.",
   "episodeMissing": "Tento díl už není k dispozici.",

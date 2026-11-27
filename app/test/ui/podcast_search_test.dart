@@ -9,6 +9,7 @@ import 'package:easypodcast/ui/episode_page.dart';
 import 'package:easypodcast/ui/library_views.dart';
 import 'package:easypodcast/ui/podcast_search.dart';
 import 'package:easypodcast/ui/podcast_search_field.dart';
+import 'package:easypodcast/ui/theme.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
@@ -79,6 +80,7 @@ void main() {
     try {
       (app.services.sync as DemoSyncService).setOffline();
       await tester.pump();
+      expect(find.text(l.foundInDescription), findsNothing);
       await app.row(l.searchThisPodcast);
       expect(
         tester
@@ -98,7 +100,12 @@ void main() {
       api.requests.single.$3.completeError(OfflineException());
       await tester.pump();
       expect(_episodeIds(tester), [102, 108, 114, 120]);
-      await _expectBelowResults(app, l.descriptionSearchFailed);
+      await _expectBelowResults(app, l.descriptionSearchFailed, (found) {
+        expect(
+          find.ancestor(of: found, matching: find.byType(EinkError)),
+          findsOneWidget,
+        );
+      });
       await tester.enterText(field, 'n');
       await tester.pump();
       expect(
@@ -202,6 +209,12 @@ void main() {
       await tester.pump();
       expect(_episodeIds(tester), [102, 108, 114, 120]);
       await _expectBelowResults(app, app.strings.descriptionSearchFailed);
+      await app.tap(find.byTooltip(app.strings.clearSearch));
+      await app.row(app.strings.searchThisPodcast);
+      expect(
+        tester.widget<EpisodeList>(find.byType(EpisodeList)).status,
+        isNull,
+      );
     } finally {
       await app.finish();
     }

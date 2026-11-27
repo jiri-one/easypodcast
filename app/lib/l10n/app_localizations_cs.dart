@@ -180,7 +180,7 @@ class AppLocalizationsCs extends AppLocalizations {
   String get searchThisPodcast => 'Hledat v podcastu';
 
   @override
-  String get searchThisPodcastHint => 'Název nebo popis dílu';
+  String get searchThisPodcastHint => 'Název nebo popis';
 
   @override
   String get clearSearch => 'Zrušit hledání';
