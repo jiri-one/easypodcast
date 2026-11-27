@@ -1014,6 +1014,15 @@ void main() {
         started,
         {'android.media.extra.PLAYBACK_STATUS': 1},
       ]);
+      downloads.downloadedEpisodeIds = [2];
+      final downloaded = await handler.getChildren('downloaded');
+      expect(downloaded.single.artUri, Uri.parse('content://covers/2'));
+      expect(downloaded.single.extras, started);
+      final episodes = await handler.getChildren('podcast:1');
+      expect(episodes.map((item) => item.artUri), [
+        for (final id in [3, 2, 1]) Uri.parse('content://covers/$id'),
+      ]);
+      expect(episodes[1].extras, started);
       final podcasts = await handler.getChildren('podcasts');
       expect(podcasts.single.artUri, Uri.parse('content://covers/podcast-1'));
 
@@ -1037,6 +1046,8 @@ void main() {
     expect(labels(), ['Skip back', 'Pause', 'Skip forward', 'Stop']);
     car.value = true;
     expect(labels(), ['Skip back', 'Pause', 'Skip forward']);
+    await handler.pause();
+    expect(labels(), ['Skip back', 'Play', 'Skip forward']);
   });
 
   test('Android Auto shows podcasts as a grid and episodes as lists', () {
