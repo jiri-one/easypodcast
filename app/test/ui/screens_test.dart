@@ -6,6 +6,7 @@ import 'package:easypodcast/ui/account_pages.dart';
 import 'package:easypodcast/ui/eink_widgets.dart';
 import 'package:easypodcast/ui/episode_page.dart';
 import 'package:easypodcast/ui/library_views.dart';
+import 'package:easypodcast/ui/plain_links.dart';
 import 'package:easypodcast/ui/player_views.dart';
 import 'package:easypodcast/ui/settings_pages.dart';
 import 'package:easypodcast/ui/theme.dart';
@@ -46,6 +47,36 @@ void main() {
         Future<void> check(String name) async {
           expect(tester.takeException(), isNull, reason: name);
           _checkTextLayout(name);
+          final loggedIn = app.services.sync.isLoggedIn;
+          final mini = find.byType(MiniPlayer);
+          if (desktop) {
+            expect(mini, findsNothing, reason: name);
+            expect(
+              find.byType(DesktopPlayer),
+              loggedIn ? findsOneWidget : findsNothing,
+              reason: name,
+            );
+          } else if (!loggedIn ||
+              find.byType(PlayerPage).evaluate().isNotEmpty) {
+            expect(find.byType(MiniPlayer, skipOffstage: false), findsNothing);
+          } else {
+            expect(mini, findsOneWidget, reason: name);
+            final bar = tester.getRect(mini);
+            expect(bar.height, isPositive, reason: name);
+            expect(
+              bar.bottom,
+              lessThanOrEqualTo(size.height - tester.view.viewInsets.bottom),
+              reason: name,
+            );
+            final list = find.byWidgetPredicate(
+              (widget) => widget is ScrollView,
+            );
+            expect(
+              tester.getBottomLeft(list.first).dy,
+              lessThanOrEqualTo(bar.top),
+              reason: name,
+            );
+          }
         }
 
         try {
@@ -75,6 +106,64 @@ void main() {
         }
       });
     }
+  }
+
+  for (final (size, textScale) in const [
+    (Size(392, 785), 1.8),
+    (palmaSize, palmaTextScale),
+  ]) {
+    testWidgets(
+      'the mini player stays usable on episode pages at ${size.width} dp',
+      (tester) async {
+        final app = await UiHarness.open(
+          tester,
+          size: size,
+          textScale: textScale,
+          library: _LongDescriptionLibrary(),
+        );
+        final player = app.services.player;
+        final page = find.byType(EpisodePage);
+        final mini = find.byType(MiniPlayer);
+        try {
+          await app.mini(app.strings.play);
+          expect(player.isPlaying, isTrue);
+          expect(player.current?.id, 101);
+          await app.openEpisode(204);
+          final bar = tester.getRect(mini);
+          final description = find.byType(PlainLinks);
+          await app.scrollTo(description, page);
+          final scrollable = find.descendant(
+            of: page,
+            matching: find.byType(Scrollable),
+          );
+          final position = tester.state<ScrollableState>(scrollable).position;
+          expect(position.maxScrollExtent, greaterThan(size.height));
+          position.jumpTo(position.maxScrollExtent);
+          await tester.pumpAndSettle();
+          expect(tester.getBottomLeft(description).dy, lessThan(bar.top));
+          expect(tester.getRect(mini), bar);
+
+          await app.mini(app.strings.pause);
+          expect(player.isPlaying, isFalse);
+          expect(player.current?.id, 101);
+          expect(tester.widget<EpisodePage>(page).episode.id, 204);
+          await app.mini(app.episode(101));
+          expect(find.byType(PlayerPage), findsOneWidget);
+          expect(mini, findsNothing);
+          await app.back();
+          expect(tester.widget<EpisodePage>(page).episode.id, 204);
+
+          await app.mini(app.strings.play);
+          await app.back();
+          await app.openEpisode(101);
+          expect(player.isPlaying, isTrue);
+          expect(mini, findsOneWidget);
+          expect(tester.takeException(), isNull);
+        } finally {
+          await app.finish();
+        }
+      },
+    );
   }
 
   testWidgets('mini player checks and resumes a stored position with one tap', (
@@ -291,7 +380,9 @@ void main() {
       await tester.pumpAndSettle();
       expect(tester.widget<EinkRow>(row).toggled, isTrue);
       final error = find.text(l.actionFailed);
-      expect(error, findsOneWidget);
+      await app.scrollTo(error, find.byType(AboutPodcastPage));
+      await tester.pumpAndSettle();
+      expect(error.hitTestable(), findsOneWidget);
       expect(
         tester.getRect(error).top,
         greaterThan(tester.getRect(row).bottom),
@@ -530,4 +621,10 @@ class _OfflineToggleLibrary extends DemoLibrary {
     await reply.future;
     throw OfflineException();
   }
+}
+
+class _LongDescriptionLibrary extends DemoLibrary {
+  @override
+  Future<String> description(int episodeId) async =>
+      List.filled(16, await super.description(episodeId)).join('\n\n');
 }

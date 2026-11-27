@@ -254,7 +254,7 @@ API (náčrt, JSON):
 3. **Podcasty**, odtud detail podcastu s díly.
 4. **Nové díly** (O7).
 5. **Stažené.**
-6. **Přehrávač:** otevře se z malého přehrávače nad dolní lištou.
+6. **Přehrávač** se otevře z malého přehrávače, který je vidět na všech ostatních obrazovkách.
 7. **Nastavení:** server a přihlášení, skoky, přepínač rychlosti a časovače spánku (rychlost jen
    když je zapnutý), pokračování fronty, stahování, stav feedů.
 

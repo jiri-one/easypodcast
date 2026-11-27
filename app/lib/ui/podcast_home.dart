@@ -353,17 +353,21 @@ class _LibraryHomeState extends State<_LibraryHome> {
 
   Widget _phoneBody(BuildContext context) {
     final page = _pages.lastOrNull;
+    final playerPage = page?.screen == _Screen.player ? page : null;
+    final contentPage = playerPage == null
+        ? page
+        : _pages.reversed.skip(1).firstOrNull;
     final switcher = page == null && _section != LibrarySection.search;
     final menu = switcher && _menuOpen;
     final content = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Expanded(
-          child: page == null
+          child: contentPage == null
               ? _sectionBody(context)
-              : _pageBody(context, page),
+              : _pageBody(context, contentPage),
         ),
-        if (page == null || page.screen == _Screen.podcast)
+        if (playerPage == null)
           MiniPlayer(playback: _playback, onOpen: () => _open(_Screen.player)),
       ],
     );
@@ -383,10 +387,15 @@ class _LibraryHomeState extends State<_LibraryHome> {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              ExcludeFocus(
-                excluding: menu,
-                child: ExcludeSemantics(excluding: menu, child: content),
+              Visibility(
+                visible: playerPage == null,
+                maintainState: true,
+                child: ExcludeFocus(
+                  excluding: menu,
+                  child: ExcludeSemantics(excluding: menu, child: content),
+                ),
               ),
+              if (playerPage != null) _pageBody(context, playerPage),
               if (menu) ...[
                 GestureDetector(
                   behavior: HitTestBehavior.opaque,

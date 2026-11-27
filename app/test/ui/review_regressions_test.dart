@@ -468,7 +468,10 @@ void main() {
         await app.tapText(l.resubscribe);
         expect(library.podcast(1)!.subscribed, isTrue);
         expect(find.text(l.unsubscribe), findsOneWidget);
-        expect(find.text(l.showInNewEpisodes), findsOneWidget);
+        final toggle = find.widgetWithText(EinkRow, l.showInNewEpisodes);
+        await app.scrollTo(toggle, find.byType(AboutPodcastPage));
+        await tester.pumpAndSettle();
+        expect(toggle.hitTestable(), findsOneWidget);
       } finally {
         await app.finish();
       }

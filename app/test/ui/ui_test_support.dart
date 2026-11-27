@@ -406,9 +406,37 @@ Future<void> tourPhone(UiHarness app, VisitScreen visit) async {
   await app.dialog(l.close);
   await app.scrollToRow(l.addPodcast, find.byType(PodcastList), delta: -150);
   await visit('19-add-podcast');
-  await app.tester.enterText(find.byType(TextField).first, 'noční vlak');
-  await app.tap(find.widgetWithText(EinkButton, l.search));
+  final tester = app.tester;
+  final addPage = find.byType(AddPodcastPage);
+  final addButton = find.widgetWithText(EinkButton, l.addPodcast);
+  final query = find.byType(TextField).first;
+  await tester.enterText(query, 'noční vlak');
+  tester.view.viewInsets = const FakeViewPadding(bottom: 320);
+  try {
+    await tester.pumpAndSettle();
+    expect(tester.testTextInput.isVisible, isTrue);
+    await visit('35-add-podcast-keyboard');
+    await app.scrollTo(addButton, addPage);
+    await tester.pumpAndSettle();
+    expect(addButton.hitTestable(), findsOneWidget);
+    await app.scrollTo(query, addPage, delta: -150);
+    await tester.pumpAndSettle();
+    await tester.testTextInput.receiveAction(TextInputAction.search);
+  } finally {
+    tester.view.resetViewInsets();
+  }
+  await tester.pumpAndSettle();
   await visit('31-directory-results');
+  await app.scrollTo(addButton, addPage);
+  await tester.pumpAndSettle();
+  expect(addButton.hitTestable(), findsOneWidget);
+  await app.mini(app.episode(101));
+  expect(find.byType(PlayerPage), findsOneWidget);
+  await app.back();
+  final result = find.widgetWithText(EinkRow, 'Papírová letadla');
+  await app.scrollTo(result, addPage, delta: -150);
+  await tester.pumpAndSettle();
+  expect(result.hitTestable(), findsOneWidget);
   await app.back();
   await app.scrollToRow(
     app.services.library.podcast(1)!.title,
@@ -424,7 +452,10 @@ Future<void> tourPhone(UiHarness app, VisitScreen visit) async {
   await app.tapText(l.unsubscribe);
   expect(find.text(l.unsubscribeTitle), findsOneWidget);
   await app.dialog(l.unsubscribe);
-  expect(find.text(l.notSubscribed), findsOneWidget);
+  final unsubscribed = find.text(l.notSubscribed);
+  await app.scrollTo(unsubscribed, find.byType(AboutPodcastPage));
+  await tester.pumpAndSettle();
+  expect(unsubscribed.hitTestable(), findsOneWidget);
   await visit('25-unsubscribe');
   await app.back();
   await app.back();

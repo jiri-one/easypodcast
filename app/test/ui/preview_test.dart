@@ -7,6 +7,17 @@ import 'package:flutter_test/flutter_test.dart';
 import 'ui_test_support.dart';
 
 const _out = String.fromEnvironment('PREVIEW_OUT');
+const _palmaDetails = {
+  '03-episode',
+  '14-settings',
+  '19-add-podcast',
+  '20-about-podcast',
+  '21-server',
+  '22-feed-status',
+  '23-opml',
+  '31-directory-results',
+  '35-add-podcast-keyboard',
+};
 
 void main() {
   if (_out.isEmpty) {
@@ -77,6 +88,11 @@ void main() {
       await app.mini(app.strings.play);
       await app.mini(app.episode(101));
       await write(app, '29-palma-player');
+      await app.back();
+      await app.mini(app.strings.pause);
+      await tourPhone(app, (name) async {
+        if (_palmaDetails.contains(name)) await write(app, 'palma-$name');
+      });
     } finally {
       await app.finish();
     }
