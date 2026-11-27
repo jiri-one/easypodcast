@@ -18,6 +18,9 @@ class AppLocalizationsCs extends AppLocalizations {
   String get inProgress => 'Rozposlouchané';
 
   @override
+  String get inProgressShort => 'Rozehrané';
+
+  @override
   String get queue => 'Fronta';
 
   @override

@@ -108,45 +108,86 @@
                  case KeyEvent.KEYCODE_HEADSETHOOK:
 --- a/com/ryanheise/audioservice/AudioServicePlugin.java
 +++ b/com/ryanheise/audioservice/AudioServicePlugin.java
-@@ -107,4 +107,24 @@
+@@ -107,4 +107,36 @@
                  initialRoute = "/";
              }
 +            final Context appContext = context.getApplicationContext();
-+            new MethodChannel(flutterEngine.getDartExecutor(), "one.jiri.easypodcast/platform")
-+                    .setMethodCallHandler((call, result) -> {
-+                        final AudioService service = AudioService.instance;
-+                        switch (call.method) {
-+                        case "startForeground":
-+                            result.success(service != null && service.ensurePlaybackForeground());
-+                            break;
-+                        case "stopForeground":
-+                            if (service != null) service.stopPlaybackForeground();
-+                            result.success(null);
-+                            break;
-+                        case "availableBytes":
-+                            result.success(new android.os.StatFs(appContext.getFilesDir().getPath())
-+                                    .getAvailableBytes());
-+                            break;
-+                        default:
-+                            result.notImplemented();
-+                        }
++            platformChannel = new MethodChannel(flutterEngine.getDartExecutor(), "one.jiri.easypodcast/platform");
++            platformChannel.setMethodCallHandler((call, result) -> {
++                final AudioService service = AudioService.instance;
++                switch (call.method) {
++                case "startForeground":
++                    result.success(service != null && service.ensurePlaybackForeground());
++                    break;
++                case "stopForeground":
++                    if (service != null) service.stopPlaybackForeground();
++                    result.success(null);
++                    break;
++                case "availableBytes":
++                    result.success(new android.os.StatFs(appContext.getFilesDir().getPath())
++                            .getAvailableBytes());
++                    break;
++                case "carConnected":
++                    carConnectionQueries.execute(() -> {
++                        final boolean connected = carConnected(appContext);
++                        new Handler(Looper.getMainLooper()).post(() -> result.success(connected));
 +                    });
++                    break;
++                default:
++                    result.notImplemented();
++                }
++            });
++            if (!carConnectionWatched) {
++                androidx.core.content.ContextCompat.registerReceiver(appContext, carConnectionReceiver,
++                        new android.content.IntentFilter("androidx.car.app.connection.action.CAR_CONNECTION_UPDATED"),
++                        androidx.core.content.ContextCompat.RECEIVER_EXPORTED);
++                carConnectionWatched = true;
++            }
              flutterEngine.getNavigationChannel().setInitialRoute(initialRoute);
              flutterEngine.getDartExecutor().executeDartEntrypoint(DartExecutor.DartEntrypoint.createDefault());
-@@ -127,4 +147,5 @@
+@@ -114,4 +146,27 @@
+     }
+
++    private static MethodChannel platformChannel;
++    private static boolean carConnectionWatched;
++    private static final java.util.concurrent.Executor carConnectionQueries = Executors.newSingleThreadExecutor();
++    private static final android.content.BroadcastReceiver carConnectionReceiver = new android.content.BroadcastReceiver() {
++        @Override
++        public void onReceive(Context context, Intent intent) {
++            if (platformChannel != null) platformChannel.invokeMethod("carConnectionChanged", null);
++        }
++    };
++
++    // The provider and broadcast that androidx.car.app CarConnection reads from Android Auto.
++    private static boolean carConnected(Context context) {
++        try (android.database.Cursor cursor = context.getContentResolver().query(
++                Uri.parse("content://androidx.car.app.connection"),
++                new String[]{"CarConnectionState"}, null, null, null)) {
++            if (cursor == null || !cursor.moveToFirst()) return false;
++            final int state = cursor.getColumnIndex("CarConnectionState");
++            return state >= 0 && cursor.getInt(state) > 0;
++        } catch (RuntimeException e) {
++            return false;
++        }
++    }
++
+     public static synchronized void disposeFlutterEngine() {
+         for (ClientInterface clientInterface : clientInterfaces) {
+@@ -127,4 +182,6 @@
              flutterEngine.destroy();
              FlutterEngineCache.getInstance().remove(flutterEngineId);
 +            flutterReady = false;
++            platformChannel = null;
          }
      }
-@@ -517,4 +538,6 @@
+@@ -517,4 +574,6 @@
      private static class AudioHandlerInterface implements MethodCallHandler, AudioService.ServiceListener {
          private static final int SILENCE_SAMPLE_RATE = 44100;
 +        // One thread keeps media items in the order they were sent.
 +        private static final java.util.concurrent.Executor mediaItemExecutor = Executors.newSingleThreadExecutor();
          public BinaryMessenger messenger;
          public MethodChannel channel;
-@@ -836,5 +859,5 @@
+@@ -836,5 +895,5 @@
                  switch (call.method) {
                  case "setMediaItem": {
 -                    Executors.newSingleThreadExecutor().execute(() -> {

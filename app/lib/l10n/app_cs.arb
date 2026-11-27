@@ -2,6 +2,7 @@
   "@@locale": "cs",
   "appTitle": "EasyPodcast",
   "inProgress": "Rozposlouchané",
+  "inProgressShort": "Rozehrané",
   "queue": "Fronta",
   "newEpisodes": "Nové díly",
   "podcasts": "Podcasty",

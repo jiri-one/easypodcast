@@ -18,7 +18,9 @@ const androidAudioConfig = AudioServiceConfig(
 Future<void> _openAndroidAudio(
   EpisodePlayer player,
   Future<Uri?> Function(Episode, Podcast?)? artwork,
+  Future<Uri?> Function(Episode?, Podcast?)? listArtwork,
 ) async {
+  final carConnected = watchCarConnection();
   await AudioService.init(
     builder: () => EpisodeAudioHandler(
       player,
@@ -27,6 +29,8 @@ Future<void> _openAndroidAudio(
       player._settings,
       android: true,
       artwork: artwork,
+      listArtwork: listArtwork,
+      carConnected: carConnected,
     ),
     config: androidAudioConfig,
   );
@@ -41,6 +45,8 @@ class EpisodeAudioHandler extends BaseAudioHandler {
     required this._android,
     String Function()? languageCode,
     this._artwork,
+    this._listArtwork,
+    this._carConnected,
   }) : _languageCode = languageCode ?? _deviceLanguage {
     _player._mediaChanges.stream.listen(
       _publish,
@@ -48,6 +54,7 @@ class EpisodeAudioHandler extends BaseAudioHandler {
         if (!_android) return;
         _library.removeListener(_notifyChildrenChanged);
         _downloads.removeListener(_notifyDownloadsChanged);
+        _carConnected?.removeListener(_republish);
         unawaited(_childrenChanged.close());
       },
     );
@@ -55,6 +62,7 @@ class EpisodeAudioHandler extends BaseAudioHandler {
       _library.addListener(_notifyChildrenChanged);
       _downloadedIds = List.of(_downloads.downloadedEpisodeIds);
       _downloads.addListener(_notifyDownloadsChanged);
+      _carConnected?.addListener(_republish);
     }
     if (!_android) _player.position.addListener(() => _publish(true));
     _publish(true);
@@ -67,6 +75,8 @@ class EpisodeAudioHandler extends BaseAudioHandler {
   final bool _android;
   final String Function() _languageCode;
   final Future<Uri?> Function(Episode, Podcast?)? _artwork;
+  final Future<Uri?> Function(Episode?, Podcast?)? _listArtwork;
+  final ValueListenable<bool>? _carConnected;
   final _childrenChanged = BehaviorSubject<Map<String, dynamic>>();
   late List<int> _downloadedIds;
   Future<void>? _libraryRefresh;
@@ -87,17 +97,39 @@ class EpisodeAudioHandler extends BaseAudioHandler {
   static const _podcasts = 'podcasts';
   static const _episodePrefix = 'episode:';
   static const _podcastPrefix = 'podcast:';
+  // androidx.media MediaConstants, which Android Auto reads as a progress bar.
+  static const _completionStatus = 'android.media.extra.PLAYBACK_STATUS';
+  static const _partiallyPlayed = 1;
+  static const _completionPercentage =
+      'androidx.media.MediaItem.Extras.COMPLETION_PERCENTAGE';
   List<MediaItem> get _rootItems {
     final strings = _strings;
     return [
-      MediaItem(id: _inProgress, title: strings.inProgress, playable: false),
+      MediaItem(
+        id: _inProgress,
+        title: strings.inProgressShort,
+        playable: false,
+      ),
       MediaItem(id: _queue, title: strings.queue, playable: false),
       MediaItem(id: _downloaded, title: strings.downloads, playable: false),
-      MediaItem(id: _podcasts, title: strings.podcasts, playable: false),
+      MediaItem(
+        id: _podcasts,
+        title: strings.podcasts,
+        playable: false,
+        extras: const {
+          AndroidContentStyle.browsableHintKey:
+              AndroidContentStyle.gridItemHintValue,
+        },
+      ),
     ];
   }
 
-  MediaItem _item(Episode episode, {Duration? duration, Uri? artUri}) {
+  MediaItem _item(
+    Episode episode, {
+    Duration? duration,
+    Uri? artUri,
+    Map<String, dynamic>? extras,
+  }) {
     final podcast = _library.podcast(episode.podcastId);
     return MediaItem(
       id: '$_episodePrefix${episode.id}',
@@ -110,14 +142,39 @@ class EpisodeAudioHandler extends BaseAudioHandler {
           (episode.durationS == null
               ? null
               : Duration(seconds: episode.durationS!)),
+      extras: extras,
     );
   }
 
-  MediaItem _podcastItem(Podcast podcast) => MediaItem(
+  MediaItem _podcastItem(Podcast podcast, {Uri? artUri}) => MediaItem(
     id: '$_podcastPrefix${podcast.id}',
     title: podcast.title,
+    artUri: artUri,
     playable: false,
   );
+
+  Future<List<MediaItem>> _listItems(Iterable<Episode> episodes) =>
+      Future.wait(episodes.map(_listItem));
+
+  Future<MediaItem> _listItem(Episode episode) async {
+    final podcast = _library.podcast(episode.podcastId);
+    final state = _library.stateOf(episode.id);
+    final duration = episodeDuration(episode, state)?.inMilliseconds;
+    return _item(
+      episode,
+      artUri: await _listArtwork?.call(episode, podcast),
+      extras: state.isInProgress
+          ? {
+              _completionStatus: _partiallyPlayed,
+              if (duration != null)
+                _completionPercentage: (state.positionMs / duration).clamp(
+                  0.0,
+                  1.0,
+                ),
+            }
+          : null,
+    );
+  }
 
   int? _parseId(String value, String prefix) => value.startsWith(prefix)
       ? int.tryParse(value.substring(prefix.length))
@@ -140,27 +197,34 @@ class EpisodeAudioHandler extends BaseAudioHandler {
             (head == null ? null : await _library.resolveQueueEpisode(head));
         return recent == null ? [] : [_item(recent)];
       case _inProgress:
-        return _library.inProgress.map(_item).toList();
+        return _listItems(_library.inProgress);
       case _queue:
-        return _library.queue.map(_item).toList();
+        return _listItems(_library.queue);
       case _downloaded:
-        return _downloads.downloadedEpisodeIds
-            .map(_library.episode)
-            .whereType<Episode>()
-            .map(_item)
-            .toList();
+        return _listItems(
+          _downloads.downloadedEpisodeIds
+              .map(_library.episode)
+              .whereType<Episode>(),
+        );
       case _podcasts:
-        return _library.podcasts.map(_podcastItem).toList();
+        return Future.wait(
+          _library.podcasts.map(
+            (podcast) async => _podcastItem(
+              podcast,
+              artUri: await _listArtwork?.call(null, podcast),
+            ),
+          ),
+        );
     }
     final id = _parseId(parentMediaId, _podcastPrefix);
     return id == null
         ? []
-        : _library
-              .episodesOf(id)
-              .where((episode) => _player._isUnfinished(episode.id))
-              .take(100)
-              .map(_item)
-              .toList();
+        : _listItems(
+            _library
+                .episodesOf(id)
+                .where((episode) => _player._isUnfinished(episode.id))
+                .take(100),
+          );
   }
 
   @override
@@ -175,6 +239,8 @@ class EpisodeAudioHandler extends BaseAudioHandler {
   }
 
   void _notifyChildrenChanged() => _childrenChanged.add(const {});
+
+  void _republish() => _publish(true);
 
   void _notifyDownloadsChanged() {
     final ids = _downloads.downloadedEpisodeIds;
@@ -398,7 +464,9 @@ class EpisodeAudioHandler extends BaseAudioHandler {
                     ? MediaControl.pause.copyWith(label: strings.pause)
                     : MediaControl.play.copyWith(label: strings.play),
                 MediaControl.skipToNext.copyWith(label: strings.skipForward),
-                MediaControl.stop.copyWith(label: strings.stop),
+                // In the car Stop is an unlabelled square that ends the session.
+                if (_carConnected?.value != true)
+                  MediaControl.stop.copyWith(label: strings.stop),
               ],
         androidCompactActionIndices: episode == null ? [] : [0, 1, 2],
         systemActions: loaded && !_android

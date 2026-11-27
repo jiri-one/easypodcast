@@ -14,6 +14,7 @@ import 'package:easypodcast/core/settings.dart';
 import 'package:easypodcast/core/sync.dart';
 import 'package:easypodcast/platform/android_platform.dart';
 import 'package:easypodcast/player/player.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -60,7 +61,12 @@ void main() {
     settings = await Settings.load();
   });
 
-  void openPlayer({bool android = true, String languageCode = 'en'}) {
+  void openPlayer({
+    bool android = true,
+    String languageCode = 'en',
+    Future<Uri?> Function(Episode?, Podcast?)? listArtwork,
+    ValueListenable<bool>? carConnected,
+  }) {
     calls = [];
     platformCalls = [];
     library = _Library(calls);
@@ -88,6 +94,8 @@ void main() {
       settings,
       android: android,
       languageCode: () => languageCode,
+      listArtwork: listArtwork,
+      carConnected: carConnected,
     );
     addTearDown(() {
       player.dispose();
@@ -937,7 +945,7 @@ void main() {
       openPlayer(languageCode: 'cs');
       final root = await handler.getChildren(AudioService.browsableRootId);
       expect(root.map((item) => item.title), [
-        'Rozposlouchané',
+        'Rozehrané',
         'Fronta',
         'Stažené',
         'Podcasty',
@@ -978,6 +986,62 @@ void main() {
     expect(items.map((item) => item.id), [
       for (var id = 103; id >= 4; id--) 'episode:$id',
     ]);
+  });
+
+  testWidgets(
+    'Android Auto lists show cached covers and the progress of started episodes',
+    (_) async {
+      openPlayer(
+        listArtwork: (episode, podcast) async => Uri.parse(
+          'content://covers/${episode?.id ?? 'podcast-${podcast!.id}'}',
+        ),
+      );
+      library.change(2, position: const Duration(seconds: 90));
+      library.change(3, position: const Duration(minutes: 5));
+      const started = {
+        'android.media.extra.PLAYBACK_STATUS': 1,
+        'androidx.media.MediaItem.Extras.COMPLETION_PERCENTAGE': 0.75,
+      };
+
+      final queue = await handler.getChildren('queue');
+      expect(queue.map((item) => item.artUri), [
+        Uri.parse('content://covers/1'),
+        Uri.parse('content://covers/2'),
+      ]);
+      expect(queue.map((item) => item.extras), [null, started]);
+      final inProgress = await handler.getChildren('in-progress');
+      expect(inProgress.map((item) => item.extras), [
+        started,
+        {'android.media.extra.PLAYBACK_STATUS': 1},
+      ]);
+      final root = await handler.getChildren(AudioService.browsableRootId);
+      expect(root.last.extras, {
+        AndroidContentStyle.browsableHintKey:
+            AndroidContentStyle.gridItemHintValue,
+      });
+      final podcasts = await handler.getChildren(root.last.id);
+      expect(podcasts.single.artUri, Uri.parse('content://covers/podcast-1'));
+
+      await handler.play();
+      expect(handler.mediaItem.value?.extras, isNull);
+    },
+  );
+
+  testWidgets('Android Auto leaves Stop out while the car is connected', (
+    _,
+  ) async {
+    final car = ValueNotifier(true);
+    openPlayer(carConnected: car);
+    await handler.play();
+    List<String> labels() => [
+      for (final control in handler.playbackState.value.controls) control.label,
+    ];
+
+    expect(labels(), ['Skip back', 'Pause', 'Skip forward']);
+    car.value = false;
+    expect(labels(), ['Skip back', 'Pause', 'Skip forward', 'Stop']);
+    car.value = true;
+    expect(labels(), ['Skip back', 'Pause', 'Skip forward']);
   });
 
   test('Android Auto requests lists for browsable and playable items', () {

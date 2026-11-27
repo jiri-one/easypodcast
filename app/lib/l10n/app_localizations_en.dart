@@ -18,6 +18,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get inProgress => 'In progress';
 
   @override
+  String get inProgressShort => 'In progress';
+
+  @override
   String get queue => 'Queue';
 
   @override

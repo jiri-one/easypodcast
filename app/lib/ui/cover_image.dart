@@ -35,6 +35,8 @@ const coverGrayscale = ui.ColorFilter.matrix([
   0,
 ]);
 
+const coverProviderAuthority = 'one.jiri.easypodcast.covers';
+
 String? validCoverUrl(String? url) {
   final trimmed = url?.trim();
   if (trimmed == null) return null;
@@ -84,6 +86,25 @@ class CoverImage extends ImageProvider<CoverImage> {
     for (final url in coverUrls(episode, podcast)) {
       final file = await prefetch(url);
       if (file != null && await _isImage(file)) return file.uri;
+    }
+    return null;
+  }
+
+  // Android Auto opens list covers only through a content provider, and
+  // browsing in the car never downloads.
+  static Future<Uri?> listArtwork(Episode? episode, Podcast? podcast) async {
+    final urls = episode == null
+        ? [?validCoverUrl(podcast?.imageUrl)]
+        : coverUrls(episode, podcast);
+    for (final url in urls) {
+      final file = await CoverImage(url)._cacheFile();
+      if (file != null && await _isImage(file)) {
+        return Uri(
+          scheme: 'content',
+          host: coverProviderAuthority,
+          path: '/${path.basename(file.path)}',
+        );
+      }
     }
     return null;
   }

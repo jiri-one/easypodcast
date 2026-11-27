@@ -2,6 +2,7 @@
   "@@locale": "en",
   "appTitle": "EasyPodcast",
   "inProgress": "In progress",
+  "inProgressShort": "In progress",
   "queue": "Queue",
   "newEpisodes": "New episodes",
   "podcasts": "Podcasts",

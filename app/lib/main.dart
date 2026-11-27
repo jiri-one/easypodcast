@@ -28,6 +28,7 @@ Future<void> main() async {
     downloads: downloads,
     settings: settings,
     artwork: CoverImage.artwork,
+    listArtwork: CoverImage.listArtwork,
   );
   prefetchEpisodeCovers(
     library: data.library,

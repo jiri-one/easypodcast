@@ -106,8 +106,10 @@ Aplikace se do telefonů instalují mimo Google Play, takže Android Auto vyžad
   ve výchozím stavu skryté; ukáže je jeden přepínač v Nastavení.
 - Oznámení a zamykací obrazovka s ovládáním (posuvník: O10).
 - Sluchátka a Bluetooth: pauza, pokračování, „další“ a „předchozí“ (O9).
-- Android Auto: Rozposlouchané, Fronta, Stažené a Podcasty s díly, skoky zpět a vpřed. Funguje
-  i se zavřenou aplikací.
+- Android Auto: Rozposlouchané (v autě se vejde jen „Rozehrané“), Fronta, Stažené a Podcasty
+  s díly, skoky zpět a vpřed. Seznamy ukazují obálky, které už telefon má uložené, a u rozehraných
+  dílů průběh; podcasty jsou mřížka obálek. Tlačítko Stop v autě chybí, protože tam vypadá jako
+  prázdný čtverec a ukončí celé přehrávání. Funguje i se zavřenou aplikací.
 - Díl se označí jako přehraný, až když přehrávač ohlásí jeho skutečný konec (O13), a začne hrát
   další díl z fronty. Pauza těsně před koncem díl nechá rozposlouchaný, takže závěr se nikdy
   neusekne. Automatické pokračování je zapnuté a v nastavení ho lze vypnout. Spánek „do konce

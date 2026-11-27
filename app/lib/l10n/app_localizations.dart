@@ -111,6 +111,12 @@ abstract class AppLocalizations {
   /// **'In progress'**
   String get inProgress;
 
+  /// No description provided for @inProgressShort.
+  ///
+  /// In en, this message translates to:
+  /// **'In progress'**
+  String get inProgressShort;
+
   /// No description provided for @queue.
   ///
   /// In en, this message translates to:
